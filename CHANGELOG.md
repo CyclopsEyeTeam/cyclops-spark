@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.1
+
+- `install.sh` and `uninstall.sh`: one-step install, refresh and removal with Claude Code's own plugin commands.
+
 ## 1.3.0 (first public release)
 
 The terminal edition of Spark, released under the MIT licence.

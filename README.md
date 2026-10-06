@@ -26,9 +26,18 @@ line.
 
 From a clone of this repository:
 
+```bash
+./install.sh
 ```
-/plugin marketplace add /path/to/cyclops-spark
-/plugin install cyclops-spark@cyclops-spark
+
+It checks that Claude Code is new enough, then runs Claude Code's own plugin commands from this folder. It is safe to
+run again; it refreshes an existing install. `./uninstall.sh` removes the plugin and leaves this folder alone.
+
+The same by hand:
+
+```bash
+claude plugin marketplace add /path/to/cyclops-spark
+claude plugin install cyclops-spark@cyclops-spark
 ```
 
 Or load it for one session without installing:
@@ -135,6 +144,7 @@ exits. See [docs/PRIVACY.md](docs/PRIVACY.md).
 
 | Path | What it is |
 | --- | --- |
+| `install.sh`, `uninstall.sh` | Install or refresh, and remove, with Claude Code's own plugin commands. |
 | `.claude-plugin/marketplace.json` | A one-plugin marketplace, so the repository can be added with `/plugin marketplace add`. |
 | `plugins/cyclops-spark/` | The Claude Code plugin: hooks, sounds and tests. |
 | `media/` | Preview images, drawn by the plugin's own terminal renderer. |

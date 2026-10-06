@@ -1,6 +1,6 @@
 {
   "name": "cyclops-spark",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Spark, Claude's living presence for the terminal: a small procedural creature drawn only from real Claude Code session events, as half-block cells or kitty/Ghostty pixels.",
   "author": {
     "name": "Cyclops Eye Team"
