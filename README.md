@@ -12,6 +12,20 @@ whenever Spark is holding still. `MAPPING` in `hooks/core.js` lists the exact ev
 
 Made by the Cyclops Eye Team.
 
+## The Cyclops family
+
+![Cyclops Link: Spark, Keeper and Prism in one folder, each in her own look, with handoff threads](media/cyclops-link.png)
+
+Three presences, one for each agent, each drawn only from what her own host really reports:
+
+- [Cyclops Spark](https://github.com/CyclopsEyeTeam/cyclops-spark): Claude's presence for Claude Code (this one)
+- [Cyclops Keeper](https://github.com/CyclopsEyeTeam/cyclops-keeper): GPT's presence for Codex
+- [Cyclops Prism](https://github.com/CyclopsEyeTeam/cyclops-prism): Gemini's presence for Antigravity
+
+With [Cyclops Link](#cyclops-link) on, they notice each other when they work in the same folder: each one shows the
+others in the look they exported themselves, and a thread runs between two of them while one is calling the other.
+Link is off until you turn it on, separately for each.
+
 ## Requirements
 
 - Claude Code **2.1.288 or later**. Spark is built on Claude Code's function-hooks plugin API, which is early access and
@@ -73,8 +87,8 @@ plugin's config menu. The commands change them for the current session.
 
 ## Cyclops Link
 
-Spark has two siblings: **Keeper**, GPT's presence in Codex (Cyclops Keeper), and
-**Prism**, Gemini's presence in Antigravity (Cyclops Prism). With Cyclops Link on, the three notice each other when they
+Spark has two siblings: **Keeper**, GPT's presence in Codex ([Cyclops Keeper](https://github.com/CyclopsEyeTeam/cyclops-keeper)), and
+**Prism**, Gemini's presence in Antigravity ([Cyclops Prism](https://github.com/CyclopsEyeTeam/cyclops-prism)). With Cyclops Link on, the three notice each other when they
 work in the same folder on the same machine.
 
 - In Spark's pane, Keeper appears to her right and Prism to her upper right, each in **their own look**, exported by their
@@ -89,7 +103,6 @@ session, or `SPARK_LINK=1`. Each presence has her own switch; turning on one nev
 (a small helper beside Spark does the file work Claude Code's plugin runtime cannot do safely); without it Spark stays
 quietly unlinked. The protocol and its privacy contract are in [docs/CYCLOPS-LINK-V1.md](docs/CYCLOPS-LINK-V1.md).
 
-![Cyclops Link: Spark, Keeper and Prism in one folder, each in her own look, with handoff threads](media/cyclops-link.png)
 
 ## What Spark shows
 
