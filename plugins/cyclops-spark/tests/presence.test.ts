@@ -1,5 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import { createPresence } from '../hooks/core.js'
+import { linkFacts } from '../hooks/link-view.js'
 import type { Engine } from 'claude-code/testing'
 
 const loose = <T>(v: unknown) => v as T
@@ -104,7 +106,7 @@ test('talking with Keeper (GPT) is a peer lane, drawn in the terminal', async ($
 
 // ------------------------------------------------------------------------------------------------ release-candidate additions
 // The plugin's own module state lives for the whole run, so each test puts every setting back.
-const reset = async ($: Engine) => { for (const c of ['calm off', 'theme auto', 'palette spark', 'sound off', 'status off', 'murmur off']) await cmd($, c) }
+const reset = async ($: Engine) => { for (const c of ['calm off', 'theme auto', 'palette spark', 'sound off', 'status off', 'murmur off', 'link off']) await cmd($, c) }
 const say = async ($: Engine, args: string) => String((await cmd($, args)).text ?? '')
 const settings = async ($: Engine) => (await say($, 'state')).split('\n')[1] ?? ''
 const refusal = (turnId: string, secs = 1) => loose<never>({ reason: 'refusal', refusal: { category: null, explanation: null }, answer: '', durationMs: secs * 1000, isAborted: false, turnId })
@@ -118,7 +120,7 @@ test('commands: each setting changes, reports itself, rejects what it cannot tak
   expect((await cmd($, 'theme loud')).text).toMatch(/theme takes: auto \| dark \| light/)
   expect((await cmd($, 'calm on')).text).toMatch(/^calm: no ambient/)
   expect((await cmd($, 'sound loud')).text).toMatch(/sound takes: off \| soft \| full/)
-  expect(await settings($)).toBe('palette ember · theme light · calm on · sound off · status off · murmur off')
+  expect(await settings($)).toBe('palette ember · theme light · calm on · sound off · status off · murmur off · link off')
   // a bare word cycles through the choices
   expect((await cmd($, 'palette')).text).toMatch(/^palette: moon/)
   expect((await cmd($, 'theme')).text).toMatch(/^theme: auto/)
@@ -126,7 +128,7 @@ test('commands: each setting changes, reports itself, rejects what it cannot tak
   for (const w of ['band', 'kitty', 'state', 'calm', 'theme', 'palette', 'sound', 'murmur', 'status', 'replay', 'focus']) expect(help).toContain('/spark ' + w)
   expect((await cmd($, 'nonsense')).text).toBe(help) // an unknown word shows help instead of toggling the pane
   await cmd($, 'palette spark'); await cmd($, 'calm off')
-  expect(await settings($)).toBe('palette spark · theme auto→dark · calm off · sound off · status off · murmur off')
+  expect(await settings($)).toBe('palette spark · theme auto→dark · calm off · sound off · status off · murmur off · link off')
 })
 
 test('calm removes the ambient motion from the drawing, and palette and theme really change what is drawn', async ($, on) => {
@@ -352,7 +354,7 @@ test('murmur: off by default; on, a hum while it really thinks and bubbles while
   expect(murmurs()).toEqual([])
 
   expect((await cmd($, 'murmur on')).text).toMatch(/^murmur: on/)
-  expect(await settings($)).toMatch(/murmur on$/)
+  expect(await settings($)).toMatch(/murmur on · link off$/)
   // thinking starts a hum phrase; more thinking inside the phrase starts nothing new
   await step('thinking')
   expect(murmurs()).toHaveLength(1)
@@ -501,7 +503,7 @@ test('focus survives any resize: every size recomputes and recomposes, tiny room
   await art(FOCUS_PANE(120, 50, 'dock', 139, 60)); await clock.advance(400) // a 260-column terminal: a 139-column strip beside a 120-column dock
   expect(opens.length).toBe(asks + 2)
   expect(opens.at(-1)).toMatchObject({ columns: 260, focus: true })
-  expect(await settings($)).toMatch(/status off · murmur off$/) // still focus: nothing was restored
+  expect(await settings($)).toMatch(/status off · murmur off · link off$/) // still focus: nothing was restored
   // resizing is presentation: the state line and the recent events are exactly what they were
   expect((await say($, 'state')).split('\n')).toEqual(stateBefore)
   await focus('focus')
@@ -650,3 +652,123 @@ test('an offer above the prompt ("You should know") is Spark speaking: it stays 
   expect(await look()).toMatchObject({ spark: true, quiet: true, joined: false })
 })
 
+
+// ------------------------------------------------------------------------------------------------ Cyclops Link
+// The helper is simulated at the process boundary: what Spark starts, what she sends it, and what she draws from it.
+const LINK_VIEW = {
+  peers: [
+    { presence: 'keeper', instance: 'aaaaaaaaaaaaaaaa', state: 'tool', tools: 1, branches: 0, bearing: 0 },
+    { presence: 'prism', instance: 'bbbbbbbbbbbbbbbb', state: 'working', tools: 0, branches: 0, bearing: 60 },
+  ],
+  threads: [{ from: 'keeper', to: 'spark' }],
+}
+function fakeHelper(on: On, opts: { fail?: boolean } = {}) {
+  const seen = { spawns: [] as Array<{ argv: readonly string[]; env?: Record<string, string> }>, ended: 0, sendView: (_v: unknown) => {}, nudge: () => {} }
+  on('process.spawn', async function* (_$, e) {
+    seen.spawns.push({ argv: e.argv, env: e.env })
+    if (opts.fail) { yield { stream: 'stderr' as const, text: 'env: python3: No such file or directory\n' }; seen.ended++; return loose({ value: { code: 127, signal: null } }) }
+    const queue: string[] = [JSON.stringify({ ready: { facts: '/home/t/.local/state/cyclops-spark/0123456789abcdef.facts' } }) + '\n']
+    let wake = () => {}
+    seen.sendView = (v) => { queue.push(JSON.stringify({ view: v }) + '\n'); wake() }
+    seen.nudge = () => wake() // the real child is killed at once; this fake ends at its next line
+    try {
+      for (;;) {
+        while (queue.length) yield { stream: 'stdout' as const, text: queue.shift()! }
+        await new Promise<void>((r) => { wake = r })
+        yield { stream: 'stdout' as const, text: '\n' } // a quiet line: where the loop that owns the child can end it
+      }
+    } finally { seen.ended++ }
+    return loose({ value: { code: 0, signal: null } })
+  })
+  on('session.id', async () => loose({ value: 'session-secret-7f3a' }))
+  on('session.root', async () => loose({ value: '/home/alex/clients/acme-merger' }))
+  return seen
+}
+const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
+
+test('Cyclops Link is off by default: no helper is started and nothing is written', async ($, on) => {
+  const { clock, writes } = feedEngine(on)
+  const seen = fakeHelper(on)
+  await $.session.start(loose({ cwd: '/', surface: 'terminal', isInteractive: true }))
+  await clock.advance(2000)
+  expect(seen.spawns).toHaveLength(0)
+  expect(writes).toEqual([])
+  expect(await say($, 'link')).toMatch(/^link off/)
+})
+
+test('/spark link on: the helper gets only the session and folder; Spark sends it only her coarse facts', async ($, on) => {
+  const { clock, writes } = feedEngine(on)
+  const seen = fakeHelper(on)
+  let release = () => {}
+  on('tool.call', () => new Promise((resolve) => { release = () => resolve(loose({ result: 'ok' })) }))
+  await $.session.start(loose({ cwd: '/', surface: 'terminal', isInteractive: true }))
+  expect(await say($, 'link on')).toMatch(/^link on/)
+  await settle()
+  expect(seen.spawns).toHaveLength(1)
+  expect(seen.spawns[0]!.argv[0]).toBe('python3')
+  expect(seen.spawns[0]!.argv[1]).toMatch(/\/link\/spark_link\.py$/)
+  expect(seen.spawns[0]!.env).toEqual({ SPARK_LINK_SESSION: 'session-secret-7f3a', SPARK_LINK_FOLDER: '/home/alex/clients/acme-merger' })
+  await $.turn.start(loose({ text: 'deploy with key sk-live-4f9a and password hunter2', turnId: 'L1' }))
+  const call = $.tool.call(loose<never>({ tool: 'Bash', command: 'codex exec "rotate AKIAIOSFODNN7EXAMPLE"', tool_use_id: 'call_Zx81' }))
+  await settle(); await clock.advance(600); await settle()
+  const facts = writes.filter((w) => w.path.endsWith('.facts')).map((w) => JSON.parse(w.text))
+  expect(facts.at(-1)).toEqual({ state: 'tool', tools: 1, branches: 0, reaching: ['keeper'] })
+  for (const w of writes) {
+    expect(w.path).toBe('/home/t/.local/state/cyclops-spark/0123456789abcdef.facts')
+    for (const bad of ['hunter2', 'sk-live', 'AKIA', 'codex exec', 'rotate', 'call_Zx81', 'acme', 'session-secret', 'Bash']) expect(w.text).not.toContain(bad)
+  }
+  release(); await call
+  await $.turn.complete(answer('L1', 1))
+  await clock.advance(600); await settle()
+  expect(JSON.parse(writes.at(-1)!.text)).toEqual({ state: 'stopped', tools: 0, branches: 0, reaching: [] })
+  expect(await say($, 'link off')).toMatch(/^link off/)
+  for (let i = 0; i < 5; i++) { seen.nudge(); await settle(); await clock.advance(60) }
+  expect(seen.ended).toBe(1)
+  await reset($)
+})
+
+test('linked: Keeper and Prism appear at their seats in their own looks, named under Spark; gone when Link goes off', async ($, on) => {
+  const { clock } = feedEngine(on)
+  const seen = fakeHelper(on)
+  await $.session.start(loose({ cwd: '/', surface: 'terminal', isInteractive: true }))
+  await say($, 'link on'); await settle()
+  seen.sendView(LINK_VIEW); await settle()
+  const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...PANE })
+  await clock.advance(200); await settle()
+  const raster = await term.find({ type: 'Raster', key: 'spark' })
+  const w = words(raster?.props.cells)
+  const cols = Number(raster?.props.columns)
+  const chars = (x0: number, x1: number) => { let s = ''; for (let i = 0; i < w.length; i += 3) { const x = (i / 3) % cols; if (x >= x0 && x < x1) s += String.fromCodePoint(w[i]!) } return s }
+  const right = chars(cols - 16, cols)
+  expect([...right].some((c) => c.codePointAt(0)! > 0x2800 && c.codePointAt(0)! <= 0x28ff)).toBe(true) // Keeper's own woven braille
+  expect(right).toContain('⟨')                                                                         // Prism's own faceted core
+  expect(right).toContain('keeper · tool')
+  expect(await term.find({ type: 'Text', text: /linked · Keeper tool · Prism working/ })).toBeDefined()
+  await term.unmount()
+  await say($, 'link off'); await settle()
+  const after = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...PANE })
+  expect(await after.find({ type: 'Text', text: /linked/ })).toBeUndefined()
+  expect(chars.call(null, 0, 0)).toBe('')
+  await after.unmount()
+  await reset($)
+})
+
+test('linked but python3 cannot start: Spark stays quietly unlinked and says why', async ($, on) => {
+  const { clock, writes } = feedEngine(on)
+  fakeHelper(on, { fail: true })
+  const text = await say($, 'link on'); await settle(); await clock.advance(200); await settle()
+  expect(await say($, 'link status')).toMatch(/^link unavailable/)
+  expect(writes).toEqual([])
+  expect(text).toMatch(/link/)
+  await reset($)
+})
+
+test('a Gemini or agy call is Spark reaching Prism; a plain shell call reaches no one', async () => {
+  for (const [command, reach] of [['agy --prism', ['prism']], ['gemini -p "x"', ['prism']], ['ls -la', []]] as const) {
+    const p = createPresence('spark')
+    p.apply({ t: 0, type: 'turn.start' })
+    p.apply({ t: 0.1, type: 'tool.start', id: 'a', tool: 'Bash', input: { command } })
+    expect(linkFacts(p.sample(0.5)).reaching).toEqual([...reach])
+    expect(linkFacts(p.sample(0.5)).state).toBe('tool')
+  }
+})

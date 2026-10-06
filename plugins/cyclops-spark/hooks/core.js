@@ -67,7 +67,7 @@ const KEEPER = /\bcodex\b|\bkeeper\b|api\.openai\.com|\bopenai\b|\bgpt-?\d/i
 const peerLane = (how) => ({ key: 'peer:keeper', family: 'peer', label: 'Keeper', how })
 const MODEL_PATTERNS = [
   [/\bgemma\b/i, 'gemma', 'Gemma'],
-  [/\bgemini\b/i, 'gemini', 'Gemini'],
+  [/\bgemini\b|\bagy\b/i, 'gemini', 'Gemini'], // agy: Antigravity, where Gemini (and Prism) work
   [/\bclef\b/i, 'clef', 'Clef'],
   [/\bclaude\s+(-p|--print)\b|api\.anthropic\.com/i, 'claude', 'Claude'],
   [/\bollama\s+(run|generate)\s+([\w.:-]+)/i, 'local', 'local model'],
@@ -810,7 +810,7 @@ export const MAPPING = [
   ['tool.call result deny (you said no)', 'EVENT + TRANSITION', 'lane.deniedAt; no err energy, no fail count, no mend later', 'the gate closes onto the node over 0.9s and fades. No red: a boundary you set is not a fault of the tool'],
   ['tool.call on a lane used often this session', 'EVENT (kept)', 'worn = log10(calls)/1.2 per lane key, kept after the lane retracts; /clear empties it', 'a habit: the filament reaches out quicker (0.4s → 0.25s) and sits up to 60% heavier, never brighter'],
   ['Bash command or MCP server naming codex / keeper / openai / gpt-N', 'EVENT (inferred lane)', 'family = peer, label Keeper', 'Keeper lane: an open ring facing Spark on a two-strand filament (a conversation runs both ways), with Keeper\'s own eye inside in his own colours; it narrows while his call waits on your OK. Hover: "Spark · talking with Keeper"'],
-  ['Bash command matching ollama run / gemma / gemini / clef / claude -p', 'EVENT (inferred lane)', 'family = model, label from the pattern', 'model lane: double ring + satellite, kin colour: an external model is reach, never a replacement'],
+  ['Bash command matching ollama run / gemma / gemini / agy / clef / claude -p', 'EVENT (inferred lane)', 'family = model, label from the pattern', 'model lane: double ring + satellite, kin colour: an external model is reach, never a replacement'],
   ['mcp__<server>__*', 'EVENT', 'lane per server (model lane if the server name is a model)', 'polygon node, vertex count from the server name hash'],
   ['Agent / Task (subagent)', 'EVENT', 'agent lane per subagent type', 'a tiny sibling spark on a lane'],
   ['session.compact start → end', 'EVENT + TRANSITION', 'compact eased 0→1 in 0.5s, back in 0.7s', 'whole form squashes vertically, tendrils fold; springs back when compaction finishes'],

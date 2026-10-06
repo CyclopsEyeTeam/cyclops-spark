@@ -11,6 +11,7 @@
 //   /spark focus   the pane asks for the whole width; Spark is drawn as large as fits, centred
 //   /spark replay  the scripted tour of every state, in the pane, labelled as a replay (never live data)
 //   /spark ask Q   a side question, answered from a fork of this session (no tools), mid-turn too, never typed anywhere
+//   /spark link    on | off | status: Cyclops Link, Keeper and Prism beside Spark when they work in the same folder
 //
 // When a turn ends and you have not acted on it yet, Spark holds the reply out to you (reply ready) until you send a new
 // prompt or copy it with /copy.
@@ -25,6 +26,8 @@ import type { EngineInterface, Register } from 'claude-code'
 import { buildScene, createPresence, laneFor, PALETTE_NAMES } from './core.js'
 import { base64, createRaster, toHalfBlocks, toRGBA8 } from './render-raster.js'
 import { buildTrace, replayAt } from './trace.js'
+import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
+import { KEEPER, PRISM } from './link-marks.js'
 
 const PANE = 'cyclops-spark'
 const T0 = Date.now()
@@ -72,6 +75,20 @@ let ids = 0
 let bandRequestId = ''
 const failedTools = new Set<string>() // a tool that failed and has not yet succeeded again (for the mend cue)
 
+// ---------------------------------------------------------------- Cyclops Link (off unless you turn it on)
+// While it is on, a small helper beside Spark (link/spark_link.py) publishes her coarse state for Keeper and Prism to see
+// and tells her who else works in this folder. She sends it nothing but those coarse facts, through a private file the
+// helper made; she draws the others only with the looks they exported themselves (link-mark/).
+let linkOn = false
+let linkWanted: boolean | null = null  // SPARK_LINK=1/0 overrides the setting and the command
+let linkStatus: 'off' | 'starting' | 'on' | 'unavailable' = 'off'
+let linkView: LinkView | null = null
+let linkFactsPath = ''
+let linkSent = ''
+let linkSentTick = -1e9
+let linkLoop: { return: (v?: any) => Promise<unknown> } | null = null
+const linkSheets: Record<string, MarkSheet | null> = {}
+
 type Replay = { t0: number; presence: ReturnType<typeof createPresence>; trace: ReturnType<typeof buildTrace>; i: number; loop: number }
 let replay: Replay | null = null
 
@@ -106,10 +123,13 @@ async function refreshTheme($: EngineInterface) {
 
 const ground = (): number[] => activeTheme() === 'light' ? [0.96, 0.95, 0.94] : [0.07, 0.07, 0.08] // assumed terminal ground for half-transparent pixels
 
-function frameFor(site: Site, f: any): { cells?: string; rgba?: string; width?: number; height?: number } {
+function frameFor(site: Site, f: any, peers = false): { cells?: string; rgba?: string; width?: number; height?: number } {
   site.raster.draw(buildScene(f, site.lod), activeTheme())
   if (site.image) return { rgba: base64(toRGBA8(site.raster)), width: site.raster.W, height: site.raster.H }
-  return { cells: base64(new Uint8Array(toHalfBlocks(site.raster, ground()).buffer)) }
+  const words = toHalfBlocks(site.raster, ground())
+  // Keeper and Prism at their seats, in their own looks, only beside the live Spark (never over the replay)
+  if (peers && linkOn && linkView && !replay) overlay(words, site.raster.W, Math.floor(site.raster.H / 2), linkView, linkSheets, { now: now(), reduced: calm })
+  return { cells: base64(new Uint8Array(words.buffer)) }
 }
 
 function siteFor(requestId: string, surface: string, columns: number, rows: number, lod: 'tiny' | 'panel', image: boolean, fill = false): Site {
@@ -269,15 +289,17 @@ async function murmur($: EngineInterface, kind: 'think' | 'write') {
 async function paint($: EngineInterface) {
   tick += 1
   if (statusOn && tick % 5 === 0) pushStatus($)
+  if (linkOn && linkFactsPath) await sendLinkFacts($)
   if (!paneOpen && !band) return
   const live = liveFrame()
   const pane = paneOpen ? paneFrame() : null
-  const active = busy(live) || (pane !== null && replay !== null)
+  const threads = linkOn && !replay && !calm && (linkView?.threads.length ?? 0) > 0 // a thread's bead travels while it is declared
+  const active = busy(live) || (pane !== null && replay !== null) || (paneOpen && threads)
   if (!active && tick % (calm ? 60 : 6) !== 0) return
   for (const [requestId, site] of sites) {
     if (requestId === PANE && !paneOpen) continue
     if (requestId === bandRequestId && !band) continue
-    const fr = frameFor(site, requestId === PANE && pane ? pane.f : live)
+    const fr = frameFor(site, requestId === PANE && pane ? pane.f : live, requestId === PANE)
     const res = fr.cells
       ? await $.ui.blit({ requestId, key: 'spark', cells: fr.cells })
       : await $.ui.blit({ requestId, key: 'spark', source: { rgba: fr.rgba!, width: fr.width!, height: fr.height! } })
@@ -329,6 +351,63 @@ function heal($: EngineInterface) {
   $.ui.invalidate('ui.render')
 }
 
+// Spark's coarse facts, written for the helper only when they change (at most four times a second)
+async function sendLinkFacts($: EngineInterface) {
+  const text = JSON.stringify(linkFacts(liveFrame()))
+  if (text === linkSent || tick - linkSentTick < 5) return // 5 frames: 250 ms
+  linkSent = text; linkSentTick = tick
+  await $.fs.write(linkFactsPath, text).catch(() => undefined)
+}
+
+function loadSheets() {
+  if (!('keeper' in linkSheets)) linkSheets.keeper = parseSheet(KEEPER, 'keeper')
+  if (!('prism' in linkSheets)) linkSheets.prism = parseSheet(PRISM, 'prism')
+}
+
+async function startLink($: EngineInterface) {
+  if (linkLoop || !linkOn) return
+  linkStatus = 'starting'
+  loadSheets()
+  const session = await $.session.id().catch(() => '')
+  const folder = await $.session.root().catch(() => '')
+  if (!session || !folder) { linkStatus = 'unavailable'; return }
+  const stream = $.process.spawn({ argv: ['python3', `${$.plugin.root}/link/spark_link.py`], env: { SPARK_LINK_SESSION: session, SPARK_LINK_FOLDER: folder } })
+  linkLoop = stream
+  void (async () => {
+    let buffer = '', ready = false
+    try {
+      for await (const { stream: pipe, text } of stream) {
+        if (pipe !== 'stdout') continue
+        buffer += text
+        let nl
+        while ((nl = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, nl); buffer = buffer.slice(nl + 1)
+          let msg: any
+          try { msg = JSON.parse(line) } catch { continue }
+          if (msg?.ready?.facts) { ready = true; linkFactsPath = String(msg.ready.facts); linkSent = ''; linkStatus = 'on'; await sendLinkFacts($) }
+          else if (msg?.view && Array.isArray(msg.view.peers)) { linkView = msg.view; $.ui.invalidate('ui.render') }
+          else if (msg?.refused) linkStatus = 'unavailable'
+        }
+      }
+    } catch { linkStatus = 'unavailable' /* no python3 here, or it could not start: Link stays quietly off */ }
+    finally {
+      if (linkLoop === stream) linkLoop = null
+      linkView = null; linkFactsPath = ''
+      // a helper that never said it was ready could not run here (no python3, or an unsafe directory)
+      if (!ready && linkOn && linkLoop === null) linkStatus = 'unavailable'
+      else if (linkStatus !== 'unavailable') linkStatus = 'off'
+      $.ui.invalidate('ui.render')
+    }
+  })()
+}
+
+async function stopLink() {
+  const loop = linkLoop
+  linkLoop = null; linkView = null; linkFactsPath = ''
+  if (linkStatus !== 'unavailable') linkStatus = 'off'
+  if (loop) void loop.return(undefined).catch(() => undefined) // ends the helper; it says Spark has ended
+}
+
 const HELP = [
   '/spark         open or close the pane',
   '/spark band    Spark beside the band above the prompt',
@@ -343,6 +422,7 @@ const HELP = [
   '/spark replay  a labelled tour of every state (not live data)',
   '/spark focus   Spark takes the whole screen, centred (Esc returns)',
   '/spark ask Q   a side question: answered beside the work (no tools), mid-turn too',
+  '/spark link    on | off | status: Keeper and Prism beside Spark (Cyclops Link, off until you turn it on)',
 ].join('\n')
 
 // focus asks for every column and row the terminal has, the keyboard, and quiet toasts. A request, not a grant: the surface
@@ -404,10 +484,15 @@ export const register: Register = (on, options) => {
   if (typeof o.murmur === 'boolean') murmurOn = o.murmur
   if (typeof o.band === 'boolean') band = o.band // the band from the start (a band needs no seat, so it shows at any width)
   if (typeof o.chimeAfterSeconds === 'number' && o.chimeAfterSeconds >= 0) chimeAfter = o.chimeAfterSeconds
+  if (typeof o.link === 'boolean') linkOn = o.link
 
   on('session.start', async ($, e, next) => {
     await refreshTheme($)
-    await $.command.register({ name: 'spark', description: 'Spark, Claude\'s living presence: /spark [focus|band|kitty|state|calm|theme|palette|sound|murmur|status|replay|ask|help]', immediate: true })
+    await $.command.register({ name: 'spark', description: 'Spark, Claude\'s living presence: /spark [focus|band|kitty|state|calm|theme|palette|sound|murmur|status|replay|ask|link|help]', immediate: true })
+    const wanted = (await $.env.get('SPARK_LINK').catch(() => undefined))?.trim().toLowerCase()
+    linkWanted = wanted === '1' || wanted === 'on' ? true : wanted === '0' || wanted === 'off' ? false : null
+    if (linkWanted !== null) linkOn = linkWanted
+    if (linkOn) await startLink($)
     $.clock.every(50, () => void paint($))
     emit({ type: 'session.wake' })
     await cue($, 'wake', 'full')
@@ -420,7 +505,9 @@ export const register: Register = (on, options) => {
   // a /clear ends the conversation without a new session.start: the stars are gone and Spark wakes again
   on('session.end', async ($, e, next) => {
     if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full') }
-    return next(e)
+    const res = await next(e)
+    if (e.reason === 'clear' && linkOn) { await stopLink(); await startLink($) } // a new conversation is a new instance
+    return res
   })
 
   // ---------------------------------------------------------------- real events → presence events
@@ -562,7 +649,18 @@ export const register: Register = (on, options) => {
       }
     }
     else if (word === 'state') {
-      text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'}\n` + recent.join('\n')
+      text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}\n` + recent.join('\n')
+    }
+    else if (word === 'link') {
+      if (arg === 'on' || arg === 'off') {
+        linkOn = arg === 'on'
+        if (linkOn) await startLink($); else await stopLink()
+        text = linkOn
+          ? (linkStatus === 'unavailable' ? 'link: Spark could not start her Link helper (it needs python3); she stays unlinked' : 'link on: Spark shares her coarse state and shows Keeper and Prism when they work in this folder. Nothing else is shared')
+          : 'link off: Spark says she has ended and is removed a minute later'
+      } else if (arg === '' || arg === 'status') {
+        text = 'link ' + (linkOn ? linkStatus : 'off') + (linkOn && linkView ? ' · ' + linkLine(linkView) : '') + (linkWanted !== null ? ' (SPARK_LINK overrides the setting)' : '')
+      } else text = 'link takes: on | off | status'
     }
     else if (word === 'help' || (word !== '' && word !== 'pane')) text = HELP
     else if (focusMode) text = await leaveFocus($, false) // a bare /spark in focus: back to your view
@@ -605,7 +703,7 @@ export const register: Register = (on, options) => {
         rows = Math.min(120, room)
         columns = Math.min(320, bodyCols)
         const site = siteFor(PANE, e.surface, columns, rows, 'panel', kitty, true)
-        const fr = frameFor(site, f)
+        const fr = frameFor(site, f, true)
         const art = fr.cells
           ? Raster({ key: 'spark', columns, rows, cells: fr.cells })
           : Image({ key: 'spark', columns, rows, alt: label, source: { rgba: fr.rgba!, width: fr.width!, height: fr.height! } })
@@ -614,15 +712,16 @@ export const register: Register = (on, options) => {
       }
       if (e.props.placement === 'inline' && bodyRows > 0 && bodyRows - 1 < rows) { rows = Math.max(2, bodyRows - 1); columns = Math.min(columns, rows * 2) } // a short inline pane: fit it, never clip it
       const site = siteFor(PANE, e.surface, columns, rows, 'panel', kitty)
-      const fr = frameFor(site, f)
+      const fr = frameFor(site, f, true)
       const art = fr.cells
         ? Raster({ key: 'spark', columns, rows, cells: fr.cells })
         : Image({ key: 'spark', columns, rows, alt: label, source: { rgba: fr.rgba!, width: fr.width!, height: fr.height! } })
-      return Box({ flexDirection: 'column', children: [art, Text({ children: [label], dimColor: true, wrap: 'truncate-end' })] })
+      const linked = linkOn && linkView && !replay ? [Text({ children: [linkLine(linkView)], dimColor: true, wrap: 'truncate-end' })] : []
+      return Box({ flexDirection: 'column', children: [art, Text({ children: [label], dimColor: true, wrap: 'truncate-end' }), ...linked] })
     }
     // not a terminal: the glyph and the same truthful line, nothing drawn
     const { Box, Text } = els
-    const line = Text({ children: [f.glyph + ' ' + label], dimColor: true, wrap: 'truncate-end' })
+    const line = Text({ children: [f.glyph + ' ' + label + (linkOn && linkView && !replay ? ' · ' + linkLine(linkView) : '')], dimColor: true, wrap: 'truncate-end' })
     return focusMode
       ? Box({ flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: e.props.bodyColumns, children: [line] })
       : Box({ flexDirection: 'column', children: [line] })

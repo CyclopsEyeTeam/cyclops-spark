@@ -65,10 +65,31 @@ Then type `/spark` to open the pane.
 | `/spark focus` | Spark takes the screen: your current exchange stays beside it, everything else steps aside. Esc or `/spark focus` returns to exactly the view you had. |
 | `/spark replay` | A labelled tour of every state. It runs on its own Spark and never touches the live one. |
 | `/spark ask <question>` | A side question, like `/btw`: answered from a fork of this session (no tools), mid-turn too. Nothing is typed into the terminal. |
+| `/spark link [on\|off\|status]` | Cyclops Link: Keeper and Prism beside Spark when they work in the same folder (below). |
 | `/spark help` | This list. |
 
-The defaults for palette, theme, calm, sound, chime threshold, status line, murmur and band are in the plugin's config
-menu. The commands change them for the current session.
+The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, band and Cyclops Link are in the
+plugin's config menu. The commands change them for the current session.
+
+## Cyclops Link
+
+Spark has two siblings: **Keeper**, GPT's presence in Codex (Cyclops Keeper), and
+**Prism**, Gemini's presence in Antigravity (Cyclops Prism). With Cyclops Link on, the three notice each other when they
+work in the same folder on the same machine.
+
+- In Spark's pane, Keeper appears to her right and Prism to her upper right, each in **their own look**, exported by their
+  own renderer, never redrawn by Spark. A line under Spark names who is here and what they are doing.
+- When one of them calls another (Spark running `codex`, Keeper running `agy`), a thread runs from caller to callee while
+  that call is in flight.
+- Spark shares only her coarse state (idle, thinking, working, tool, waiting…), how many calls and branches are out, and
+  whom she is calling. Never prompts, replies, commands, paths, tool names, model names or ids.
+
+It is off until you turn it on: the **Cyclops Link** setting in the plugin's config menu, `/spark link on` for one
+session, or `SPARK_LINK=1`. Each presence has her own switch; turning on one never turns on another. It needs `python3`
+(a small helper beside Spark does the file work Claude Code's plugin runtime cannot do safely); without it Spark stays
+quietly unlinked. The protocol and its privacy contract are in [docs/CYCLOPS-LINK-V1.md](docs/CYCLOPS-LINK-V1.md).
+
+![Cyclops Link: Spark, Keeper and Prism in one folder, each in her own look, with handoff threads](media/cyclops-link.png)
 
 ## What Spark shows
 
@@ -138,7 +159,8 @@ thinks and soft bubbles while it really writes, stopping on its own within a cou
 ## Privacy
 
 Spark writes no files and makes no network request of its own. Everything it knows is in memory and gone when Claude Code
-exits. See [docs/PRIVACY.md](docs/PRIVACY.md).
+exits. The one exception is Cyclops Link, only while you have it on: then Spark's helper writes her coarse state to one
+small file other presences on this machine can read. See [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## Repository layout
 
@@ -147,6 +169,10 @@ exits. See [docs/PRIVACY.md](docs/PRIVACY.md).
 | `install.sh`, `uninstall.sh` | Install or refresh, and remove, with Claude Code's own plugin commands. |
 | `.claude-plugin/marketplace.json` | A one-plugin marketplace, so the repository can be added with `/plugin marketplace add`. |
 | `plugins/cyclops-spark/` | The Claude Code plugin: hooks, sounds and tests. |
+| `plugins/cyclops-spark/link/` | Spark's Cyclops Link helper (`spark_link.py`). |
+| `plugins/cyclops-spark/link-mark/` | Mark sheets: Spark's own (`spark.json`) and Keeper's and Prism's vendored copies. |
+| `tools/` | `export-link-mark.mjs` (Spark's mark sheet) and `vendor-link-marks.mjs` (embeds the vendored sheets). |
+| `tests/` | Cyclops Link V1 conformance for Spark's helper, from the vendored fixtures. |
 | `media/` | Preview images, drawn by the plugin's own terminal renderer. |
 | `docs/` | Privacy and the truthfulness contract. |
 
@@ -155,6 +181,7 @@ exits. See [docs/PRIVACY.md](docs/PRIVACY.md).
 ```
 claude plugin validate plugins/cyclops-spark
 claude plugin test plugins/cyclops-spark
+python3 -m unittest discover -s tests
 ```
 
 To add something to Spark:
