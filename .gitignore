@@ -1,0 +1,5 @@
+node_modules/
+.DS_Store
+# written by Claude Code when it loads the plugin from a folder
+plugins/cyclops-spark/.claude-plugin/types/
+plugins/cyclops-spark/tsconfig.json

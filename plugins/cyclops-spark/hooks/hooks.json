@@ -1,0 +1,1 @@
+{ "description": "Cyclops Spark: drives Spark from real Claude Code events", "modules": ["./register.ts"] }
