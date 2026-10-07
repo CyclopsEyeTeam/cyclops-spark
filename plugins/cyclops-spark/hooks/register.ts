@@ -1,7 +1,8 @@
 // cyclops-spark: Spark as a graphical living indicator, driven only by real host events.
 //
-//   /spark         open or close the inspection pane
-//   /spark band    preview Spark beside the band above the prompt (composes with whatever draws there)
+//   /spark         open or close Spark at the side (the same as /spark side)
+//   /spark side    a slim pane at the side of the conversation, about a quarter of the width
+//   /spark top     a short strip above the prompt, beside whatever already draws there (no pane at all)
 //   /spark kitty   terminal pane as real pixels (kitty / Ghostty) instead of half-block cells
 //   /spark state   the truthful state line, the settings, and the last events the presence received
 //   /spark calm    no ambient motion anywhere; events still draw
@@ -409,8 +410,9 @@ async function stopLink() {
 }
 
 const HELP = [
-  '/spark         open or close the pane',
-  '/spark band    Spark beside the band above the prompt',
+  '/spark         open or close Spark at the side',
+  '/spark side    a slim pane at the side (about a quarter of the width)',
+  '/spark top     a short strip above the prompt instead (no pane)',
   '/spark kitty   pane as real pixels (kitty / Ghostty)',
   '/spark state   the state line, settings and recent events',
   '/spark calm    no ambient motion (events still draw)',
@@ -429,13 +431,20 @@ const HELP = [
 // seats the pane (docked beside a sliver of transcript from 110 columns, else above the prompt) and a size you drag wins
 const focusOpen = (columns: number, rows: number) => ({ id: PANE, title: 'Spark', closeOnEscape: true as const, focus: true as const, holdToasts: true as const, rows: Math.max(8, rows), columns: Math.max(64, columns) })
 
+// /spark side: a slim pane, so the conversation keeps most of the screen. Beside the transcript (wide terminals) it asks
+// for about a quarter of the width, 30 to 44 columns; above the prompt (narrow terminals) it asks for 10 rows.
+// A size you drag wins, and the drawing always fits the room it is given
+const SIDE_ROWS = 10
+let lastTerminal = 0 // the terminal width the last /spark command reported (0: not known)
+const sideColumns = (terminal: number) => terminal > 0 ? Math.max(30, Math.min(44, Math.round(terminal * 0.25))) : 36
+
 async function openPane($: EngineInterface, wide = 0, tall = 200): Promise<string> {
   paneOpen = true
   const opened = focusMode
     ? await $.ui.open(focusOpen(wide, tall))
-    : await $.ui.open({ id: PANE, title: 'Spark', closeOnEscape: true, rows: 30, columns: 64 })
+    : await $.ui.open({ id: PANE, title: 'Spark', closeOnEscape: true, rows: SIDE_ROWS, columns: sideColumns(lastTerminal) })
   if (!opened.isPlaced) return 'presence pane is waiting for room'
-  return focusMode ? 'focus: Spark has the screen (Esc or /spark focus returns to your view)' : 'presence pane open (Esc closes it)'
+  return focusMode ? 'focus: Spark has the screen (Esc or /spark focus returns to your view)' : 'Spark at the side (Esc closes it; /spark top for a strip above the prompt instead)'
 }
 
 async function enterFocus($: EngineInterface, wide: number): Promise<string> {
@@ -602,7 +611,21 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'spark' }, async ($, e) => {
     const [word = '', arg = ''] = e.args.trim().toLowerCase().split(/\s+/)
     let text: string
-    if (word === 'band') { band = !band; text = band ? 'Spark beside the band (preview)' : 'band preview off' }
+    if (typeof e.presentation?.columns === 'number' && e.presentation.columns > 0 && !focusMode) lastTerminal = e.presentation.columns
+    if (word === 'top' || word === 'band') { // a short strip above the prompt; the side pane gives way to it
+      band = arg === 'on' ? true : arg === 'off' ? false : !band
+      if (band && paneOpen && !focusMode) { paneOpen = false; await $.ui.close({ id: PANE }).catch(() => undefined) }
+      text = band ? 'Spark on top: a short strip above the prompt (/spark top again hides it)' : 'Spark top strip off'
+    }
+    else if (word === 'side') {
+      if (focusMode) text = await leaveFocus($, false)
+      else if (paneOpen && arg !== 'on') { paneOpen = false; await $.ui.close({ id: PANE }).catch(() => undefined); text = 'Spark side pane closed' }
+      else {
+        band = false // one place at a time
+        text = paneOpen ? 'Spark is already at the side' : await openPane($)
+        if (!named && sound !== 'off') { named = true; await cue($, 'name', 'soft') }
+      }
+    }
     else if (word === 'kitty') { kitty = !kitty; text = kitty ? 'pane: real pixels (kitty / Ghostty)' : 'pane: half-block cells' }
     else if (word === 'calm') { calm = arg === 'on' ? true : arg === 'off' ? false : !calm; text = calm ? 'calm: no ambient motion (events still draw)' : 'calm off: ambient breathing and drift are back' }
     else if (word === 'theme') {
@@ -668,6 +691,7 @@ export const register: Register = (on, options) => {
     else if (focusMode) text = await leaveFocus($, false) // a bare /spark in focus: back to your view
     else if (paneOpen) { paneOpen = false; await $.ui.close({ id: PANE }).catch(() => undefined); text = 'presence pane closed' }
     else { // opening Spark: the first time in a session it says its name (when sound is on); never again in that session
+      band = false // at the side now, so the strip above the prompt gives way
       text = await openPane($)
       if (!named && sound !== 'off') { named = true; await cue($, 'name', 'soft') }
     }
@@ -692,6 +716,9 @@ export const register: Register = (on, options) => {
       let columns = Math.max(16, Math.min(160, (e.props.bodyColumns ?? 60) - 1))
       let rows = Math.max(8, Math.min(60, Math.round(columns / 2.1)))
       const bodyRows = e.props.scroll?.bodyRows ?? 0
+      // the label (and the Link line) always fit under the drawing: it never pushes them out of a short pane
+      const under = 1 + (linkOn && linkView && !replay ? 1 : 0)
+      if (!focusMode && bodyRows > under + 2 && rows > bodyRows - under) rows = bodyRows - under
       if (focusMode) {
         paneSeenOnTerminal = true
         // the whole body, as it is *now*: every render recomputes from the pane's current size, so a resize is
@@ -766,11 +793,18 @@ export const register: Register = (on, options) => {
     if (e.surface === 'terminal') {
       const { Raster } = $.ui.resolve(e)
       bandRequestId = e.requestId
-      const site = siteFor(e.requestId, e.surface, 16, 4, 'tiny', false)
-      art = Raster({ key: 'spark', columns: 16, rows: 4, cells: frameFor(site, f).cells! })
+      // the top strip: 5 rows tall at most (fewer if the band has less room), twice as wide, so Spark reads as herself
+      const rows = Math.max(3, Math.min(5, (e.props.maxRows ?? 6) - 1))
+      const columns = rows * 5
+      const site = siteFor(e.requestId, e.surface, columns, rows, 'tiny', false)
+      art = Raster({ key: 'spark', columns, rows, cells: frameFor(site, f).cells! })
     }
     const { Box, Text } = els
-    const left = Box({ flexDirection: 'column', children: [art ?? Text({ children: [f.glyph] }), Text({ children: [f.hover], dimColor: true, wrap: 'truncate-end' })] })
+    // Spark and her truthful line side by side, so the strip stays as short as the drawing
+    const words = [Text({ children: [f.hover], dimColor: true, wrap: 'truncate-end' }), ...(linkOn && linkView ? [Text({ children: [linkLine(linkView)], dimColor: true, wrap: 'truncate-end' })] : [])]
+    const left = art
+      ? Box({ flexDirection: 'row', columnGap: 1, alignItems: 'center', children: [art, Box({ flexDirection: 'column', children: words })] })
+      : Box({ flexDirection: 'row', columnGap: 1, children: [Text({ children: [f.glyph] }), ...words] })
     if (below && asksSomething(below)) // Spark speaking: the offer as its bubble, joined to it
       return Box({ flexDirection: 'row', columnGap: 1, children: [left, Text({ children: ['╶─'], dimColor: true }), below as never] })
     return Box({ flexDirection: 'row', columnGap: 2, children: below ? [left, below as never] : [left] })
