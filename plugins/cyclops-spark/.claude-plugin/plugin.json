@@ -1,6 +1,6 @@
 {
   "name": "cyclops-spark",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Spark, Claude's living presence for the terminal: a small procedural creature drawn only from real Claude Code session events, as half-block cells or kitty/Ghostty pixels.",
   "author": {
     "name": "Cyclops Eye Team"
@@ -17,25 +17,14 @@
     "palette": {
       "type": "string",
       "title": "Palette",
-      "description": "Spark's temperament of colour. Error is red in every palette.",
-      "default": "spark",
-      "options": [
-        "spark",
-        "aurora",
-        "ember",
-        "moon"
-      ]
+      "description": "Spark's temperament of colour. Error is red in every palette. One of: spark, aurora, ember, moon.",
+      "default": "spark"
     },
     "theme": {
       "type": "string",
       "title": "Theme",
-      "description": "The ground Spark is drawn for. 'auto' follows your Claude Code theme (and a plain 'auto' theme there counts as dark).",
-      "default": "auto",
-      "options": [
-        "auto",
-        "dark",
-        "light"
-      ]
+      "description": "The ground Spark is drawn for. 'auto' follows your Claude Code theme (and a plain 'auto' theme there counts as dark). One of: auto, dark, light.",
+      "default": "auto"
     },
     "calm": {
       "type": "boolean",
@@ -46,13 +35,8 @@
     "sound": {
       "type": "string",
       "title": "Sound",
-      "description": "Soft cues for real events: a permission ask, a long turn landing, an error, a refusal. 'full' adds wake, mend, compaction and a copied reply. Plays on macOS and Linux.",
-      "default": "off",
-      "options": [
-        "off",
-        "soft",
-        "full"
-      ]
+      "description": "Soft cues for real events: a permission ask, a long turn landing, an error, a refusal. 'full' adds wake, mend, compaction and a copied reply. Plays on macOS and Linux. One of: off, soft, full.",
+      "default": "off"
     },
     "chimeAfterSeconds": {
       "type": "number",
