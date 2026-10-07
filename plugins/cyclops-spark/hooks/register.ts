@@ -473,6 +473,10 @@ const pick = <T extends string>(list: readonly T[], arg: string, current: T): T 
   return (list as readonly string[]).includes(arg) ? (arg as T) : undefined
 }
 
+// Spark's own work around a gating hook never stands in the way of the real action: if drawing or a cue throws,
+// it is dropped here. Errors from next(e) itself are Claude Code's and still pass through untouched.
+const quietly = async (work: () => unknown): Promise<void> => { try { await work() } catch { /* presence only */ } }
+
 export const register: Register = (on, options) => {
   // defaults from the plugin's config menu; the commands below change them for this session
   const o = (options ?? {}) as Record<string, unknown>
@@ -500,7 +504,7 @@ export const register: Register = (on, options) => {
   })
 
   // follow the host's theme when the person changes it
-  on('config.set', { key: 'theme' }, async ($, e, next) => { const res = await next(e); await refreshTheme($); return res })
+  on('config.set', { key: 'theme' }, async ($, e, next) => { const res = await next(e); await quietly(() => refreshTheme($)); return res })
 
   // a /clear ends the conversation without a new session.start: the stars are gone and Spark wakes again
   on('session.end', async ($, e, next) => {
@@ -513,8 +517,10 @@ export const register: Register = (on, options) => {
   // ---------------------------------------------------------------- real events → presence events
   on('prompt.edit', async ($, e, next) => { emit({ type: 'prompt.edit' }); return next(e) })
   on('prompt.submit', async ($, e, next) => {
-    emit({ type: 'prompt.submit' })
-    exchange.pending = typeof e.text === 'string' ? e.text : null // becomes the current exchange when its turn starts (it may be queued)
+    await quietly(() => {
+      emit({ type: 'prompt.submit' })
+      exchange.pending = typeof e.text === 'string' ? e.text : null // becomes the current exchange when its turn starts (it may be queued)
+    })
     return next(e)
   })
   on('turn.start', async ($, e, next) => {
@@ -545,7 +551,7 @@ export const register: Register = (on, options) => {
     if ('agentId' in e && e.agentId) return next(e)
     const id = e.tool_use_id ?? 'call' + ++ids
     const raw = e as unknown as Record<string, unknown>
-    emit({ type: 'tool.start', id, tool: e.tool, input: { command: raw.command, subagent_type: raw.subagent_type, model: raw.model, url: raw.url } })
+    await quietly(() => emit({ type: 'tool.start', id, tool: e.tool, input: { command: raw.command, subagent_type: raw.subagent_type, model: raw.model, url: raw.url } }))
     let failed = false
     let denied = false // you (or a rule) said no: a boundary, not a fault — the gate closes, nothing turns red
     let threw = true   // a call that throws was cut short (an interrupt), not failed: it settles without red
@@ -556,23 +562,25 @@ export const register: Register = (on, options) => {
       failed = !denied && ran.isError === true
       return ran
     } finally {
-      emit({ type: 'tool.end', id, error: failed, denied, aborted: threw })
-      if (threw || denied) { /* neither a failure nor a mend */ }
-      else if (failed) failedTools.add(e.tool)
-      else if (failedTools.delete(e.tool)) await cue($, 'mend', 'full') // it worked where the last call failed
+      await quietly(async () => {
+        emit({ type: 'tool.end', id, error: failed, denied, aborted: threw })
+        if (threw || denied) { /* neither a failure nor a mend */ }
+        else if (failed) failedTools.add(e.tool)
+        else if (failedTools.delete(e.tool)) await cue($, 'mend', 'full') // it worked where the last call failed
+      })
     }
   })
 
   on('tool.check', async ($, e, next) => {
     const verdict = await next(e)
-    if (verdict.decision === 'ask' && e.tool_use_id) { emit({ type: 'tool.ask', id: e.tool_use_id }); await cue($, 'ask', 'soft') }
+    if (verdict.decision === 'ask' && e.tool_use_id) await quietly(async () => { emit({ type: 'tool.ask', id: e.tool_use_id }); await cue($, 'ask', 'soft') })
     return verdict
   })
 
   on('session.compact', async ($, e, next) => {
     if (e.agentId) return next(e)
-    emit({ type: 'compact.start' })
-    try { return await next(e) } finally { emit({ type: 'compact.end' }); await cue($, 'compact', 'full') }
+    await quietly(() => emit({ type: 'compact.start' }))
+    try { return await next(e) } finally { await quietly(async () => { emit({ type: 'compact.end' }); await cue($, 'compact', 'full') }) }
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -592,7 +600,7 @@ export const register: Register = (on, options) => {
   // to copy, is not a copy)
   on('command.run', { command: 'copy' }, async ($, e, next) => {
     const res = await next(e)
-    if (typeof res?.text === 'string' && /copied to clipboard/i.test(res.text)) await copied($, 'copy')
+    if (typeof res?.text === 'string' && /copied to clipboard/i.test(res.text)) await quietly(() => copied($, 'copy'))
     return res
   })
 
@@ -677,7 +685,7 @@ export const register: Register = (on, options) => {
     const res = await next(e)
     if (reseating) return res // focus moving its own pane to new room: still focus
     paneOpen = false
-    if (focusMode) await leaveFocus($, true) // Esc in focus: back to the view before it (which may mean the pane, at its usual size)
+    if (focusMode) await quietly(() => leaveFocus($, true)) // Esc in focus: back to the view before it (which may mean the pane, at its usual size)
     return res
   })
 
