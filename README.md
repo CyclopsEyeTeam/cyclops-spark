@@ -66,8 +66,9 @@ Then type `/spark` to open the pane.
 
 | Command | What it does |
 | --- | --- |
-| `/spark` | Open or close the Spark pane. With sound on, Spark says its name as it opens. |
-| `/spark band` | Spark beside the band above the prompt (composes with whatever else draws there). |
+| `/spark` | Open or close Spark at the side (the same as `/spark side`). With sound on, Spark says its name as it opens. |
+| `/spark side` | A slim pane at the side: about a quarter of the terminal (30 to 44 columns) beside the conversation, or 10 rows above the prompt on a narrow terminal. |
+| `/spark top` | A short strip above the prompt instead, at most 5 rows, beside whatever else draws there. No pane, so nothing is covered. |
 | `/spark kitty` | Pane as real pixels (kitty / Ghostty) instead of half-block cells. |
 | `/spark state` | The truthful state line, your settings, and the last events received. |
 | `/spark calm [on\|off]` | No ambient motion anywhere. Real events still draw. |
@@ -76,13 +77,13 @@ Then type `/spark` to open the pane.
 | `/spark sound [off\|soft\|full]` | Opt-in sound cues, one per real event (macOS and Linux). |
 | `/spark murmur [on\|off]` | Quiet sounds while the model really streams: a hum while it thinks, soft bubbles while it writes. |
 | `/spark status [on\|off]` | Spark's glyph and state line in the status line. |
-| `/spark focus` | Spark takes the screen: your current exchange stays beside it, everything else steps aside. Esc or `/spark focus` returns to exactly the view you had. |
+| `/spark focus` | Spark large (about 60% of the width) beside the conversation, which keeps rolling. Esc, `/spark` or `/spark focus` returns to exactly the view you had. |
 | `/spark replay` | A labelled tour of every state. It runs on its own Spark and never touches the live one. |
 | `/spark ask <question>` | A side question, like `/btw`: answered from a fork of this session (no tools), mid-turn too. Nothing is typed into the terminal. |
 | `/spark link [on\|off\|status]` | Cyclops Link: Keeper and Prism beside Spark when they work in the same folder (below). |
 | `/spark help` | This list. |
 
-The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, band and Cyclops Link are in the
+The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip and Cyclops Link are in the
 plugin's config menu. The commands change them for the current session.
 
 ## Cyclops Link
@@ -142,11 +143,10 @@ The hover line, the status line and `/spark state` always say the same true thin
 
 ## Focus
 
-`/spark focus` gives Spark the screen. Spark is composed for all the room it gets: on a wide screen its tendrils spread
-into the width, on a tall one into the height. Beside it, only your current exchange stays: your latest prompt and the
-reply to it. Everything else comes back exactly as it was when you press Esc or type `/spark focus` again. Offers above
-the prompt that ask you something (Claude Code's *You should know* and *Heads up* cards, a survey) stay, drawn as Spark's
-speech bubble; their keys still answer them. Focus is presentation only: no event, no restart.
+`/spark focus` gives Spark a large pane, about 60% of the width, and always leaves at least 40 columns for the
+conversation. Nothing in the conversation is hidden or changed, so the work keeps rolling beside her, and the prompt keeps
+the keyboard. Spark is recomposed for whatever room she has after a resize. Esc, `/spark` or `/spark focus` returns to
+exactly the view you had. Focus is presentation only: no event, no restart.
 
 ## Sound
 

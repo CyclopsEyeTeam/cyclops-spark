@@ -1,6 +1,6 @@
 {
   "name": "cyclops-spark",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "description": "Spark, Claude's living presence for the terminal: a small procedural creature drawn only from real Claude Code session events, as half-block cells or kitty/Ghostty pixels.",
   "author": {
     "name": "Cyclops Eye Team"
@@ -58,8 +58,8 @@
     },
     "band": {
       "type": "boolean",
-      "title": "Band at start",
-      "description": "Show Spark above the prompt from the moment a session starts, without typing /spark band. Useful in small terminals.",
+      "title": "Top strip at start",
+      "description": "Show Spark in the short strip above the prompt from the moment a session starts, without typing /spark top. Useful in small terminals.",
       "default": false
     },
     "link": {

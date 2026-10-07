@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.4
+
+- Spark takes far less of the screen. `/spark side` (and a bare `/spark`) opens a slim pane: about a quarter of the
+  terminal, 30 to 44 columns, beside the conversation, or 10 rows above the prompt on a narrow terminal. Her label always
+  fits under the drawing.
+- `/spark top`: a short strip above the prompt instead (at most 5 rows, Spark and her state line side by side), with no
+  pane at all. Choosing one puts the other away. `/spark band` still works as another name for it.
+- `/spark focus` is gentler: Spark gets a large pane (about 60% of the width, always leaving 40 columns) beside the
+  conversation, which is no longer hidden, so the work keeps rolling. It no longer takes the keyboard or holds notices
+  back, and it never closes and reopens itself on a resize. Esc, `/spark` or `/spark focus` leave it.
+- Spark comes back after a resize or a tab switch: a drawing that was lost keeps asking for a redraw (backing off up to
+  every four seconds) until it is shown again, idle or busy.
+
 ## 1.4.3
 
 - Spark no longer hooks the permission check at all, so the plugin directory can confirm that every permission
