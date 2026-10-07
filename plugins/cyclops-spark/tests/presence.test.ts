@@ -66,6 +66,33 @@ test('Spark never hooks the permission check: Claude Code decides alone', async 
   expect((await cmd($, 'state')).text).not.toMatch(/waiting on you/)
 })
 
+test('/spark side is a slim pane (a quarter of the terminal, 30 to 44 columns, 10 rows when above the prompt); /spark top is a short strip and the side pane gives way to it', async ($, on) => {
+  engine(on)
+  const opens: Array<Record<string, unknown>> = []
+  on('ui.open', async (_$, e) => { opens.push({ ...(e as object) }); return loose({ value: { isPlaced: true } }) })
+  on('ui.close', async () => loose({ value: undefined }))
+  const run = (args: string, columns?: number) => $.command.run(loose({ command: 'spark', args, origin: { kind: 'person' }, presentation: columns ? { columns } : {} }))
+  expect((await run('side', 200)).text).toMatch(/^Spark at the side/)
+  expect(opens.at(-1)).toMatchObject({ columns: 44, rows: 10 })
+  await run('side')
+  await run('side', 120)
+  expect(opens.at(-1)).toMatchObject({ columns: 30, rows: 10 })
+  // a short side pane keeps its label: the drawing gives way, never the truthful line
+  const short = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...PANE, props: { ...PANE.props, bodyColumns: 40, placement: 'inline', scroll: { offset: 0, bodyRows: 9 } } } as never)
+  const r = await short.find({ type: 'Raster', key: 'spark' })
+  expect(Number(r?.props.rows)).toBeLessThanOrEqual(8)
+  expect(await short.find({ type: 'Text', text: /Spark · / })).toBeDefined()
+  await short.unmount()
+  // top: the side pane closes, and the strip above the prompt is at most 5 rows tall
+  expect((await run('top')).text).toMatch(/^Spark on top/)
+  const ui = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...BAND })
+  const strip = await ui.find({ type: 'Raster', key: 'spark' })
+  expect(strip?.props).toMatchObject({ rows: 5, columns: 25 })
+  expect(await ui.find({ type: 'Text', text: /engine band/ })).toBeDefined()
+  await ui.unmount()
+  expect((await run('top')).text).toMatch(/top strip off/)
+})
+
 test('band preview composes beside whatever already draws the band (drawn in the terminal, the glyph elsewhere)', async ($, on) => {
   engine(on)
   await cmd($, 'band')
@@ -128,7 +155,7 @@ test('commands: each setting changes, reports itself, rejects what it cannot tak
   expect((await cmd($, 'palette')).text).toMatch(/^palette: moon/)
   expect((await cmd($, 'theme')).text).toMatch(/^theme: auto/)
   const help = (await cmd($, 'help')).text
-  for (const w of ['band', 'kitty', 'state', 'calm', 'theme', 'palette', 'sound', 'murmur', 'status', 'replay', 'focus']) expect(help).toContain('/spark ' + w)
+  for (const w of ['side', 'top', 'kitty', 'state', 'calm', 'theme', 'palette', 'sound', 'murmur', 'status', 'replay', 'focus']) expect(help).toContain('/spark ' + w)
   expect((await cmd($, 'nonsense')).text).toBe(help) // an unknown word shows help instead of toggling the pane
   await cmd($, 'palette spark'); await cmd($, 'calm off')
   expect(await settings($)).toBe('palette spark · theme auto→dark · calm off · sound off · status off · murmur off · link off')
@@ -400,7 +427,7 @@ test('/spark says its name when it opens, if sound is on; never with sound off',
   await cmd($, 'sound soft')
   played.length = 0
   await clock.advance(3000) // the level preview has finished
-  expect((await cmd($, '')).text).toMatch(/pane open/)
+  expect((await cmd($, '')).text).toMatch(/at the side/)
   expect(played).toEqual(['sounds/name.wav'])
   await cmd($, '') // closing says nothing
   expect(played).toEqual(['sounds/name.wav'])
@@ -514,8 +541,7 @@ test('focus survives any resize: every size recomputes and recomposes, tiny room
 
 test('focus during real activity keeps the activity, and leaving returns to the exact previous view (the pane, at its usual size)', async ($, on) => {
   const { opens, focus, art } = focusEngine($, on)
-  await cmd($, '') // the view before: the pane open at its usual size, and the band on
-  await cmd($, 'band')
+  await cmd($, '') // the view before: Spark at the side, at its usual size
   await $.turn.start(loose({ text: 'go', turnId: 'live' }))
   await $.tool.check(loose({ tool: 'Bash', input: {}, tool_use_id: 'nope' })).catch(() => undefined)
   const busy = (await say($, 'state')).split('\n')[0]
@@ -523,15 +549,15 @@ test('focus during real activity keeps the activity, and leaving returns to the 
   expect((await art(FOCUS_PANE(150, 40, 'dock'))).raster).toEqual({ columns: 150, rows: 40 })
   expect((await say($, 'state')).split('\n')[0]).toBe(busy) // entering focus changed nothing about what Spark is doing
   expect((await cmd($, '')).text).toBe('focus off: back to your view') // a bare /spark leaves focus too
-  expect(opens.at(-1)).toMatchObject({ id: 'cyclops-spark', columns: 64, rows: 30 }) // back to the usual pane
+  expect(opens.at(-1)).toMatchObject({ id: 'cyclops-spark', columns: 44, rows: 10 }) // back to the slim side pane (a quarter of 210, at most 44)
   expect(opens.at(-1)).not.toHaveProperty('focus')
   expect((await say($, 'state')).split('\n')[1]).toMatch(/status off/)
   const band = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...BAND })
-  expect(await band.find({ type: 'Raster' })).toBeTruthy() // the band is back as it was
+  expect(await band.find({ type: 'Raster' })).toBeFalsy() // and no top strip appeared that was not there before
   await band.unmount()
   // and focus can be entered again
   expect((await focus('focus')).text).toMatch(/^focus: Spark has the screen/)
-  await focus('focus'); await cmd($, 'band'); await cmd($, '')
+  await focus('focus'); await cmd($, '')
   await reset($)
 })
 
