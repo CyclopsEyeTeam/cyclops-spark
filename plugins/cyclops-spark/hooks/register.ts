@@ -571,11 +571,11 @@ export const register: Register = (on, options) => {
     }
   })
 
-  on('tool.check', async ($, e, next) => {
-    const verdict = await next(e)
+  // Spark never decides a permission: the host's own verdict passes through unchanged, and she only notices an 'ask'
+  on('tool.check', ($, e, next) => next(e).then(async (verdict) => {
     if (verdict.decision === 'ask' && e.tool_use_id) await quietly(async () => { emit({ type: 'tool.ask', id: e.tool_use_id }); await cue($, 'ask', 'soft') })
     return verdict
-  })
+  }))
 
   on('session.compact', async ($, e, next) => {
     if (e.agentId) return next(e)
