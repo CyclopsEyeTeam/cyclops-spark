@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.3
+
+- Spark no longer hooks the permission check at all, so the plugin directory can confirm that every permission
+  decision stays with you and Claude Code. The cost: no ask cue and no "waiting on you" state; a call you deny still
+  closes its gate quietly.
+
 ## 1.4.2
 
 - Ready for the Claude plugin directory: a listing icon (Spark herself, rendered by her own renderer), settings

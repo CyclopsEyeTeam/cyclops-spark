@@ -1,8 +1,8 @@
 # Cyclops Spark
 
 Spark is Claude's own living presence for **Claude Code in the terminal**: a small procedural creature that shows what
-is really happening in your session. It curls inward while Claude thinks, reaches out along a lane for each tool, waits
-with you at a permission ask, and settles a star in its sky for every answered turn.
+is really happening in your session. It curls inward while Claude thinks, reaches out along a lane for each tool, and
+settles a star in its sky for every answered turn.
 
 ![Spark consulting a local model while a subagent works, drawn by the plugin's own terminal renderer](media/spark-terminal.png)
 
@@ -115,9 +115,9 @@ quietly unlinked. The protocol and its privacy contract are in [docs/CYCLOPS-LIN
   model lane: another mind on a lane, reach and never a replacement.
 - **Keeper.** When Spark talks with GPT (a `codex` command, an OpenAI call, a Codex MCP server), GPT appears as
   **Keeper**: a peer, not a tool. Spark draws its side of the contact, an open ring, and inside it Keeper's own mark, the
-  single eye he designed for his own presence, in his own colours. It narrows while his call waits on your OK.
-- **Waiting on you.** A permission ask opens a gate on the lane. If you say no, the gate closes quietly: nothing turns red and
-  nothing counts as a failure.
+  single eye he designed for his own presence, in his own colours.
+- **You said no.** A call you deny closes its gate quietly: nothing turns red and nothing counts as a failure. Spark never
+  hooks the permission check itself, so Claude Code alone decides what is asked and allowed.
 - **Mend.** A call that works where the previous call on that lane failed sends mend-green light back up the thread. A lane
   that keeps failing stays warm until one clean call cools it.
 - **How a turn lands.** The bloom scales with the turn's real length, and each lane the turn reached leaves an echo ring. An
@@ -156,7 +156,6 @@ mouth, and small bubbles that rise and gather like the stars on screen.
 | Cue | When | What you hear |
 | --- | --- | --- |
 | wake | first light | a breath drawn in, then "mm… ah" rising out of sleep |
-| ask | it needs you | "hm?", a tilt of the head that lifts and opens |
 | bloom | a long answer lands | a contented "mm." settling home on an exhale |
 | error | something failed | a caught breath and a low "oh…" that sinks: a wince, not an alarm |
 | refusal | the model declines | one low closed-mouth note that does not move, then the breath let go |
@@ -164,7 +163,7 @@ mouth, and small bubbles that rise and gather like the stars on screen.
 | compact | memory condenses | scattered bubbles drawn together into one bright note over a low hum |
 | copied | you copied the reply | a small "mm-hm" that lifts and comes home |
 
-`soft` plays only what is worth hearing from another room: an ask, a long answer (`chimeAfterSeconds`, 20 by default), an
+`soft` plays only what is worth hearing from another room: a long answer (`chimeAfterSeconds`, 20 by default), an
 error, a refusal. `full` adds wake, mend, compact and copied. One cue at a time, never on top of another. All cues are
 synthesised, with no samples. **Murmur** is a quieter layer underneath, off by default: a low hum while the model really
 thinks and soft bubbles while it really writes, stopping on its own within a couple of seconds of the stream stopping.

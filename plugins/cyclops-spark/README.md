@@ -11,11 +11,11 @@ README describes what each state looks like.
 
 Spark only draws and plays sounds. This section lists everything she touches, so you can check it before installing.
 
-**Permissions.** Spark hooks `tool.check` only to *notice* when Claude Code asks you to approve a tool call, so she can
-show "waiting on you" and, with sound on, play the ask cue. The hook passes Claude Code's own verdict through unchanged
-(`next(e)`), in every case. It never allows, denies or asks anything itself, and never changes a permission mode or
-setting. Her other hooks (`session.start`, `session.end`, `config.set` for the theme, `tool.call`, `session.compact`,
-`turn.complete`, `/copy` and the streaming events) also pass straight through with `next(e)` and only watch.
+**Permissions.** Spark does not hook the permission check (`tool.check`) at all: Claude Code alone decides what is
+asked, allowed or denied. She never changes a permission mode or setting. Her hooks (`session.start`, `session.end`,
+`config.set` for the theme, `tool.call`, `session.compact`, `turn.complete`, `/copy` and the streaming events) pass
+straight through with `next(e)` and only watch. When a call you denied comes back denied, she shows it as a quiet
+closed gate.
 
 **Programs she starts.**
 

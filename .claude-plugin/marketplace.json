@@ -9,7 +9,7 @@
       "name": "cyclops-spark",
       "source": "./plugins/cyclops-spark",
       "description": "Spark, Claude's living presence: a small procedural creature in your terminal, drawn only from real Claude Code events.",
-      "version": "1.4.2"
+      "version": "1.4.3"
     }
   ]
 }
