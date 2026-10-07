@@ -9,7 +9,7 @@
 //   /spark theme   dark | light            /spark palette spark | aurora | ember | moon
 //   /spark sound   off | soft | full       /spark status a glyph + the state line in the status line
 //   /spark murmur  quiet sounds under real streaming: a hum while thinking, bubbles while writing
-//   /spark focus   the pane asks for the whole width; Spark is drawn as large as fits, centred
+//   /spark focus   Spark large, beside the conversation, which keeps rolling and stays readable
 //   /spark replay  the scripted tour of every state, in the pane, labelled as a replay (never live data)
 //   /spark ask Q   a side question, answered from a fork of this session (no tools), mid-turn too, never typed anywhere
 //   /spark link    on | off | status: Cyclops Link, Keeper and Prism beside Spark when they work in the same folder
@@ -44,18 +44,13 @@ const recent: string[] = []
 let paneOpen = false
 let band = false
 let kitty = false
-// /spark focus. Presentation only: it never touches the presence (no event, no restart). While it is on, the pane asks for
-// the whole terminal, the conversation, the band, the prompt hint and Spark's own status entry step aside, and Spark is
-// composed for all the room the surface gives it. `before` is the view to return to, exactly.
+// /spark focus. Presentation only: it never touches the presence (no event, no restart). Spark gets a large pane beside the
+// conversation, which is never hidden or changed: the work keeps rolling, readable, and the prompt keeps the keyboard.
+// `before` is the view to return to, exactly.
 let focusMode = false
 let before: { paneOpen: boolean; band: boolean; statusOn: boolean } | null = null
-let focusAsked = ''      // the viewport size focus last asked the surface for room at (one ask per size: never a loop)
-let lastHeal = 0         // when a lost terminal site last asked for a redraw
-let askTimer: { cancel: () => void } | null = null
-let reseating = false     // focus closing and reopening its own pane to take new room: not you closing it
+let lastHeal = 0         // when a lost terminal drawing last asked for a redraw
 let paneSeenOnTerminal = false
-// the current exchange, so focus can leave it on show: your latest prompt and the reply to it (as it streams)
-const exchange = { prompt: null as string | null, pending: null as string | null, turnId: '', reply: '' }
 let calm = false
 let theme: Theme = 'auto'            // auto follows the host's own /config theme; dark and light pin it
 let hostTheme: 'dark' | 'light' = 'dark' // what the host's theme row says (a plain 'auto' there cannot be known: dark)
@@ -142,6 +137,7 @@ function siteFor(requestId: string, surface: string, columns: number, rows: numb
   const H = image ? Math.max(8, Math.round(rows * 16 * k)) : rows * 2
   const site = { surface, columns, rows, lod, image, fill, raster: createRaster(W, H, { fill }) }
   sites.set(requestId, site)
+  healTries = 0 // drawn again: the next loss asks quickly
   return site
 }
 
@@ -306,8 +302,8 @@ async function paint($: EngineInterface) {
       : await $.ui.blit({ requestId, key: 'spark', source: { rgba: fr.rgba!, width: fr.width!, height: fr.height! } })
     if ('deny' in res && res.deny) { sites.delete(requestId); heal($) } // unmounted or resized: ask for the render that re-adds it
   }
-  // a resize can leave the pane mounted with no site to paint (its old size refused): ask for a fresh render rather than wait
-  // for the next real event to bring one. A redraw only: nothing about the presence changes
+  // a resize, or another pane's tab in front, can leave Spark's pane with nothing to paint (its old size refused): keep
+  // asking for a fresh render (at most four times a second) until it is drawn again, idle or not. A redraw only
   if (paneOpen && paneSeenOnTerminal && !sites.has(PANE)) heal($)
   // other surfaces show the glyph and state line: redraw at most 8 per second, and only while something real is moving
   if (active && Date.now() - lastTextAt > 125) {
@@ -316,39 +312,12 @@ async function paint($: EngineInterface) {
   }
 }
 
-// After a resize the surface may re-seat the pane (docked ↔ above the prompt) with less room than focus wants: a dock
-// keeps the width it was opened at, so a terminal made wider leaves a wide strip of transcript. Once the resize settles
-// (no new size for 300 ms), focus asks for the room the terminal now has, once per size, never in a loop:
-//   docked  a pane keeps its seat across a reopen of the same id, so focus reseats it (closes and reopens its own pane,
-//           which the surface places at once from 110 columns, since you asked for this pane)
-//   inline  below 110 columns a plugin's own reopen would wait undrawn, so focus only asks; the surface decides the height
-function askForRoom($: EngineInterface, placement: string | undefined, bodyCols: number, bodyRows: number, viewport?: { columns: number; rows: number }) {
-  if (!viewport) return
-  // a pane's viewport is the conversation's: beside a dock it is the transcript strip, so the terminal is the two together
-  const docked = placement !== 'inline'
-  const terminal = docked ? viewport.columns + bodyCols + 1 : viewport.columns
-  const key = `${terminal}x${viewport.rows}`
-  if (key === focusAsked || reseating) return
-  const short = docked ? viewport.columns > 32 : bodyRows > 0 && bodyRows < viewport.rows - 10
-  if (!short) return
-  focusAsked = key
-  askTimer?.cancel()
-  askTimer = $.clock.after(300, () => {
-    askTimer = null
-    if (!focusMode || !paneOpen) return
-    const args = focusOpen(terminal, viewport.rows)
-    if (!docked || terminal < 110) { void $.ui.open(args).catch(() => undefined); return }
-    void (async () => {
-      reseating = true
-      try { await $.ui.close({ id: PANE }).catch(() => undefined); sites.delete(PANE); await $.ui.open(args) } catch { /* the next render draws what there is */ }
-      finally { reseating = false; paneOpen = true; $.ui.invalidate('ui.render') }
-    })()
-  })
-}
-
+// asks for a redraw when a drawing was lost; it backs off (a quarter second, doubling up to four seconds) while nothing comes
+// back, for example while another pane's tab is in front, so it never keeps the screen busy
+let healTries = 0
 function heal($: EngineInterface) {
-  if (Date.now() - lastHeal < 250) return
-  lastHeal = Date.now()
+  if (Date.now() - lastHeal < Math.min(4000, 250 * 2 ** Math.min(healTries, 4))) return
+  lastHeal = Date.now(); healTries++
   $.ui.invalidate('ui.render')
 }
 
@@ -422,14 +391,16 @@ const HELP = [
   '/spark status  a glyph and the state line in the status line',
   '/spark murmur  quiet sounds while thinking and writing (a hum, bubbles)',
   '/spark replay  a labelled tour of every state (not live data)',
-  '/spark focus   Spark takes the whole screen, centred (Esc returns)',
+  '/spark focus   Spark large beside the conversation, which keeps rolling (Esc or /spark returns)',
   '/spark ask Q   a side question: answered beside the work (no tools), mid-turn too',
   '/spark link    on | off | status: Keeper and Prism beside Spark (Cyclops Link, off until you turn it on)',
 ].join('\n')
 
-// focus asks for every column and row the terminal has, the keyboard, and quiet toasts. A request, not a grant: the surface
-// seats the pane (docked beside a sliver of transcript from 110 columns, else above the prompt) and a size you drag wins
-const focusOpen = (columns: number, rows: number) => ({ id: PANE, title: 'Spark', closeOnEscape: true as const, focus: true as const, holdToasts: true as const, rows: Math.max(8, rows), columns: Math.max(64, columns) })
+// focus asks for about 60% of the terminal (at least 64 columns, and always 40 left for the conversation), and the full
+// height when it sits above the prompt. It never takes the keyboard or holds notices back: the prompt stays yours.
+// A request, not a grant: the surface seats the pane, and a size you drag wins
+const focusColumns = (terminal: number) => terminal > 0 ? Math.max(64, Math.min(terminal - 40, Math.round(terminal * 0.6))) : 96
+const focusOpen = (columns: number, rows: number) => ({ id: PANE, title: 'Spark', closeOnEscape: true as const, rows: Math.max(8, Math.min(rows, 40)), columns: focusColumns(columns) })
 
 // /spark side: a slim pane, so the conversation keeps most of the screen. Beside the transcript (wide terminals) it asks
 // for about a quarter of the width, 30 to 44 columns; above the prompt (narrow terminals) it asks for 10 rows.
@@ -444,20 +415,17 @@ async function openPane($: EngineInterface, wide = 0, tall = 200): Promise<strin
     ? await $.ui.open(focusOpen(wide, tall))
     : await $.ui.open({ id: PANE, title: 'Spark', closeOnEscape: true, rows: SIDE_ROWS, columns: sideColumns(lastTerminal) })
   if (!opened.isPlaced) return 'presence pane is waiting for room'
-  return focusMode ? 'focus: Spark has the screen (Esc or /spark focus returns to your view)' : 'Spark at the side (Esc closes it; /spark top for a strip above the prompt instead)'
+  return focusMode ? 'focus: Spark large beside the conversation (Esc, /spark or /spark focus returns to your view)' : 'Spark at the side (Esc closes it; /spark top for a strip above the prompt instead)'
 }
 
 async function enterFocus($: EngineInterface, wide: number): Promise<string> {
-  if (focusMode) return 'focus is already on (Esc or /spark focus returns to your view)'
+  if (focusMode) return 'focus is already on (Esc, /spark or /spark focus returns to your view)'
   before = { paneOpen, band, statusOn }
   focusMode = true
-  focusAsked = ''
-  askTimer?.cancel(); askTimer = null
   band = false
-  if (statusOn) { statusOn = false; lastStatus = ''; $.ui.status(undefined) }
   sites.delete(PANE)
-  const text = await openPane($, wide)
-  $.ui.invalidate('ui.render') // the conversation, band and hint step aside now
+  const text = await openPane($, wide || lastTerminal)
+  $.ui.invalidate('ui.render')
   return text
 }
 
@@ -467,10 +435,9 @@ async function leaveFocus($: EngineInterface, paneAlreadyClosed: boolean): Promi
   const was = before ?? { paneOpen: true, band: false, statusOn: false }
   focusMode = false
   before = null
-  askTimer?.cancel(); askTimer = null
   sites.delete(PANE)
   band = was.band
-  if (was.statusOn) { statusOn = true; lastStatus = ''; pushStatus($) }
+  if (was.statusOn !== statusOn) { statusOn = was.statusOn; lastStatus = ''; if (statusOn) pushStatus($); else $.ui.status(undefined) }
   if (was.paneOpen) await openPane($)
   else if (!paneAlreadyClosed) { paneOpen = false; await $.ui.close({ id: PANE }).catch(() => undefined) }
   $.ui.invalidate('ui.render')
@@ -501,7 +468,7 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await refreshTheme($)
-    await $.command.register({ name: 'spark', description: 'Spark, Claude\'s living presence: /spark [focus|band|kitty|state|calm|theme|palette|sound|murmur|status|replay|ask|link|help]', immediate: true })
+    await $.command.register({ name: 'spark', description: 'Spark, Claude\'s living presence: /spark [side|top|focus|kitty|state|calm|theme|palette|sound|murmur|status|replay|ask|link|help]', immediate: true })
     const wanted = (await $.env.get('SPARK_LINK').catch(() => undefined))?.trim().toLowerCase()
     linkWanted = wanted === '1' || wanted === 'on' ? true : wanted === '0' || wanted === 'off' ? false : null
     if (linkWanted !== null) linkOn = linkWanted
@@ -525,19 +492,8 @@ export const register: Register = (on, options) => {
 
   // ---------------------------------------------------------------- real events → presence events
   on('prompt.edit', async ($, e, next) => { emit({ type: 'prompt.edit' }); return next(e) })
-  on('prompt.submit', async ($, e, next) => {
-    await quietly(() => {
-      emit({ type: 'prompt.submit' })
-      exchange.pending = typeof e.text === 'string' ? e.text : null // becomes the current exchange when its turn starts (it may be queued)
-    })
-    return next(e)
-  })
-  on('turn.start', async ($, e, next) => {
-    emit({ type: 'turn.start' })
-    if (exchange.pending !== null) { exchange.prompt = exchange.pending; exchange.pending = null }
-    exchange.turnId = String(e.turnId ?? ''); exchange.reply = ''
-    return next(e)
-  })
+  on('prompt.submit', async ($, e, next) => { await quietly(() => emit({ type: 'prompt.submit' })); return next(e) })
+  on('turn.start', async ($, e, next) => { emit({ type: 'turn.start' }); return next(e) })
 
   on('turn.step', async function* ($, e, next) {
     const sub = Boolean(e.agentId)
@@ -548,7 +504,6 @@ export const register: Register = (on, options) => {
       if (chunk.kind === 'thinking' || chunk.kind === 'text') {
         // a subagent's stream lives inside its lane (its sibling spark beats); only the main loop moves Spark itself
         emit(sub ? { type: 'agent.stream', n: chunk.text.length } : { type: 'stream', kind: chunk.kind, n: chunk.text.length }, sub)
-        if (!sub && chunk.kind === 'text' && e.turnId === exchange.turnId && exchange.reply.length < 400000) exchange.reply += chunk.text
         if (!sub && murmurOn) await murmur($, chunk.kind === 'thinking' ? 'think' : 'write')
       }
       yield chunk
@@ -655,7 +610,7 @@ export const register: Register = (on, options) => {
     }
     else if (word === 'focus') {
       const want = arg === 'on' ? true : arg === 'off' ? false : !focusMode
-      text = want ? await enterFocus($, e.presentation?.columns ?? 0) : await leaveFocus($, false)
+      text = want ? await enterFocus($, lastTerminal) : await leaveFocus($, false)
     }
     else if (word === 'ask') {
       const question = e.args.trim().replace(/^ask\s*/i, '')
@@ -701,7 +656,6 @@ export const register: Register = (on, options) => {
 
   on('ui.close', { id: PANE }, async ($, e, next) => {
     const res = await next(e)
-    if (reseating) return res // focus moving its own pane to new room: still focus
     paneOpen = false
     if (focusMode) await quietly(() => leaveFocus($, true)) // Esc in focus: back to the view before it (which may mean the pane, at its usual size)
     return res
@@ -712,6 +666,7 @@ export const register: Register = (on, options) => {
     const els = $.ui.resolve(e)
     const { f, label } = paneFrame()
     if (e.surface === 'terminal') {
+      paneSeenOnTerminal = true
       const { Box, Text, Raster, Image } = $.ui.resolve(e)
       let columns = Math.max(16, Math.min(160, (e.props.bodyColumns ?? 60) - 1))
       let rows = Math.max(8, Math.min(60, Math.round(columns / 2.1)))
@@ -720,14 +675,12 @@ export const register: Register = (on, options) => {
       const under = 1 + (linkOn && linkView && !replay ? 1 : 0)
       if (!focusMode && bodyRows > under + 2 && rows > bodyRows - under) rows = bodyRows - under
       if (focusMode) {
-        paneSeenOnTerminal = true
         // the whole body, as it is *now*: every render recomputes from the pane's current size, so a resize is
         // recompute → recompose → keep painting. Never larger than the room (a drawing taller than its pane is clipped
-        // away), and no label: the screen is Spark's. A replay keeps its label, because a replay must never pass for live
+        // away), with the truthful line under it when there is room for both
         const bodyCols = e.props.bodyColumns ?? 60
-        const showLabel = replay !== null && bodyRows >= 6
+        const showLabel = bodyRows >= 6
         const room = (bodyRows || 8) - (showLabel ? 1 : 0) // a size not reported yet: draw small, the next render has it
-        askForRoom($, e.props.placement, bodyCols, bodyRows, e.viewport)
         if (room < 4 || bodyCols < 8) return Box({ flexDirection: 'row', justifyContent: 'center', width: bodyCols, children: [Text({ children: [f.glyph + ' ' + label], wrap: 'truncate-end' })] })
         rows = Math.min(120, room)
         columns = Math.min(320, bodyCols)
@@ -756,38 +709,14 @@ export const register: Register = (on, options) => {
       : Box({ flexDirection: 'column', children: [line] })
   })
 
-  // focus: while Spark has the screen, the conversation steps aside except the current exchange (your latest prompt and
-  // the reply to it). Everything is still there and comes back the moment focus ends. Questions, permission dialogs,
-  // notices, the mode line and the prompt are the host's and are never hidden
-  const isCurrentReply = (text: string) => { const t = text.trim(); return t.length > 0 && exchange.reply.includes(t) }
-  on('ui.render', { component: 'UserMessage' }, async ($, e, next) =>
-    focusMode && !(exchange.prompt !== null && e.props.text.trim() === exchange.prompt.trim()) ? $.ui.resolve(e).Box({ children: [] }) : next(e))
-  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) =>
-    focusMode && !isCurrentReply(e.props.text) ? $.ui.resolve(e).Box({ children: [] }) : next(e))
-  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => focusMode ? $.ui.resolve(e).Box({ children: [] }) : next(e))
-  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => focusMode ? $.ui.resolve(e).Box({ children: [] }) : next(e))
-  on('ui.render', { component: 'ToolGroup' }, async ($, e, next) => focusMode ? $.ui.resolve(e).Box({ children: [] }) : next(e))
-  on('ui.render', { component: 'ToolProgress' }, async ($, e, next) => focusMode ? $.ui.resolve(e).Box({ children: [] }) : next(e))
-  on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => focusMode ? $.ui.resolve(e).Box({ children: [] }) : next(e))
-  on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => focusMode ? $.ui.resolve(e).Box({ children: [] }) : next(e))
-  on('ui.render', { component: 'Spinner' }, async ($, e, next) => focusMode ? $.ui.resolve(e).Box({ children: [] }) : next(e))
-
-  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => focusMode ? $.ui.resolve(e).Box({ children: [] }) : next(e))
-
-  // The band above the prompt. What others draw there that asks you something (Claude Code's "You should know" and "Heads
-  // up" offers, a survey: anything with something to press) is Spark speaking: with Spark in the band, or in focus, it is
-  // drawn as Spark's speech bubble, joined to it by a short line. Nothing in it is read, copied or changed: it is their own
-  // tree, so its keys still answer it. In focus, band content that asks nothing steps aside as before.
+  // The top strip above the prompt. What others draw there that asks you something (Claude Code's "You should know" and
+  // "Heads up" offers, a survey: anything with something to press) is Spark speaking: with Spark on top, it is drawn as
+  // Spark's speech bubble, joined to it by a short line. Nothing in it is read, copied or changed: it is their own tree,
+  // so its keys still answer it.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e)
     const els = $.ui.resolve(e)
-    if (focusMode) {
-      if (e.props.hasSurvey) return below
-      if (!below || !asksSomething(below)) return els.Box({ children: [] })
-      const f = liveFrame()
-      return els.Box({ flexDirection: 'row', columnGap: 1, children: [els.Text({ children: [f.glyph + ' ╶'], dimColor: true }), below as never] })
-    }
-    if (!band) return below
+    if (focusMode || !band) return below // in focus, what draws above the prompt is left exactly as it is
     const f = liveFrame()
     let art
     if (e.surface === 'terminal') {
