@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.1
+
+- Gating hooks: Spark's own work (drawing, cues, focus) is wrapped so it can never block a prompt, tool call, compact or copy. Claude Code's own errors still pass through.
+
 ## 1.4.0
 
 - **Cyclops Link** (off until you turn it on): Spark, Keeper and Prism notice each other when they work in the same folder.
