@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.4
+
+- Spark takes far less of the screen. `/spark side` (and a bare `/spark`) opens a slim pane: about a quarter of the
+  terminal, 30 to 44 columns, beside the conversation, or 10 rows above the prompt on a narrow terminal. Her label always
+  fits under the drawing.
+- `/spark top`: a short strip above the prompt instead (at most 5 rows, Spark and her state line side by side), with no
+  pane at all. Choosing one puts the other away. `/spark band` still works as another name for it.
+
 ## 1.4.3
 
 - Spark no longer hooks the permission check at all, so the plugin directory can confirm that every permission
