@@ -66,8 +66,9 @@ Then type `/spark` to open the pane.
 
 | Command | What it does |
 | --- | --- |
-| `/spark` | Open or close the Spark pane. With sound on, Spark says its name as it opens. |
-| `/spark band` | Spark beside the band above the prompt (composes with whatever else draws there). |
+| `/spark` | Open or close Spark at the side (the same as `/spark side`). With sound on, Spark says its name as it opens. |
+| `/spark side` | A slim pane at the side: about a quarter of the terminal (30 to 44 columns) beside the conversation, or 10 rows above the prompt on a narrow terminal. |
+| `/spark top` | A short strip above the prompt instead, at most 5 rows, beside whatever else draws there. No pane, so nothing is covered. |
 | `/spark kitty` | Pane as real pixels (kitty / Ghostty) instead of half-block cells. |
 | `/spark state` | The truthful state line, your settings, and the last events received. |
 | `/spark calm [on\|off]` | No ambient motion anywhere. Real events still draw. |
@@ -82,7 +83,7 @@ Then type `/spark` to open the pane.
 | `/spark link [on\|off\|status]` | Cyclops Link: Keeper and Prism beside Spark when they work in the same folder (below). |
 | `/spark help` | This list. |
 
-The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, band and Cyclops Link are in the
+The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip and Cyclops Link are in the
 plugin's config menu. The commands change them for the current session.
 
 ## Cyclops Link
