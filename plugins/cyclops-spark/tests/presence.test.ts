@@ -471,92 +471,80 @@ function focusEngine($: Engine, on: On) {
   return { clock, opens, closes, reply, focus, draw, art }
 }
 
-test('focus: Spark owns the screen, with only your current exchange left beside it; leaving restores exactly the view before', async ($, on) => {
+test('focus: Spark large beside the conversation, which is never hidden; the prompt keeps the keyboard; leaving restores exactly the view before', async ($, on) => {
   const { opens, closes, reply, focus, draw, art } = focusEngine($, on)
-  await cmd($, 'status on') // the view before focus: pane closed, band off, status entry on
+  await cmd($, 'status on') // the view before focus: pane closed, top strip off, status entry on
   const ask = async (text: string, turnId: string, answer: string) => { await $.prompt.submit(loose({ text })); await $.turn.start(loose({ text, turnId })); await reply(answer, turnId) }
   await ask('an older prompt', 't1', 'an older answer')
   await ask('how is the build?', 't2', 'The build is green.')
-  expect(await draw('UserMessage', 'an older prompt')).toBe('prompt row') // before focus, everything shows
 
-  expect((await focus('focus')).text).toMatch(/^focus: Spark has the screen/)
-  expect(opens.at(-1)).toMatchObject({ id: 'cyclops-spark', columns: 210, focus: true, closeOnEscape: true, holdToasts: true })
-  // the whole body is Spark's, no label (it is not a replay), composed wide rather than a square in the middle
-  expect((await art(FOCUS_PANE(200, 52, 'dock'))).raster).toEqual({ columns: 200, rows: 52 })
-  // the current exchange stays; the rest of the conversation, the hint and Spark's status entry step aside
-  expect(await draw('UserMessage', 'how is the build?')).toBe('prompt row')
+  expect((await focus('focus')).text).toMatch(/^focus: Spark large beside the conversation/)
+  const opened = opens.at(-1)!
+  expect(opened).toMatchObject({ id: 'cyclops-spark', columns: 126, closeOnEscape: true }) // 60% of 210, so 84 columns stay for the conversation
+  expect(opened).not.toHaveProperty('focus')      // the prompt keeps the keyboard
+  expect(opened).not.toHaveProperty('holdToasts') // notices still show
+  // Spark fills the pane, with her truthful line under her
+  const big = await art(FOCUS_PANE(125, 52, 'dock'))
+  expect(big.raster).toEqual({ columns: 125, rows: 51 })
+  expect(big.text).toMatch(/Spark · /)
+  // the conversation keeps rolling: nothing in it is hidden or changed, old or new
+  expect(await draw('UserMessage', 'an older prompt')).toBe('prompt row')
+  expect(await draw('AssistantMessage', 'an older answer')).toBe('reply row')
   expect(await draw('AssistantMessage', 'The build is green.')).toBe('reply row')
-  expect(await draw('UserMessage', 'an older prompt')).toBe('')
-  expect(await draw('AssistantMessage', 'an older answer')).toBe('')
-  expect(await draw('PromptHint', '')).toBe('')
-  expect(await settings($)).toMatch(/status off/)
+  expect(await draw('PromptHint', '')).toBe('hint')
+  expect(await settings($)).toMatch(/status on/) // focus leaves the status entry alone too
 
   expect((await focus('focus')).text).toBe('focus off: back to your view')
   expect(closes).toContain('cyclops-spark') // the pane was closed before focus, so it closes again
   expect(await settings($)).toMatch(/status on/)
-  expect(await draw('UserMessage', 'an older prompt')).toBe('prompt row')
-  expect(await draw('PromptHint', '')).toBe('hint')
   await cmd($, 'status off')
   await reset($)
 })
 
-test('focus survives any resize: every size recomputes and recomposes, tiny rooms fall back to the glyph, and no resize invents activity', async ($, on) => {
+test('focus survives any resize: every size recomputes and recomposes, tiny rooms fall back to the glyph, and a resize never reopens anything', async ($, on) => {
   const { clock, opens, focus, art } = focusEngine($, on)
   await focus('focus')
   const stateBefore = (await say($, 'state')).split('\n')
+  const asked = opens.length
   const sizes: Array<[number, number, 'dock' | 'inline', number, number]> = [ // [body cols, body rows, seat, conversation cols, screen rows]
-    [200, 52, 'dock', 24, 60],    // full size
-    [90, 52, 'dock', 20, 60],     // narrow dock
+    [126, 52, 'dock', 84, 60],    // as asked
+    [90, 52, 'dock', 60, 60],     // narrower
     [100, 3, 'inline', 100, 40],  // the narrow-terminal case that used to vanish: seated above the prompt, almost no room
     [100, 30, 'inline', 100, 40], // given room again
-    [60, 40, 'dock', 20, 46],     // tall and thin: recomposed upward, not cropped
-    [320, 90, 'dock', 20, 96],    // maximised
-    [150, 44, 'dock', 22, 50],    // unmaximised
+    [60, 40, 'dock', 40, 46],     // tall and thin: recomposed upward, not cropped
+    [320, 90, 'dock', 100, 96],   // maximised
+    [150, 44, 'dock', 80, 50],    // unmaximised
   ]
   for (let round = 0; round < 3; round++) { // shrink, expand, and rapid consecutive resizes
     for (const [w, h, place, vw, vh] of sizes) {
       const { raster, text } = await art(FOCUS_PANE(w, h, place, vw, vh))
       if (h < 4) { expect(raster).toBeNull(); expect(text).toMatch(/Spark · idle/) } // too small to draw: the glyph and the truth
-      else expect(raster).toEqual({ columns: Math.min(320, w), rows: Math.min(120, h) })
+      else expect(raster).toEqual({ columns: Math.min(320, w), rows: Math.min(120, h - (h >= 6 ? 1 : 0)) })
     }
   }
-  await clock.advance(400) // let the resizes above settle
-  // a narrow terminal seats the pane above the prompt with little room: once the resize settles, focus asks once per size
-  const asks = opens.length
-  await art(FOCUS_PANE(100, 3, 'inline', 101, 41)); await clock.advance(400)
-  expect(opens.length).toBe(asks + 1)
-  expect(opens.at(-1)).toMatchObject({ rows: 41, focus: true })
-  await art(FOCUS_PANE(100, 3, 'inline', 101, 41)); await clock.advance(400)
-  expect(opens.length).toBe(asks + 1) // never a loop
-  // a terminal made wider leaves the dock at its old width: focus reseats its own pane for the new room, and stays focus
-  await art(FOCUS_PANE(120, 50, 'dock', 139, 60)); await clock.advance(400) // a 260-column terminal: a 139-column strip beside a 120-column dock
-  expect(opens.length).toBe(asks + 2)
-  expect(opens.at(-1)).toMatchObject({ columns: 260, focus: true })
-  expect(await settings($)).toMatch(/status off · murmur off · link off$/) // still focus: nothing was restored
+  await clock.advance(2000)
+  expect(opens.length).toBe(asked) // no reseating, no loops: the surface and you decide the size
   // resizing is presentation: the state line and the recent events are exactly what they were
   expect((await say($, 'state')).split('\n')).toEqual(stateBefore)
   await focus('focus')
   await reset($)
 })
 
-test('focus during real activity keeps the activity, and leaving returns to the exact previous view (the pane, at its usual size)', async ($, on) => {
+test('focus during real activity keeps the activity, and leaving returns to the exact previous view (the side pane, at its usual size)', async ($, on) => {
   const { opens, focus, art } = focusEngine($, on)
   await cmd($, '') // the view before: Spark at the side, at its usual size
   await $.turn.start(loose({ text: 'go', turnId: 'live' }))
-  await $.tool.check(loose({ tool: 'Bash', input: {}, tool_use_id: 'nope' })).catch(() => undefined)
   const busy = (await say($, 'state')).split('\n')[0]
   await focus('focus')
-  expect((await art(FOCUS_PANE(150, 40, 'dock'))).raster).toEqual({ columns: 150, rows: 40 })
+  expect((await art(FOCUS_PANE(150, 40, 'dock'))).raster).toEqual({ columns: 150, rows: 39 })
   expect((await say($, 'state')).split('\n')[0]).toBe(busy) // entering focus changed nothing about what Spark is doing
   expect((await cmd($, '')).text).toBe('focus off: back to your view') // a bare /spark leaves focus too
   expect(opens.at(-1)).toMatchObject({ id: 'cyclops-spark', columns: 44, rows: 10 }) // back to the slim side pane (a quarter of 210, at most 44)
-  expect(opens.at(-1)).not.toHaveProperty('focus')
-  expect((await say($, 'state')).split('\n')[1]).toMatch(/status off/)
   const band = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...BAND })
   expect(await band.find({ type: 'Raster' })).toBeFalsy() // and no top strip appeared that was not there before
   await band.unmount()
   // and focus can be entered again
-  expect((await focus('focus')).text).toMatch(/^focus: Spark has the screen/)
+  expect((await focus('focus')).text).toMatch(/^focus: Spark large/)
   await focus('focus'); await cmd($, '')
   await reset($)
 })
@@ -644,7 +632,7 @@ test('a side question: /spark ask answers from a fork of this session, mid-turn,
   expect(writes).toEqual([]) // never the question, never the answer, nowhere
 })
 
-test('an offer above the prompt ("You should know") is Spark speaking: it stays in focus as Spark\'s bubble, and joins Spark in the band', async ($, on) => {
+test('an offer above the prompt ("You should know") is Spark speaking when she is on top: it joins her as her bubble; focus leaves it alone', async ($, on) => {
   mock.store(on)
   mock.clock(on)
   let offer = true
@@ -666,11 +654,11 @@ test('an offer above the prompt ("You should know") is Spark speaking: it stays 
   }
   // ordinary view: the offer as it is, untouched
   expect(await look()).toMatchObject({ offer: true, button: true, joined: false })
-  // focus: the offer stays (it asks you something), spoken by Spark; a quiet line steps aside
+  // focus leaves what draws above the prompt exactly as it is: the offer, and a quiet line too
   await focus('focus')
-  expect(await look()).toMatchObject({ offer: true, button: true, joined: true })
+  expect(await look()).toMatchObject({ offer: true, button: true, joined: false })
   offer = false
-  expect(await look()).toMatchObject({ quiet: false, offer: false })
+  expect(await look()).toMatchObject({ quiet: true, offer: false })
   await focus('focus')
   // Spark in the band: the offer is its bubble, joined to it
   offer = true
