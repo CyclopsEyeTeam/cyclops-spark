@@ -1,6 +1,6 @@
 {
   "name": "cyclops-spark",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Spark, Claude's living presence for the terminal: a small procedural creature drawn only from real Claude Code session events, as half-block cells or kitty/Ghostty pixels.",
   "author": {
     "name": "Cyclops Eye Team"
@@ -35,7 +35,7 @@
     "sound": {
       "type": "string",
       "title": "Sound",
-      "description": "Soft cues for real events: a permission ask, a long turn landing, an error, a refusal. 'full' adds wake, mend, compaction and a copied reply. Plays on macOS and Linux. One of: off, soft, full.",
+      "description": "Soft cues for real events: a long turn landing, an error, a refusal. 'full' adds wake, mend, compaction and a copied reply. Plays on macOS and Linux. One of: off, soft, full.",
       "default": "off"
     },
     "chimeAfterSeconds": {

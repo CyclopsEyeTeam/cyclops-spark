@@ -45,22 +45,25 @@ test('the pane is a Raster in the terminal; any other surface gets only the glyp
   await term.unmount()
 })
 
-test('a held MCP call to a local model shows as a model lane; a permission ask as waiting on you', async ($, on) => {
+test('a held MCP call to a local model shows as a model lane', async ($, on) => {
   engine(on)
   let release = () => {}
   on('tool.call', () => new Promise((resolve) => { release = () => resolve(loose({ result: 'ok' })) }))
-  on('tool.check', async () => ({ decision: 'ask' as const }))
   await $.turn.start(loose({ text: 'go', turnId: 'a' }))
   const call = $.tool.call(loose<never>({ tool: 'mcp__ollama__generate', model: 'gemma3', tool_use_id: 'o1' }))
   for (let i = 0; i < 5; i++) await Promise.resolve()
   expect((await cmd($, 'state')).text).toMatch(/^Spark · consulting · gemma3 lane/)
-  await $.tool.check(loose({ tool: 'mcp__ollama__generate', input: {}, tool_use_id: 'o1' }))
-  expect((await cmd($, 'state')).text).toMatch(/^Spark · waiting on you · gemma3 lane/)
   release()
   await call
-  expect((await cmd($, 'state')).text).not.toMatch(/waiting on you/)
   await $.turn.complete(loose({ reason: 'answer', answer: '', durationMs: 1, isAborted: false, turnId: 'a' }))
   expect((await cmd($, 'state')).text).toMatch(/^Spark · done/)
+})
+
+test('Spark never hooks the permission check: Claude Code decides alone', async ($, on) => {
+  engine(on)
+  on('tool.check', async () => ({ decision: 'ask' as const }))
+  expect(await $.tool.check(loose({ tool: 'Bash', input: {}, tool_use_id: 'p1' }))).toMatchObject({ decision: 'ask' })
+  expect((await cmd($, 'state')).text).not.toMatch(/waiting on you/)
 })
 
 test('band preview composes beside whatever already draws the band (drawn in the terminal, the glyph elsewhere)', async ($, on) => {
@@ -157,39 +160,38 @@ test('sound is off by default; soft speaks only what is worth hearing from anoth
   const clock = engine(on)
   const played: Array<{ asset: string; gain?: number }> = []
   on('audio.play', async (_$, e) => { played.push({ asset: String((e.clip as { asset?: string }).asset), gain: e.gain }); return loose({ value: undefined }) })
-  on('tool.check', async () => ({ decision: 'ask' as const }))
-  const ask = (id: string) => $.tool.check(loose({ tool: 'Bash', input: {}, tool_use_id: id }))
+  const fail = async (id: string) => { await $.turn.start(loose({ text: 'go', turnId: id })); await $.turn.complete(loose<never>({ reason: 'error', answer: '', durationMs: 1000, isAborted: false, turnId: id })) }
   const assets = () => played.map((p) => p.asset)
 
   // off: nothing plays, whatever happens
-  await ask('a0')
+  await fail('e0')
   await $.turn.start(loose({ text: 'go', turnId: 't0' })); await $.turn.complete(refusal('t0'))
   expect(played).toHaveLength(0)
 
-  // soft: the enabling gesture previews the level; then asks, refusals, errors and long answers are heard
+  // soft: the enabling gesture previews the level; then errors, refusals and long answers are heard
   expect((await cmd($, 'sound soft')).text).toMatch(/^sound: soft/)
   expect(assets()).toEqual(['sounds/bloom.wav'])
   expect(played[0]!.gain).toBe(0.5)
   await clock.advance(3000) // the preview (2.9 s) has finished
-  await ask('a1')
-  expect(assets().slice(1)).toEqual(['sounds/ask.wav'])
-  // a refusal lands while the ask is still speaking: never on top of it; it waits, and is heard when the ask has finished
+  await fail('e1')
+  expect(assets().slice(1)).toEqual(['sounds/error.wav'])
+  // a refusal lands while the error is still speaking: never on top of it; it waits, and is heard when the error has finished
   await $.turn.start(loose({ text: 'go', turnId: 't1' })); await $.turn.complete(refusal('t1'))
-  expect(assets().slice(1)).toEqual(['sounds/ask.wav'])
+  expect(assets().slice(1)).toEqual(['sounds/error.wav'])
   await clock.advance(2000)
-  expect(assets().slice(1)).toEqual(['sounds/ask.wav', 'sounds/refusal.wav'])
-  // two more while that one plays: one slot, the more important wins (an ask outranks a refusal); the other is let go
+  expect(assets().slice(1)).toEqual(['sounds/error.wav', 'sounds/refusal.wav'])
+  // two more while that one plays: one slot, the more important wins (a tie goes to the newest); the other is let go
   await $.turn.start(loose({ text: 'go', turnId: 't2' })); await $.turn.complete(refusal('t2'))
-  await ask('a2')
+  await fail('e2')
   await clock.advance(3200)
-  expect(assets().slice(1)).toEqual(['sounds/ask.wav', 'sounds/refusal.wav', 'sounds/ask.wav'])
+  expect(assets().slice(1)).toEqual(['sounds/error.wav', 'sounds/refusal.wav', 'sounds/error.wav'])
   await clock.advance(2100)
   // a cue that has waited too long is dropped: it would point at something already over
-  await ask('a3')                                                   // speaks now (1.9 s)
+  await fail('e3')                                                  // speaks now (1.85 s)
   await $.turn.start(loose({ text: 'go', turnId: 't3' })); await $.turn.complete(refusal('t3')) // waits behind it
-  expect(assets().slice(4)).toEqual(['sounds/ask.wav'])
+  expect(assets().slice(4)).toEqual(['sounds/error.wav'])
   await clock.advance(2000)
-  expect(assets().slice(4)).toEqual(['sounds/ask.wav', 'sounds/refusal.wav'])
+  expect(assets().slice(4)).toEqual(['sounds/error.wav', 'sounds/refusal.wav'])
   await clock.advance(3100)
   await $.turn.start(loose({ text: 'go', turnId: 't4' })); await $.turn.complete(answer('t4', 8)) // 8 s: not long enough for soft
   expect(assets().slice(6)).toEqual([])
@@ -205,7 +207,7 @@ test('sound is off by default; soft speaks only what is worth hearing from anoth
   expect(assets().filter((a) => a === 'sounds/bloom.wav').length).toBe(4)
   // the level preview keeps the rule too: set while a cue speaks, it waits its turn instead of playing over it
   await clock.advance(3000)
-  await ask('a4')
+  await fail('e4')
   const n = played.length
   await cmd($, 'sound full')
   expect(assets().slice(n)).toEqual([])
