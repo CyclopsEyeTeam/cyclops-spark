@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.2
+
+- Ready for the Claude plugin directory: a listing icon (Spark herself, rendered by her own renderer), settings
+  written the way the directory reads them (the choices are in each description), the permission hook passing Claude
+  Code's verdict straight through, and a README section listing everything Spark touches on your machine.
+
 ## 1.4.1
 
 - Gating hooks: Spark's own work (drawing, cues, focus) is wrapped so it can never block a prompt, tool call, compact or copy. Claude Code's own errors still pass through.
