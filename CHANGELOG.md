@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.5.0
+
+- **The painter** (off until you turn it on): a small sub-agent paints Spark's expression of each turn in the room below
+  her side pane, with a few words of hers under it. It is one short, tool-less model call per painting through your own
+  session (Haiku by default; the `paintModel` setting or `/spark paint model <name>` picks another), at most one every
+  20 seconds, and only for turns of 3 seconds or more; `/spark paint now` makes one any time. It sees only the turn's
+  shape: how long it ran, which kinds of tools and how many, failures, denials, mends, how much was thought and written,
+  how it ended. Never your words, paths, commands or tool names. The `paintGist` setting (or `/spark paint gist on`) also
+  gives it a short excerpt (at most 600 characters) of each reply, so a painting can echo the subject. What comes back is
+  a small paint program, checked and clamped, drawn by Spark's own renderer and laid down mark by mark. Nothing is written
+  anywhere; `/clear` empties it with the stars.
+- The painting only ever takes rows Spark is not using: she and her label never get smaller for it. With a little room it
+  shows only its title; with none it waits. Not in focus, the top strip or the replay.
+- **Many ways of saying it.** Each time an expression really begins, Spark rolls which way she says it this time:
+  thinking (coil, tide, lattice, pulse), writing (currents, fountain, ripples, flares), an answer landing (spring,
+  petals, halo, spiral), an error (recoil, shiver, crack), a mend (knit, seeds, close), first light (ring, unfurl, rays)
+  and each call going out (reach, flare, spark). Still the same expression, never invented: a roll happens only at the
+  real event that starts it, is seeded by that event (the same session, and the replay, always say it the same way), and
+  never repeats the way just used. All of it is in `MAPPING`.
+
 ## 1.4.4
 
 - Spark takes far less of the screen. `/spark side` (and a bare `/spark`) opens a slim pane: about a quarter of the

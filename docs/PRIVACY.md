@@ -18,13 +18,27 @@ and label (for example `shell`, `gemma3`, `Keeper`), never the command or its ar
 
 ## Model use
 
-Only `/spark ask`, which you type yourself, uses the model: one tool-less `$.model.fork` over this session's own
-transcript, through Claude Code's own API connection. Nothing is added to the conversation.
+`/spark ask`, which you type yourself, uses the model: one tool-less `$.model.fork` over this session's own transcript,
+through Claude Code's own API connection. Nothing is added to the conversation.
+
+The painter, only while you have it on (the `paint` setting or `/spark paint on`), makes one tool-less `$.model.complete`
+per painting through the same connection (Haiku unless you name another model), at most one on its own every 20 seconds.
+It is sent:
+
+- the turn's shape: whether it ended in an answer, an error or a refusal; its length in seconds; how many calls of each
+  tool family (read, write, shell, web, mcp, model, peer, agent, plan, other); how many failed, were denied, were
+  interrupted or mended; how many characters were thought and written; how many model steps and the effort asked for;
+  whether a subagent streamed; Spark's own state line; the turn's number in the session; her palette;
+- with `paintGist` on (off by default): the first 600 characters of the reply's final text, marked as data.
+
+Never your prompt, file paths, commands, tool names, model names or ids. The answer is a small paint program, checked and
+clamped before it is drawn; its title is shown as plain text. Nothing of it is written anywhere: the last painting is kept
+in memory until painting goes off, `/clear`, or Claude Code exits.
 
 ## Settings
 
-The `userConfig` options (palette, theme, calm, sound, chimeAfterSeconds, statusLine, murmur, band, link) are stored by
-Claude Code as plugin settings. None of them is personal data.
+The `userConfig` options (palette, theme, calm, sound, chimeAfterSeconds, statusLine, murmur, band, link, paint,
+paintGist, paintModel) are stored by Claude Code as plugin settings. None of them is personal data.
 
 ## Processes
 

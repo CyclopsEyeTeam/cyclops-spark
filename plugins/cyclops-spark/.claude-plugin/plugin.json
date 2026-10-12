@@ -1,6 +1,6 @@
 {
   "name": "cyclops-spark",
-  "version": "1.4.4",
+  "version": "1.5.0",
   "description": "Spark, Claude's living presence for the terminal: a small procedural creature drawn only from real Claude Code session events, as half-block cells or kitty/Ghostty pixels.",
   "author": {
     "name": "Cyclops Eye Team"
@@ -67,6 +67,24 @@
       "title": "Cyclops Link",
       "description": "Let Spark notice Keeper (Codex) and Prism (Antigravity) working in the same folder, and let them notice her. She shares only her coarse state, her counts of calls and branches, and whom she is calling; never prompts, commands, paths or names. Needs python3. Off by default.",
       "default": false
+    },
+    "paint": {
+      "type": "boolean",
+      "title": "Painter",
+      "description": "A small painter (a sub-agent, Haiku by default) paints Spark's expression of each turn in the room below her side pane, and /spark paint makes one any time. It sees only the turn's shape (how long, which kinds of tools, failures, how much was written), never your words, unless Gist is on. Each painting is one short model call through your session. Off by default.",
+      "default": false
+    },
+    "paintGist": {
+      "type": "boolean",
+      "title": "Painter sees the gist",
+      "description": "Also give the painter a short excerpt (at most 600 characters) of each reply, so a painting can echo the subject. Off by default.",
+      "default": false
+    },
+    "paintModel": {
+      "type": "string",
+      "title": "Painter model",
+      "description": "The model that paints: an alias such as haiku or sonnet, or a full model id.",
+      "default": "haiku"
     }
   },
   "license": "MIT"
