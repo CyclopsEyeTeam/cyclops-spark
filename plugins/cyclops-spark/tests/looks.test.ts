@@ -70,6 +70,11 @@ test('looks: every way of saying each expression draws something of its own whil
     if (f.looks.err === 2) expect(crack?.c).toEqual([0.95, 0.34, 0.36])
     else expect(crack).toBeUndefined()
   }
+  // an interrupt was you: whatever way the last error was said, it is never drawn red
+  for (let k = 0; k < 8; k++) {
+    const p = mk(...Array.from({ length: k + 1 }, (_, i) => turn(i * 10, 2, 'error')).flat(), ...turn(k * 10 + 5, 1, 'aborted'))
+    expect(buildScene(p.sample(k * 10 + 6.1), 'panel').some((s: { id: string }) => s.id === 'crack')).toBe(false)
+  }
 })
 
 test('looks: a mend is said at the core too, only right after the call that knit it', async () => {
