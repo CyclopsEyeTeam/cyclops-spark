@@ -14,6 +14,8 @@ export const PAINT_KINDS = ['line', 'dot', 'ring', 'glow']
 export const MAX_MARKS = 48
 export const GIST_CHARS = 600
 const TITLE_CHARS = 42
+// control, zero-width and bidirectional characters, named by code point so none of them ever sits in this source
+const HIDDEN = new RegExp('[' + [[0x00, 0x1f], [0x7f, 0x9f], [0x200b, 0x200f], [0x202a, 0x202e], [0x2066, 0x2069]].map(([a, b]) => String.fromCharCode(a) + '-' + String.fromCharCode(b)).join('') + ']', 'g')
 
 const clamp = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d }
 const toHex = ([r, g, b]) => '#' + [r, g, b].map((v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0')).join('')
@@ -106,7 +108,7 @@ export function parsePainting(text, palette = 'spark') {
   }
   if (marks.length === 0) return null
   // the title is shown as plain text: printable characters only, one short line
-  const title = String(raw.title ?? '').replace(/[\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, TITLE_CHARS)
+  const title = String(raw.title ?? '').replace(HIDDEN, ' ').replace(/\s+/g, ' ').trim().slice(0, TITLE_CHARS)
   return { title, marks }
 }
 
