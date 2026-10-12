@@ -119,6 +119,8 @@ const PALETTES = {
   ember:  [[1.00, 0.88, 0.70], [0.78, 0.22, 0.30], [1.00, 0.66, 0.24], [0.94, 0.46, 0.20], [0.90, 0.10, 0.20], [0.44, 0.30, 0.26], [0.60, 0.92, 0.62]],
   moon:   [[0.92, 0.95, 1.00], [0.46, 0.52, 0.86], [0.78, 0.86, 1.00], [0.60, 0.74, 0.92], [0.95, 0.24, 0.32], [0.38, 0.42, 0.52], [0.72, 0.96, 0.84]],
 }
+// the seven seeds of a palette (home, think, speak, tool, error, rest, mend), for the painter to paint in Spark's own colours
+export const paletteSeeds = (name) => (PALETTES[name] || PALETTES.spark).map((c) => c.slice())
 const rgbOf = ([r, g, b]) => ({ r, g, b })
 const q = (x) => Math.round(x * 50) / 50 // recipes are cached by value, like infinite_colour/engine.py
 const colourCache = new Map()
@@ -157,6 +159,21 @@ function laneColour(body, lane, errAmt) {
 }
 const arr = (c) => [c.r, c.g, c.b]
 
+// ------------------------------------------------------------------ looks (one expression, many ways of saying it)
+// Each time an expression really begins (thinking starts, writing starts, an answer lands, a call goes out, an error,
+// a mend, first light), Spark rolls which way she says it this time. Still the same expression, never invented: a roll
+// happens only at the real event that starts it, never on a timer. The roll is seeded by the event itself, so the same
+// session (and the replay) always says it the same way, and never the same way twice in a row.
+export const LOOKS = {
+  think: ['coil', 'tide', 'lattice', 'pulse'],
+  speak: ['currents', 'fountain', 'ripples', 'flares'],
+  land: ['spring', 'petals', 'halo', 'spiral'],
+  err: ['recoil', 'shiver', 'crack'],
+  mend: ['knit', 'seeds', 'close'],
+  wake: ['ring', 'unfurl', 'rays'],
+  tool: ['reach', 'flare', 'spark'],
+}
+
 // ------------------------------------------------------------------ the presence (state machine)
 
 export function createPresence(entity = 'spark', seed = 7) { // Spark only
@@ -184,6 +201,18 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
   const sideAsks = new Map()             // id → when: side questions you asked (/spark ask), still being answered
   let sideDone = null                    // { at, ok, a }: the last side answer arriving
   const log = []
+  // LOOKS: which way each expression is said this time, rolled when it really begins
+  const looks = { think: -1, speak: -1, land: -1, err: -1, mend: -1, wake: -1 } // nothing said yet: the first roll may be any way
+  const rolls = { think: 0, speak: 0, land: 0, err: 0, mend: 0, wake: 0, tool: 0 }
+  let mendLookAt = -99
+  function roll(kind, t) {
+    const n = LOOKS[kind].length
+    rolls[kind] += 1
+    let v = hash(kind + ':' + rolls[kind] + ':' + Math.round(t * 1000)) % n
+    if (kind !== 'tool' && v === looks[kind]) v = (v + 1) % n // never the same way twice in a row
+    if (kind !== 'tool') looks[kind] = v
+    return v
+  }
 
   function laneSlot(key) {
     // a stable angle per lane, nudged away from lanes already out
@@ -214,6 +243,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
     switch (ev.type) {
       case 'session.wake':
         wakeAt = t
+        roll('wake', t)
         stirAt = -99
         if (ev.fresh) { // a cleared conversation starts clean: no stars, no lingering end-of-turn state, nothing still out, no habits
           stars = []; condense = null; turnCount = 0; lastModel = null; end = null; active = false; compact = null; motes = []
@@ -246,6 +276,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
       case 'stream': {
         if (firstStreamAt < 0) firstStreamAt = t
         if (ev.kind !== 'thinking') replyChars += ev.n || 0
+        if (ev.kind === 'thinking' ? think.at(t) < 0.05 : speak.at(t) < 0.05) roll(ev.kind === 'thinking' ? 'think' : 'speak', t) // a new spell of it
         const amt = Math.min(0.6, (ev.n || 20) / 60)
         if (ev.kind === 'thinking') think.add(t, amt)
         else speak.add(t, amt)
@@ -266,7 +297,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
         lane.calls += 1
         worn.set(info.key, (worn.get(info.key) || 0) + 1) // WORN: every call on this path this session, kept after the lane retracts
         lane.inflight.set(ev.id, t)
-        lane.pulses.push({ t, dir: 1, err: false })
+        lane.pulses.push({ t, dir: 1, err: false, look: roll('tool', t) })
         callLane.set(ev.id, info.key)
         turnLanes.add(info.family === 'peer' ? 'peer' : info.key)
         tool.add(t, 0.5)
@@ -286,7 +317,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
         if (ev.error) { lane.errAt = t; lane.fail += 1; err.add(t, 0.75) }
         else {
           // MEND: a call settles cleanly on a lane whose previous call failed — the thread is knit back together
-          if (lane.fail > 0) { lane.mendAt = t; mend.add(t, Math.min(0.9, 0.4 + 0.15 * lane.fail)) }
+          if (lane.fail > 0) { lane.mendAt = t; mend.add(t, Math.min(0.9, 0.4 + 0.15 * lane.fail)); roll('mend', t); mendLookAt = t }
           lane.fail = 0
         }
         break
@@ -306,6 +337,8 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
         const reason = ev.reason || 'answer'
         // the turn's real size shapes how it lands: a long one exhales deeper, each lane it reached leaves an echo
         end = { t, reason, weight: clamp(Math.log10(1 + Math.max(0, secs)) / 2), echoes: Math.min(4, turnLanes.size) }
+        if (reason === 'answer') roll('land', t)
+        else if (reason === 'error') roll('err', t) // an interrupt was you: it stays a plain recoil, never red
         if (reason === 'answer') {
           turnCount += 1
           stars.push({ born: t, w: end.weight, a: (turnCount * 2.39996 + 0.7) % TAU, r: 0.97 + 0.1 * ((turnCount * 0.618) % 1) })
@@ -432,6 +465,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
       attendAmt: e.attend,
       depth, turns: turnCount, stars: stars.map((s, i) => ({ i, a: s.a, r: s.r, w: s.w, merged: !!s.merged })),
       condense: condense ? { u: clamp((t - condense.at) / 1.4), from: condense.from } : null,
+      looks: { ...looks }, mendSince: t - mendLookAt,
     }
   }
 
@@ -482,6 +516,8 @@ export function buildScene(f, lod = 'panel') {
     const N = tiny ? 7 : 13
     const r = rng(7)
     const tendrils = []
+    const lk = f.looks || {}
+    const thinkCurl = [1.4, 0.3, 0.2, 0.6][Math.max(0, lk.think | 0)] ?? 1.4 // coil curls in hard; the others leave room for their own figure
     for (let i = 0; i < N; i++) {
       const a0 = (TAU * i) / N + (r() - 0.5) * 0.36
       const L0 = 0.62 + r() * 0.3
@@ -489,7 +525,9 @@ export function buildScene(f, lod = 'panel') {
       let a = a0 + 0.09 * Math.sin((TAU * t) / 90) * amb + f.spin * 0.05 // slow drift + stream-driven turn
       a = angleToward(a, Math.PI / 2, 0.22 * f.e.attend)                   // EVENT: leans toward the prompt while you type
       if (f.ask) a = f.askLane && i === 0 ? angleToward(a, f.askLane.angle, 0.8) : angleToward(a, Math.PI / 2, 0.25)
-      const spring = f.bloom * Math.sin(f.since * 9) * 0.12                // TRANSITION: settles after a turn lands
+      if (lk.err === 1 && f.endReason === 'error' && f.recoil > 0.02) a += 0.1 * f.recoil * Math.sin(f.since * 38 + i * 2.3) // EVENT look: an error as a shiver
+      if (lk.speak === 1) a = angleToward(a, -Math.PI / 2, 0.14 * f.e.speak)                     // EVENT look: writing as a fountain, lifting
+      const spring = f.bloom * Math.sin(f.since * 9) * (lk.land > 0 ? 0.06 : 0.12) // TRANSITION: settles after a turn lands
       let L = L0 * (1 + breath) * (1 - 0.3 * f.e.think + 0.24 * f.e.speak + spring) * (1 - 0.32 * f.recoil)
       if (f.awaiting) L *= 0.9
       if (f.rest) L *= 1 - 0.12 * f.rest
@@ -497,14 +535,17 @@ export function buildScene(f, lod = 'panel') {
       if (f.halt) L *= 1 - 0.2 * f.halt                                    // a refusal: gathered in, composed
       if (f.woke) L *= 0.35 + 0.65 * easeOut(f.wake)                       // EVENT: first light, tendrils unfurl
       if (f.ask && f.askLane && i === 0) L = Math.max(L, 0.9 * f.askLane.reach)
-      const curl = c0 * (1 + 1.4 * f.e.think - 0.55 * f.e.speak + 1.2 * f.compact) + sway(i)
+      if (lk.think === 3) L *= 1 + 0.14 * f.e.think * Math.sin(f.spin * 2.2 + i * 0.5) // EVENT look: thinking as a pulse through the form
+      if (lk.speak === 2) L *= 1 + 0.16 * f.e.speak * Math.sin(f.spin * 2.5 - i * 1.1) // EVENT look: writing as ripples along the form
+      const tide = lk.think === 1 ? 0.55 * f.e.think * Math.sin(f.spin * 1.6 - i * 0.9) : 0 // EVENT look: thinking as a tide around it
+      const curl = c0 * (1 + thinkCurl * f.e.think - 0.55 * f.e.speak + 1.2 * f.compact) + sway(i) + tide
       const p0 = P(0.08, a), p1 = P(0.4 * L, a - curl * 0.3), p2 = P(0.8 * L, a + curl * 0.9), p3 = P(L, a + curl * 0.5)
       const steps = tiny ? 6 : 12
       const pts = []
       for (let k = 0; k <= steps; k++) pts.push(sq(bez(p0, p1, p2, p3, k / steps)))
       tendrils.push({ p0, p1, p2, p3 })
       out.push({ id: 'ten' + i, k: 'path', pts, w: tiny ? 0.05 : 0.016, c0: arr(core), c1: arr(tip), a: 0.95 - 0.35 * f.rest })
-      const tipR = (tiny ? 0.07 : 0.026) * (1 + 0.5 * f.e.speak)
+      const tipR = (tiny ? 0.07 : 0.026) * (1 + (lk.speak === 3 ? 1.4 : 0.5) * f.e.speak) // flares: the tips light up
       out.push({ id: 'tip' + i, k: 'dot', x: pts[steps][0], y: pts[steps][1], r: tipR, c: arr(tip), a: 0.95 })
     }
     // EVENT motes: one per real stream chunk (a few per chunk), never on a timer
@@ -512,9 +553,25 @@ export function buildScene(f, lod = 'panel') {
       const age = (t - m.t) / 1.2
       if (age < 0) continue
       if (m.kind === 'thinking') {
-        const ang = m.s * TAU + age * 3.2 + f.spin * 0.2
-        const [x, y] = sq(P(0.1 + 0.12 * age, ang))
-        out.push({ id: 'm' + m.t, k: 'dot', x, y, r: tiny ? 0.05 : 0.016, c: arr(core), a: 0.9 * (1 - age) })
+        let x, y
+        if (lk.think === 1) { x = 0.1 * Math.sin(age * 5 + m.s * TAU); y = -0.08 - 0.5 * age }                     // tide: rising
+        else if (lk.think === 2) [x, y] = P(0.08 + 0.28 * easeOut(age * 1.6), (Math.round(m.s * 8) / 8) * TAU + f.spin * 0.4) // lattice: to a node
+        else if (lk.think === 3) [x, y] = P(0.1 + 0.3 * age, m.s * TAU)                                              // pulse: straight out
+        else [x, y] = P(0.1 + 0.12 * age, m.s * TAU + age * 3.2 + f.spin * 0.2)                                    // coil: spiralling
+        ;[x, y] = sq([x, y])
+        out.push({ id: 'm' + m.t, k: 'dot', x, y, r: tiny ? 0.05 : lk.think > 0 ? 0.024 : 0.016, c: arr(core), a: 0.9 * (1 - age) })
+      } else if (lk.speak === 1) { // fountain: each chunk arcs up out of the core and falls away
+        const trail = tiny ? 1 : 3
+        for (let k = 0; k < trail; k++) {
+          const u = clamp(age - k * 0.05)
+          const [x, y] = sq([(m.s - 0.5) * 0.9 * u, -0.6 * u + 0.75 * u * u])
+          out.push({ id: 'm' + m.t + ':' + k, k: 'dot', x, y, r: (tiny ? 0.05 : 0.028) * (1 - k * 0.2), c: arr(k ? tip : core), a: (1 - age) * (1 - k * 0.25) })
+        }
+      } else if (lk.speak === 3) { // flares: each chunk lights a tendril's tip
+        const tn = tendrils[m.i % N]
+        const [x, y] = sq(tn.p3)
+        out.push({ id: 'm' + m.t, k: 'glow', x, y, r: (tiny ? 0.1 : 0.08) * (0.6 + age), c: arr(tip), a: 0.8 * (1 - age) })
+        out.push({ id: 'm' + m.t + ':c', k: 'dot', x, y, r: tiny ? 0.06 : 0.03, c: arr(core), a: 1 - age })
       } else {
         const tn = tendrils[m.i % N]
         const trail = tiny ? 1 : 4
@@ -546,7 +603,20 @@ export function buildScene(f, lod = 'panel') {
 function expressions(out, f, { tiny, tip, core, sq, amb }) {
   const t = f.t
   // FIRST LIGHT: a ring leaves the centre once, when the session really begins (or is cleared)
-  if (f.woke && f.wake < 1) out.push({ id: 'firstlight', k: 'ring', x: 0, y: 0, r: 0.08 + 1.0 * easeOut(f.wake), w: 0.002 + 0.012 * (1 - f.wake), c: arr(tip), a: 0.85 * (1 - f.wake) })
+  const lk = f.looks || {}
+  if (f.woke && f.wake < 1) {
+    const v = easeOut(f.wake)
+    // first light always leaves its ring; the other ways of saying it draw it fainter, beside their own figure
+    out.push({ id: 'firstlight', k: 'ring', x: 0, y: 0, r: 0.08 + 1.0 * v, w: 0.002 + 0.012 * (1 - f.wake), c: arr(tip), a: (lk.wake > 0 && !tiny ? 0.3 : 0.85) * (1 - f.wake) })
+    if (lk.wake === 1 && !tiny) for (let j = 0; j < 13; j++) { // unfurl: a spiral of light opening
+      const [x, y] = sq(P(0.08 + 0.8 * v * (j / 13), j * 0.48 + f.wake * 1.5))
+      out.push({ id: 'wake' + j, k: 'dot', x, y, r: 0.024, c: arr(tip), a: 0.9 * (1 - f.wake) })
+    } else if (lk.wake === 2 && !tiny) for (let j = 0; j < 8; j++) { // rays: eight strokes of first light
+      const a = (TAU * j) / 8 + 0.2
+      out.push({ id: 'wake' + j, k: 'path', pts: [sq(P(0.1 + 0.3 * v, a)), sq(P(0.1 + 0.75 * v, a))], w: 0.014, c0: arr(core), c1: arr(tip), a: 0.85 * (1 - f.wake) })
+    }
+  }
+  if (!tiny) looksScene(out, f, lk, { tip, core, sq })
   // STIR: roused after a long silence — a quieter cousin of first light: one soft ring stretches out as the fold lets go
   if (f.stir > 0.03) out.push({ id: 'stir', k: 'ring', x: 0, y: 0, r: 0.12 + 0.55 * easeOut(1 - f.stirring), w: 0.003 + 0.008 * f.stirring, c: arr(core), a: 0.55 * f.stir })
   // DEPTH: the harder the model is asked to think (turn.step effort), the more orbits form around the core while it does
@@ -614,6 +684,67 @@ function expressions(out, f, { tiny, tip, core, sq, amb }) {
   if (f.sideDone && f.sideDone.u < 1) { // its answer came: the satellite opens into a soft ring (dimmer if there was no answer)
     const [x, y] = sq(P(0.6, f.sideDone.a)), v = easeOut(f.sideDone.u)
     out.push({ id: 'sidedone', k: 'ring', x, y, r: 0.03 + 0.12 * v, w: tiny ? 0.02 : 0.005, c: arr(tip), a: (f.sideDone.ok ? 0.8 : 0.35) * (1 - f.sideDone.u) })
+  }
+}
+
+// The other ways of saying things (LOOKS): each drawn only while its real expression is under way
+function looksScene(out, f, lk, { tip, core, sq }) {
+  const k0 = Math.min(1, f.e.think * 1.6)
+  if (lk.think === 2 && f.e.think > 0.08) { // lattice: thought as a figure of nodes and chords, turned by the stream
+    const nodes = []
+    for (let j = 0; j < 8; j++) nodes.push(sq(P(0.36, (TAU * j) / 8 + f.spin * 0.4)))
+    nodes.forEach(([x, y], j) => {
+      const [x2, y2] = nodes[(j + 3) % 8]
+      out.push({ id: 'lat' + j, k: 'path', pts: [[x, y], [x2, y2]], w: 0.006, c0: arr(core), c1: arr(tip), a: 0.55 * k0 })
+      out.push({ id: 'node' + j, k: 'dot', x, y, r: 0.02, c: arr(core), a: 0.95 * k0 })
+    })
+  }
+  if (lk.think === 3 && f.e.think > 0.08) for (let j = 0; j < 3; j++) { // pulse: rings leaving the core in time with the stream
+    const u = (f.spin * 0.25 + j / 3) % 1
+    out.push({ id: 'pulse' + j, k: 'ring', x: 0, y: 0, r: 0.15 + 0.55 * u, w: 0.012, c: arr(core), a: 0.7 * k0 * (1 - u) })
+  }
+  if (lk.speak === 2 && f.e.speak > 0.08) for (let j = 0; j < 2; j++) { // ripples: soft broken rings carried out by the stream
+    const u = (f.spin * 0.18 + j / 2) % 1
+    out.push({ id: 'ripple' + j, k: 'ring', x: 0, y: 0, r: 0.3 + 0.6 * u, w: 0.012, c: arr(tip), a: 0.75 * Math.min(1, f.e.speak * 1.6) * (1 - u), dash: true })
+  }
+  // an answer landing, said another way
+  if (f.endReason === 'answer' && f.since < 1.6 && lk.land > 0) {
+    const u = clamp(f.since / 1.5), v = easeOut(u), fade = 1 - u
+    if (lk.land === 1) for (let j = 0; j < 8; j++) { // petals
+      const [x, y] = sq(P(0.22 + 0.5 * v, (TAU * j) / 8 + 0.3))
+      out.push({ id: 'petal' + j, k: 'dot', x, y, r: 0.03 * (1 - 0.4 * u), c: arr(tip), a: fade })
+    } else if (lk.land === 2) { // halo: a bright ring, then its echo
+      out.push({ id: 'land0', k: 'ring', x: 0, y: 0, r: 0.3 + 0.25 * v, w: 0.018 * fade + 0.006, c: arr(core), a: 0.85 * fade })
+      const u2 = clamp((f.since - 0.25) / 1.3)
+      if (u2 > 0 && u2 < 1) out.push({ id: 'land1', k: 'ring', x: 0, y: 0, r: 0.3 + 0.4 * easeOut(u2), w: 0.01, c: arr(tip), a: 0.6 * (1 - u2) })
+    } else for (let j = 0; j < 12; j++) { // spiral
+      const [x, y] = sq(P(0.15 + 0.6 * v * ((j + 1) / 12), j * 0.55 + u * 2))
+      out.push({ id: 'spiral' + j, k: 'dot', x, y, r: 0.024, c: arr(j % 3 ? tip : core), a: fade * (0.5 + 0.5 * (j / 12)) })
+    }
+  }
+  // an error, said as a crack in a ring (always the error red)
+  if (lk.err === 2 && f.endReason === 'error' && f.recoil > 0.02) out.push({ id: 'crack', k: 'ring', x: 0, y: 0, r: 0.34, w: 0.016, c: [0.95, 0.34, 0.36], a: 0.9 * f.recoil, dash: true })
+  // a mend: the thread knit back together, at the core
+  if (f.mendSince < 1.6) {
+    const u = clamp(f.mendSince / 1.6), v = easeOut(u), fade = 1 - u
+    if (lk.mend === 0) out.push({ id: 'knit', k: 'ring', x: 0, y: 0, r: 0.55 - 0.3 * v, w: 0.014, c: arr(tip), a: 0.75 * fade })
+    else if (lk.mend === 1) for (let j = 0; j < 6; j++) { // seeds drawn back in
+      const [x, y] = sq(P(0.6 - 0.55 * v, (TAU * j) / 6 + 0.5))
+      out.push({ id: 'seed' + j, k: 'dot', x, y, r: 0.026, c: arr(tip), a: 0.95 * fade })
+    } else for (let h = 0; h < 2; h++) { // two halves closing into one ring
+      const pts = []
+      const a0 = h * Math.PI + (1 - v) * 1.2 * (h ? 1 : -1)
+      for (let j = 0; j <= 10; j++) pts.push(sq(P(0.4, a0 + (j / 10) * Math.PI * (0.55 + 0.45 * v))))
+      out.push({ id: 'close' + h, k: 'path', pts, w: 0.014, c0: arr(core), c1: arr(tip), a: 0.8 * fade })
+    }
+  }
+  // a call going out, said as a flare at its root or a spark along its way
+  for (const l of f.lanes) for (const p of l.pulses) {
+    if (p.dir !== 1 || !p.look) continue
+    const u = clamp((f.t - p.t) / 0.6)
+    if (u >= 1) continue
+    if (p.look === 1) { const [x, y] = sq(P(0.2, l.angle)); out.push({ id: 'flare' + l.key + p.t, k: 'glow', x, y, r: 0.07 + 0.08 * u, c: arr(l.colour), a: 0.6 * (1 - u) }) }
+    else { const [x, y] = sq(P(0.12 + 0.55 * u, l.angle)); out.push({ id: 'spk' + l.key + p.t, k: 'dot', x, y, r: 0.024, c: arr(core), a: 1 - u }) }
   }
 }
 
@@ -836,4 +967,11 @@ export const MAPPING = [
   ['reply.copied (/copy said it copied)', 'EVENT + TRANSITION', 'handoff over 0.9s; offer cleared', 'the bead travels out toward you, shrinks and opens into a widening ring, three motes falling back behind it. With nothing held out (a second copy), only one small quiet ring. Hover: "copied" for 2s'],
   ['side.ask → side.answer (/spark ask)', 'EVENT (held) + TRANSITION', 'one per question out; angle = −90° + 0.45 rad per second it has been out', 'a small satellite with its own glow circles slowly at the edge, apart from the work, while a side question is being answered (a fork of this session: no tools, nothing added to the conversation); its answer opens it into a soft ring (dimmer when no answer came). Hover adds "· answering your side question"'],
   ['always', 'AMBIENT', 'breath 5.5s ±3.5%, drift 90s, sway, star twinkle', 'claims nothing; damped while waiting on you or on the model; /spark calm switches it off everywhere'],
+  ['the first chunk of a spell of thinking (after quiet)', 'EVENT (rolled)', 'look.think = one of coil, tide, lattice, pulse; seeded by the event, never the same twice running', 'thinking said another way each time: curling in, a tide around the form with rising motes, a lattice of nodes and chords, or rings pulsing out'],
+  ['the first chunk of a spell of writing', 'EVENT (rolled)', 'look.speak = one of currents, fountain, ripples, flares', 'writing said another way each time: motes running out along the tendrils, the form lifting like a fountain, broken rings carried out, or the tips lighting up'],
+  ['turn.complete reason=answer (the roll)', 'EVENT (rolled)', 'look.land = one of spring, petals, halo, spiral', 'the landing said another way each time, on top of the bloom: the spring alone, eight petals opening, a bright ring and its echo, or a spiral of light'],
+  ['turn.complete reason=error (the roll)', 'EVENT (rolled)', 'look.err = one of recoil, shiver, crack; an interrupt rolls nothing', 'the recoil alone, a brief shiver through the tendrils, or a broken ring in the error red. An interrupt stays a plain recoil: no red, you chose it'],
+  ['tool.end that mends a lane (the roll)', 'EVENT (rolled)', 'look.mend = one of knit, seeds, close', 'the mend said at the core as well: a ring drawing in, seeds drawn back, or two halves closing into one ring'],
+  ['session.wake (the roll)', 'EVENT (rolled)', 'look.wake = one of ring, unfurl, rays', 'first light as one ring, a spiral of light opening, or eight rays'],
+  ['tool.start (each call, the roll)', 'EVENT (rolled)', 'pulse.look = one of reach, flare, spark', 'a call going out: the lane alone, a flare at its root, or a spark travelling out along it'],
 ]

@@ -81,10 +81,11 @@ Then type `/spark` to open the pane.
 | `/spark replay` | A labelled tour of every state. It runs on its own Spark and never touches the live one. |
 | `/spark ask <question>` | A side question, like `/btw`: answered from a fork of this session (no tools), mid-turn too. Nothing is typed into the terminal. |
 | `/spark link [on\|off\|status]` | Cyclops Link: Keeper and Prism beside Spark when they work in the same folder (below). |
+| `/spark paint [on\|off\|now\|gist on\|off\|model <name>\|status]` | The painter: a small sub-agent paints Spark's expression of each turn below her (below). Off until you turn it on. |
 | `/spark help` | This list. |
 
-The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip and Cyclops Link are in the
-plugin's config menu. The commands change them for the current session.
+The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip, Cyclops Link and the
+painter are in the plugin's config menu. The commands change them for the current session.
 
 ## Cyclops Link
 
@@ -104,6 +105,23 @@ session, or `SPARK_LINK=1`. Each presence has her own switch; turning on one nev
 (a small helper beside Spark does the file work Claude Code's plugin runtime cannot do safely); without it Spark stays
 quietly unlinked. The protocol and its privacy contract are in [docs/CYCLOPS-LINK-V1.md](docs/CYCLOPS-LINK-V1.md).
 
+## The painter
+
+Off until you turn it on (the **Painter** setting, or `/spark paint on`). Then, when a turn of 3 seconds or more lands,
+a small sub-agent paints Spark's expression of it in the room below her side pane, laid down mark by mark, with a few
+words of hers underneath. `/spark paint now` paints one any time.
+
+- **What it sees.** Only the turn's shape: how long it ran, which kinds of tools and how many, failures, denials and
+  mends, how much was thought and written, how it ended, and Spark's own state line. Never your prompt, the reply, file
+  paths, commands, tool names or model names. Turn on **Painter sees the gist** (or `/spark paint gist on`) and it also
+  gets a short excerpt of each reply (at most 600 characters), so a painting can echo the subject.
+- **What it costs.** One short, tool-less model call per painting through your own Claude Code session: Haiku by
+  default, or the model you name (`/spark paint model sonnet`). At most one painting on its own every 20 seconds.
+- **What comes back** is not an image but a small paint program (lines, dots, rings, glows), checked and clamped, then
+  drawn by Spark's own renderer in her palette. An answer that is not a painting is dropped; the last painting stays.
+- **Small terminals lose nothing.** The painting takes only rows Spark is not using: she and her label never get smaller
+  for it. With a little room you see just its title; with none it waits until there is room. It stays out of focus, the
+  top strip and the replay. Nothing is written anywhere, and `/clear` empties it with the stars.
 
 ## What Spark shows
 
@@ -137,6 +155,11 @@ quietly unlinked. The protocol and its privacy contract are in [docs/CYCLOPS-LIN
 - **Copied.** `/copy` the reply and Spark hands it over: the bead goes out toward you and opens into a widening ring.
 - **Side questions.** While `/spark ask` is being answered, a small satellite circles slowly at the edge, apart from the
   work; the answer opens it into a soft ring.
+- **Many ways of saying it.** Each time an expression really begins, Spark rolls which way she says it: thinking may coil
+  in, move like a tide, form a lattice or pulse; writing may run out along her tendrils, lift like a fountain, ripple or
+  light her tips; an answer may land as a spring, petals, a halo or a spiral; an error as a recoil, a shiver or a crack in
+  red; a mend, first light and each call going out each have their ways too. A roll happens only at the real event,
+  seeded by it, and never repeats the way just used.
 
 The hover line, the status line and `/spark state` always say the same true thing, for example
 `Spark · thinking · high effort`, `Spark · talking with Keeper` or `Spark · reply ready · waiting 4 min`.
@@ -172,7 +195,9 @@ thinks and soft bubbles while it really writes, stopping on its own within a cou
 
 Spark writes no files and makes no network request of its own. Everything it knows is in memory and gone when Claude Code
 exits. The one exception is Cyclops Link, only while you have it on: then Spark's helper writes her coarse state to one
-small file other presences on this machine can read. See [docs/PRIVACY.md](docs/PRIVACY.md).
+small file other presences on this machine can read. The painter, only while you have it on, makes one short model call
+per painting through your own session, with the turn's shape (and, with the gist switch on, a short excerpt of the
+reply). See [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## Repository layout
 

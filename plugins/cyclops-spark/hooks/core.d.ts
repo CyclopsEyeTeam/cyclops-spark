@@ -4,3 +4,6 @@ export function laneFor(tool: string, input?: Record<string, unknown>): { key: s
 export function glyph(mode: string): string
 export const PALETTE_NAMES: string[]
 export const MAPPING: string[][]
+export const FAMILIES: string[]
+export function paletteSeeds(name: string): number[][]
+export const LOOKS: Record<string, string[]>
