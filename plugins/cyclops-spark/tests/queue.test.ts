@@ -96,7 +96,11 @@ test('while she is plainly working, Spark says it in the chat spinner\'s own wor
   expect(await state()).not.toMatch(/Photosynthesizing/) // the turn is over: the word goes with it
 })
 
-test('the chat\'s word stands only for plain working: thinking, writing and her calls keep their own words, and the replay never borrows it', async () => {
+test('the chat\'s word stands only for plain working and waiting on the model: thinking, writing and her calls keep their own words, and the replay never borrows it', async () => {
+  const w = mk({ t: 0, type: 'turn.start' }) // nothing streamed yet: waiting for the model
+  expect(w.sample(0.5, {}).hover).toMatch(/^Spark · waiting for the model$/)
+  expect(w.sample(0.5, { word: 'Channeling' }).hover).toMatch(/^Spark · Channeling$/)
+  expect(w.sample(0.5, { word: 'Channeling' }).glyph).toBe(w.sample(0.5, {}).glyph) // her glyph still tells the truth of it
   const p = mk({ t: 0, type: 'turn.start' }, { t: 1, type: 'stream', kind: 'text', n: 40 })
   expect(p.sample(10, { word: 'Processing' }).hover).toMatch(/^Spark · Processing$/)
   expect(p.sample(10, {}).hover).toMatch(/^Spark · working$/)

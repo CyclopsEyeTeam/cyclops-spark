@@ -495,8 +495,9 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
     else mode = deepNow > 0.5 ? 'dozing' : restNow > 0.5 ? 'resting' : 'idle'
     const laneShown = askLane || anyInflight
     const idleish = mode === 'idle' || mode === 'resting' || mode === 'dozing' || mode === 'listening'
-    // while she is plainly working, she says it in the chat's own word (Processing, Swirling…), as Claude Code draws it
-    const said = mode === 'working' && typeof opts.word === 'string' && opts.word ? opts.word : mode
+    // while she is plainly working, or waiting on the model, she says it in the chat's own word (Processing, Channeling…),
+    // as Claude Code draws it
+    const said = (mode === 'working' || mode === 'waiting for the model') && typeof opts.word === 'string' && opts.word ? opts.word : mode
     const hover = 'Spark · ' + said + (laneShown && laneShown.family !== 'peer' && laneShown.family !== 'paint' ? ' · ' + laneShown.label + ' lane' : '') +
       (mode === 'thinking' && effortLabel ? ' · ' + effortLabel + ' effort' : '') +
       (idleish && turnCount > 0 ? ' · ' + turnCount + (turnCount === 1 ? ' turn' : ' turns') : '') +

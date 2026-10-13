@@ -8,9 +8,9 @@
   her last painting's title, the builder's last reflection and the turn's shape. One small call on the painter's model,
   about 1k tokens, counted in the session's total; never a re-read of the session. What you said and her answer stay in
   her pane until painting goes off or `/clear`. In a pane too small for the painting and the talk, the talk waits.
-- **Spark says "working" the chat's way.** While she is plainly working (not thinking, writing or on a call of her own
-  kind), her state line uses the word Claude Code's spinner is showing for the turn: "Spark · Processing",
-  "Spark · Photosynthesizing". It is read as the spinner is drawn and never changes it; the replay never borrows it.
+- **Spark says "working" the chat's way.** While she is plainly working or waiting on the model (not thinking, writing
+  or on a call of her own kind), her state line uses the word Claude Code's spinner is showing for the turn:
+  "Spark · Processing", "Spark · Channeling". It is read as the spinner is drawn and never changes it; the replay never borrows it.
 
 ## 1.5.6
 
