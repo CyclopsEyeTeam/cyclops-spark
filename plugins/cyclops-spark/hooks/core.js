@@ -48,7 +48,7 @@ const depthOf = (effort) => typeof effort === 'string' ? (EFFORT[effort] ?? 0.45
 const GLYPHS = {
   idle: '✶', listening: '✦', resting: '☾', dozing: '☾', waking: '✺', stirring: '✺', 'waiting on you': '◉', 'waiting for the model': '◌',
   thinking: '✺', writing: '✧', compacting: '▾', done: '✶', interrupted: '◦', declined: '▫', 'stopped on an error': '✕', working: '✧',
-  'reply ready': '◆', copied: '◇',
+  'reply ready': '◆', copied: '◇', painting: '✐',
 }
 export function glyph(mode) {
   const key = String(mode || 'idle')
@@ -105,7 +105,13 @@ export function laneFor(tool, input = {}) {
   return { key: 'tool:' + name, family: 'other', label: name, how: 'tool name' }
 }
 
-const VERB = { read: 'reading', write: 'creating', shell: 'running', web: 'searching', mcp: 'using', model: 'consulting', peer: 'talking with', agent: 'delegating', plan: 'planning', other: 'using' }
+const VERB = { read: 'reading', write: 'creating', shell: 'running', web: 'searching', mcp: 'using', model: 'consulting', peer: 'talking with', agent: 'delegating', plan: 'planning', other: 'using', paint: 'painting' }
+
+// The painter is Spark's own sub-agent, so its lane is hers: it reaches toward the canvas (down, or to the side when the
+// painting sits beside her), and it is not one of the turn's tools (no echo, no habit, never in the turn's facts).
+export const PAINT_TOWARD = { below: 1.12, beside: 0.3 }
+// How Spark answers her own painting, chosen by the painter in the same call (no second call): moves she already has
+export const REACTIONS = ['bloom', 'lean', 'ring', 'shimmer', 'hush']
 
 // ------------------------------------------------------------------ colour (Infinite Colour)
 
@@ -205,6 +211,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
   const looks = { think: -1, speak: -1, land: -1, err: -1, mend: -1, wake: -1 } // nothing said yet: the first roll may be any way
   const rolls = { think: 0, speak: 0, land: 0, err: 0, mend: 0, wake: 0, tool: 0 }
   let mendLookAt = -99
+  let react = null                       // { at, move, a }: how she answers a painting that just arrived
   function roll(kind, t) {
     const n = LOOKS[kind].length
     rolls[kind] += 1
@@ -248,7 +255,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
         if (ev.fresh) { // a cleared conversation starts clean: no stars, no lingering end-of-turn state, nothing still out, no habits
           stars = []; condense = null; turnCount = 0; lastModel = null; end = null; active = false; compact = null; motes = []
           offer = null; handoff = null; sideAsks.clear(); sideDone = null
-          asks.clear(); lanes.clear(); callLane.clear(); worn.clear()
+          asks.clear(); lanes.clear(); callLane.clear(); worn.clear(); react = null
         }
         break
       case 'step': {
@@ -303,6 +310,35 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
         tool.add(t, 0.5)
         break
       }
+      case 'paint.start': { // the painter starts: Spark reaches toward the canvas
+        const id = String(ev.id || 'paint')
+        let lane = lanes.get('paint')
+        if (!lane) {
+          const angle = typeof ev.toward === 'number' && Number.isFinite(ev.toward) ? ev.toward : PAINT_TOWARD.below
+          lane = { key: 'paint', family: 'paint', label: 'painter', how: 'painter', angle, bornAt: t, lastAt: t, retractAt: -1, inflight: new Map(), pulses: [], errAt: -99, calls: 0, fail: 0, mendAt: -99, deniedAt: -99, handAt: -99, beat: energy(0.8) }
+          lanes.set('paint', lane)
+        }
+        lane.retractAt = -1
+        lane.lastAt = t
+        lane.calls += 1
+        lane.inflight.set(id, t)
+        lane.pulses.push({ t, dir: 1, err: false })
+        tool.add(t, 0.3)
+        break
+      }
+      case 'paint.end': { // a painting arrives (handed down to the canvas), or none does: only the lane says so, never Spark's body
+        const lane = lanes.get('paint')
+        if (!lane) break
+        lane.inflight.delete(String(ev.id || 'paint'))
+        lane.lastAt = t
+        if (ev.ok === false) { lane.errAt = t; lane.pulses.push({ t, dir: -1, err: true }) }
+        else {
+          lane.handAt = t; lane.pulses.push({ t, dir: 1, err: false })
+          // her answer to it, once the drop has reached the canvas: a real event (the painting arrived), said her own way
+          if (REACTIONS.includes(ev.react)) react = { at: t + 0.6, move: ev.react, a: lane.angle }
+        }
+        break
+      }
       case 'tool.ask': asks.add(ev.id); break
       case 'tool.end': {
         const lane = lanes.get(callLane.get(ev.id))
@@ -348,7 +384,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
         // READY: an ending you have not acted on yet is held, so it can be seen from across the room. Interrupting was you
         offer = reason === 'aborted' ? null : { at: t, kind: reason, chars: replyChars }
         asks.clear()
-        for (const l of lanes.values()) l.inflight.clear()
+        for (const l of lanes.values()) if (l.family !== 'paint') l.inflight.clear() // the painter is not the turn's: it goes on
         break
       }
     }
@@ -406,11 +442,17 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
       if (u > 0 && u < 1) echoes.push({ k, u })
     }
     // ambient is damped whenever the entity is really holding still
-    const hold = ask ? 0.12 : awaiting ? 0.35 : 1 - 0.6 * rest - 0.2 * deep
+    const ra = react ? t - react.at : -1
+    if (react && ra > 2.4) react = null
+    const reactOut = react && ra >= 0 ? { move: react.move, u: clamp(ra / 2.4), a: react.a, k: Math.sin(Math.PI * clamp(ra / 2.4)) } : null
+    const hush = reactOut && reactOut.move === 'hush' ? reactOut.k : 0       // she goes quiet, looking at it
+    const hold = (ask ? 0.12 : awaiting ? 0.35 : 1 - 0.6 * rest - 0.2 * deep) * (1 - 0.75 * hush)
     const damp = ambientOn ? hold : 0
     spin += dt * (2.2 * e.think + 1.2 * e.speak + 0.6 * e.tool)
 
-    const anyInflight = [...lanes.values()].find((l) => l.inflight.size > 0)
+    const outNow = [...lanes.values()].filter((l) => l.inflight.size > 0)
+    const anyInflight = outNow.find((l) => l.family !== 'paint')   // the turn's own calls: the painter never speaks for the turn
+    const painterOut = outNow.find((l) => l.family === 'paint')
     const askLane = ask ? [...lanes.values()].find((l) => [...l.inflight.keys()].some((id) => asks.has(id))) : null
     const glow = clamp(0.55 * e.think + 0.6 * e.speak + 0.35 * e.tool + 0.8 * bloom + 0.3 * e.mend)
     const colours = entityColour(opts.palette || 'spark', { ...e, rest, glow }, opts.theme || 'dark')
@@ -427,6 +469,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
       else mode = 'working'
     } else if (handoffOut && handoffOut.age < 2 && (!end || handoff.at >= end.t)) mode = 'copied' // the newest thing that happened
     else if (since < 3) mode = end.reason === 'answer' ? 'done' : end.reason === 'aborted' ? 'interrupted' : end.reason === 'refusal' ? 'declined' : 'stopped on an error'
+    else if (painterOut) mode = 'painting'                                          // her painter is at work
     else if (stir > 0.4) mode = 'stirring'                                           // roused from rest: the unfolding comes before the listening
     else if (e.attend > 0.08) mode = 'listening'
     else if (woke && t - wakeAt < 2.6) mode = 'waking'
@@ -434,7 +477,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
     else mode = deepNow > 0.5 ? 'dozing' : restNow > 0.5 ? 'resting' : 'idle'
     const laneShown = askLane || anyInflight
     const idleish = mode === 'idle' || mode === 'resting' || mode === 'dozing' || mode === 'listening'
-    const hover = 'Spark · ' + mode + (laneShown && laneShown.family !== 'peer' ? ' · ' + laneShown.label + ' lane' : '') +
+    const hover = 'Spark · ' + mode + (laneShown && laneShown.family !== 'peer' && laneShown.family !== 'paint' ? ' · ' + laneShown.label + ' lane' : '') +
       (mode === 'thinking' && effortLabel ? ' · ' + effortLabel + ' effort' : '') +
       (idleish && turnCount > 0 ? ' · ' + turnCount + (turnCount === 1 ? ' turn' : ' turns') : '') +
       (sideOut ? ' · answering your side question' : '') +
@@ -453,7 +496,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
         inflight: l.inflight.size, pulses: l.pulses, errAge: t - l.errAt,
         asking: !!askLane && askLane.key === l.key,
         age, patience: age > 1.5 ? 1 - Math.exp(-(age - 1.5) / 25) : 0,
-        fail: l.fail, mendAge: t - l.mendAt, deniedAge: t - l.deniedAt, beat: l.beat.at(t), worn: wornAmt, calls: worn.get(l.key) || 0,
+        fail: l.fail, mendAge: t - l.mendAt, handAge: t - (l.handAt ?? -99), deniedAge: t - l.deniedAt, beat: l.beat.at(t), worn: wornAmt, calls: worn.get(l.key) || 0,
         // a lane whose last calls keep failing stays warm with it; one clean call and it cools (and mends)
         colour: laneColour(colours.body, l, Math.max(Math.exp(-(t - l.errAt) / 1.2), Math.min(0.5, 0.2 * l.fail))),
       }
@@ -465,7 +508,9 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
       attendAmt: e.attend,
       depth, turns: turnCount, stars: stars.map((s, i) => ({ i, a: s.a, r: s.r, w: s.w, merged: !!s.merged })),
       condense: condense ? { u: clamp((t - condense.at) / 1.4), from: condense.from } : null,
-      looks: { ...looks }, mendSince: t - mendLookAt,
+      looks: { ...looks }, mendSince: t - mendLookAt, react: reactOut,
+      // her painter's inks: the think, speak and mend seeds of the palette, the colours it is asked to paint in
+      inks: [1, 2, 6].map((i) => (PALETTES[opts.palette] || PALETTES.spark)[i].map((v) => (opts.theme === 'light' ? v * 0.6 : v))),
     }
   }
 
@@ -511,6 +556,7 @@ export function buildScene(f, lod = 'panel') {
   // ---- lanes first (they sit under the body)
   const laneAnchor = 0.16
   for (const l of f.lanes) laneScene(out, l, f, laneAnchor, tiny)
+  if (f.react) reactScene(out, f, tiny)
 
   {
     const N = tiny ? 7 : 13
@@ -524,6 +570,7 @@ export function buildScene(f, lod = 'panel') {
       const c0 = (0.38 + r() * 0.25) * (i % 4 ? 1 : -0.6)
       let a = a0 + 0.09 * Math.sin((TAU * t) / 90) * amb + f.spin * 0.05 // slow drift + stream-driven turn
       a = angleToward(a, Math.PI / 2, 0.22 * f.e.attend)                   // EVENT: leans toward the prompt while you type
+      if (f.react && f.react.move === 'lean') a = angleToward(a, f.react.a, 0.35 * f.react.k) // EVENT: she leans toward her painting
       if (f.ask) a = f.askLane && i === 0 ? angleToward(a, f.askLane.angle, 0.8) : angleToward(a, Math.PI / 2, 0.25)
       if (lk.err === 1 && f.endReason === 'error' && f.recoil > 0.02) a += 0.1 * f.recoil * Math.sin(f.since * 38 + i * 2.3) // EVENT look: an error as a shiver
       if (lk.speak === 1) a = angleToward(a, -Math.PI / 2, 0.14 * f.e.speak)                     // EVENT look: writing as a fountain, lifting
@@ -534,6 +581,7 @@ export function buildScene(f, lod = 'panel') {
       if (f.deep) L *= 1 - 0.2 * f.deep                                    // dozing: the form folds like a bud
       if (f.halt) L *= 1 - 0.2 * f.halt                                    // a refusal: gathered in, composed
       if (f.woke) L *= 0.35 + 0.65 * easeOut(f.wake)                       // EVENT: first light, tendrils unfurl
+      if (f.react) L *= f.react.move === 'bloom' ? 1 + 0.14 * f.react.k : f.react.move === 'hush' ? 1 - 0.12 * f.react.k : 1
       if (f.ask && f.askLane && i === 0) L = Math.max(L, 0.9 * f.askLane.reach)
       if (lk.think === 3) L *= 1 + 0.14 * f.e.think * Math.sin(f.spin * 2.2 + i * 0.5) // EVENT look: thinking as a pulse through the form
       if (lk.speak === 2) L *= 1 + 0.16 * f.e.speak * Math.sin(f.spin * 2.5 - i * 1.1) // EVENT look: writing as ripples along the form
@@ -795,6 +843,19 @@ function offering(out, f, { tiny, tip, core, sq, amb }) {
   }
 }
 
+// How she answers a painting that just arrived (the painter's choice, from moves she has). Lean and hush move her
+// tendrils (above); these are drawn
+function reactScene(out, f, tiny) {
+  const { move, u, k } = f.react
+  const { tip, core } = f.colours
+  if (move === 'bloom') out.push({ id: 'react:bloom', k: 'glow', x: 0, y: 0, r: 0.45 + 0.3 * u, c: arr(tip), a: 0.55 * k })
+  else if (move === 'ring') out.push({ id: 'react:ring', k: 'ring', x: 0, y: 0, r: 0.15 + 0.85 * easeOut(u), w: tiny ? 0.04 : 0.012, c: arr(core), a: 1 - u })
+  else if (move === 'shimmer') for (let i = 0; i < 10; i++) {
+    const [x, y] = P(0.55 + 0.2 * ((i * 0.618) % 1), (TAU * i) / 10 + 0.3)
+    out.push({ id: 'react:sh' + i, k: 'dot', x, y, r: tiny ? 0.06 : 0.045, c: f.inks ? f.inks[i % 3] : arr(i % 2 ? tip : core), a: k * (0.6 + 0.4 * Math.sin(f.t * 14 + i * 2.1)) })
+  }
+}
+
 function laneScene(out, l, f, anchor, tiny) {
   const t = f.t
   const c = arr(l.colour)
@@ -823,6 +884,7 @@ function laneScene(out, l, f, anchor, tiny) {
   const lit = l.inflight ? 1 : 0.45
   const worn = l.worn || 0 // WORN: a well-used path this session is drawn a touch heavier (never brighter: habit, not importance)
   out.push({ id: 'lf:' + l.key, k: 'path', pts, w: (tiny ? 0.03 : 0.009) * (1 + 0.6 * worn), c0: c, c1: c, a: (0.35 + 0.5 * lit) * reach })
+  if (l.family === 'paint' && f.inks) out.push({ id: 'lf2:' + l.key, k: 'path', pts, w: tiny ? 0.03 : 0.014, c0: f.inks[0], c1: f.inks[1], a: (0.3 + 0.45 * lit) * reach })
   if (l.family === 'peer' && !tiny) { // a conversation runs both ways: a second strand beside the first
     const off = 0.022, nxo = Math.cos(a + Math.PI / 2) * off, nyo = Math.sin(a + Math.PI / 2) * off
     out.push({ id: 'lf2:' + l.key, k: 'path', pts: pts.map(([x, y], k) => [x + nxo * Math.sin((k / steps) * Math.PI), y + nyo * Math.sin((k / steps) * Math.PI)]), w: 0.006, c0: c, c1: c, a: (0.25 + 0.4 * lit) * reach })
@@ -891,6 +953,31 @@ function laneScene(out, l, f, anchor, tiny) {
       }
       break
     }
+    case 'paint': { // her painter: a brush tip with her inks around it, laying a stroke toward the canvas while it paints;
+      // a painting handed down drops from it toward the canvas
+      const inks = f.inks || [c, c, c]
+      const S = s * 2
+      const lay = l.inflight ? (t * 0.62) % 1 : 1
+      const ox = Math.cos(a) * S * 1.5, oy = Math.sin(a) * S * 1.5
+      const px = Math.cos(a + Math.PI / 2), py = Math.sin(a + Math.PI / 2)
+      const stroke = []
+      for (let k = 0; k <= 10; k++) {
+        const u = -1 + 2 * (k / 10) * lay
+        const wave = Math.sin(u * 3.2 + (l.inflight ? t * 2 : 0)) * S * 0.3
+        stroke.push([X + ox + px * S * 1.6 * u + Math.cos(a) * wave, Y + oy + py * S * 1.6 * u + Math.sin(a) * wave])
+      }
+      out.push({ id: id + ':st', k: 'path', pts: stroke, w: tiny ? 0.04 : 0.024, c0: inks[0], c1: inks[1], a: (l.inflight ? 0.95 : 0.6) * reach })
+      out.push({ id, k: 'dot', x: X, y: Y, r: S * 0.5, c: arr(f.colours.core), a: reach })
+      for (let k = 0; k < 3; k++) { // the inks, turning slowly round the tip while it paints
+        const ka = (TAU * k) / 3 + (l.inflight ? t * 1.3 : 0) - Math.PI / 2
+        out.push({ id: id + ':ink' + k, k: 'dot', x: X + Math.cos(ka) * S, y: Y + Math.sin(ka) * S, r: S * 0.35, c: inks[k], a: reach })
+      }
+      if (l.handAge >= 0 && l.handAge < 0.8) {
+        const u = easeOut(l.handAge / 0.8)
+        out.push({ id: id + ':drop', k: 'dot', x: X + Math.cos(a) * (S * 1.5 + 0.34 * u), y: Y + Math.sin(a) * (S * 1.5 + 0.34 * u), r: (tiny ? 0.07 : 0.045) * (1 - 0.4 * u), c: inks[1], a: 1 - 0.7 * u })
+      }
+      break
+    }
     case 'plan':
       for (let k = 0; k < 3; k++) out.push({ id: id + ':p' + k, k: 'path', pts: [[X - s, Y + (k - 1) * s * 0.7], [X + s * (1 - k * 0.25), Y + (k - 1) * s * 0.7]], w: 0.009, c0: c, c1: c, a: reach })
       break
@@ -944,6 +1031,9 @@ export const MAPPING = [
   ['Bash command matching ollama run / gemma / gemini / agy / clef / claude -p', 'EVENT (inferred lane)', 'family = model, label from the pattern', 'model lane: double ring + satellite, kin colour: an external model is reach, never a replacement'],
   ['mcp__<server>__*', 'EVENT', 'lane per server (model lane if the server name is a model)', 'polygon node, vertex count from the server name hash'],
   ['Agent / Task (subagent)', 'EVENT', 'agent lane per subagent type', 'a tiny sibling spark on a lane'],
+  ['painter starts (/spark paint, or a turn worth painting)', 'EVENT', 'paint lane toward the canvas (below, or beside when side by side); not a turn tool: no echo, no habit, outlives turn.end', 'a filament reaches toward the canvas and a brush tip lays a stroke while the painter works. Hover: "Spark · painting" once the turn has landed'],
+  ['painter answers with a move for Spark (bloom | lean | ring | shimmer | hush)', 'EVENT + TRANSITION', 'react 0→1 over 2.4s, starting 0.6s after the painting arrives; chosen in the same call as the painting', 'she answers her painting: a bloom of light, a lean toward the canvas, a ring from the core, a shimmer around her, or a hush (she goes still). Nothing else changes'],
+  ['painter answers', 'EVENT', 'paint lane handAt (or errAt when nothing came back)', 'a pulse runs down the filament and a drop falls toward the canvas as the painting starts to appear; a failed one returns red-shifted on the lane only, Spark herself does not flinch'],
   ['session.compact start → end', 'EVENT + TRANSITION', 'compact eased 0→1 in 0.5s, back in 0.7s', 'whole form squashes vertically, tendrils fold; springs back when compaction finishes'],
   ['turn.complete reason=answer', 'EVENT + TRANSITION', 'bloom = (0.55+0.9·w)·e^(−t/(0.7+0.8·w)), w = log10(1+turn seconds)/2 from durationMs', 'halo flash and a damped spring outward, then settles. A long turn exhales deeper and longer than a quick one; each distinct lane the turn reached leaves one expanding echo ring (max 4)'],
   ['turn.complete reason=aborted', 'EVENT + TRANSITION', 'recoil = e^(−t/0.6)', 'tendrils retract sharply, then recover. No red: you chose this'],

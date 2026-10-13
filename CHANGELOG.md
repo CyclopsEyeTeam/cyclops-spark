@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.5.2
+
+- **The painter is one of Spark's own lanes.** While it paints, a filament reaches from her toward the canvas (down to it
+  below her, or across to it when the painting sits beside her), ending in a brush tip with her inks turning round it,
+  laying a stroke. Once the turn has landed her state line reads "Spark · painting". When the painting arrives, a drop
+  runs down the lane to the canvas as it starts to appear. It is not one of the turn's tools: no echo, no habit, and a
+  turn ending does not cut it short. A painting that fails shows only on the lane; Spark herself does not flinch.
+- **Two voices, one call.** In the same answer as the painting, the painter picks how Spark answers it, from moves she
+  already has: a bloom of light, a lean toward the canvas, a ring from her core, a shimmer of her inks, or a hush (she
+  goes still a moment). She does it once the painting has reached the canvas. No second call; a few more output tokens
+  per painting. Anything else it answers is ignored and she simply lets the painting arrive.
+- **Live paintings in long turns.** While a long turn is still going, Spark paints it: never sooner than 15 minutes
+  after the turn began or her last painting, at a moment that moves her (a mend, a subagent back, a long call settling,
+  thinking turning into writing), or 3 minutes later anyway. A live painting gets no excerpt of the work: Spark asks
+  the builder (a tool-less fork of the session, as `/spark ask` does) for one reflective comment on how the build feels,
+  at most 200 characters, personal and not descriptive, and the painter paints from that and the turn's shape so far.
+  The last reflection shows in `/spark state`. The finished turn still gets its own painting, with up to 600
+  characters of the reply.
+
 ## 1.5.1
 
 - The side pane fits whatever room it has, on every resize. Above the prompt on a small terminal (a wide, short room),
