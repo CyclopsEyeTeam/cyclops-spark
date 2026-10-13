@@ -128,9 +128,9 @@ the words themselves. The last reflection shows in `/spark state`.
   commands, tool names or model names. The gist comes with the painting: to keep your words out, keep the painter off.
 - **What it costs.** One short, tool-less model call per painting through your own Claude Code session: Haiku by
   default, or the model in the **Painter model** setting. At most one painting on its own every 20 seconds. A live
-  painting is two small calls, the reflection and the painting: a few thousand tokens in all. What it has
-  used this session (paintings, tokens, model) shows in small text under the painting, in `/spark state`, and when you
-  turn it off.
+  painting is two small calls, the reflection and the painting: a few thousand tokens in all. Under each painting, in
+  small text, is what that painting cost on its own, and under that the session's total (paintings, tokens, model);
+  the total is also in `/spark state` and shown when you turn the painter off.
 - **What comes back** is not an image but a small paint program (lines, dots, rings, glows), checked and clamped, then
   drawn by Spark's own renderer in her palette. An answer that is not a painting is dropped; the last painting stays.
 - **It is one of Spark's own lanes.** While it paints, a filament reaches from her toward the canvas, ending in a brush
