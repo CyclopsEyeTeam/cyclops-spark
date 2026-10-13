@@ -33,6 +33,12 @@ It is sent:
 - the gist: the first 600 characters of the reply's final text, marked as data. It always comes with the painting;
   with the painter off, nothing is sent.
 
+In a long turn (15 minutes or more since the turn began or the last painting), a live painting is sent the turn's shape
+so far and, instead of the gist, a reflection: one short comment (at most 200 characters) that Spark first asks of this
+session itself, through one tool-less `$.model.fork` over its own transcript, as `/spark ask` does. The fork is asked for
+how the build feels, personal rather than descriptive, describing nothing on screen and sharing nothing private. That
+comment is all of the fork that reaches the painter; it is kept in memory and shown in `/spark state` until `/clear`.
+
 Never your prompt, file paths, commands, tool names, model names or ids. The answer is a small paint program, checked and
 clamped before it is drawn; its title is shown as plain text. Nothing of it is written anywhere: the last painting is kept
 in memory until painting goes off, `/clear`, or Claude Code exits.

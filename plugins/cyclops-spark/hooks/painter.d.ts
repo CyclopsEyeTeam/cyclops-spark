@@ -3,10 +3,12 @@ export type Painting = { title: string; marks: Array<Record<string, any>>; react
 export const PAINT_KINDS: string[]
 export const MAX_MARKS: number
 export const GIST_CHARS: number
+export const REFLECTION_CHARS: number
+export function cleanReflection(text: string): string
 export function newTurnFacts(): TurnFacts
 export function recordTool(facts: TurnFacts | null, family: string): void
 export function painterFacts(facts: TurnFacts | null, end: { reason: string; durationMs: number; mood: string; turn: number }): Record<string, unknown>
-export function painterRequest(o: { facts: Record<string, unknown>; palette?: string; theme?: string; gist?: string; shape?: string; size?: [number, number] | null }): { system: string; prompt: string }
+export function painterRequest(o: { facts: Record<string, unknown>; palette?: string; theme?: string; gist?: string; reflection?: string; live?: boolean; shape?: string; size?: [number, number] | null }): { system: string; prompt: string }
 export const SHAPES: Record<string, number>
 export function shapeFor(widthPx: number, heightPx: number): string
 export function parsePainting(text: string, palette?: string): Painting | null

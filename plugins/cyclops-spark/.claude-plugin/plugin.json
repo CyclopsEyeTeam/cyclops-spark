@@ -71,7 +71,7 @@
     "paint": {
       "type": "boolean",
       "title": "Painter",
-      "description": "A small painter (a sub-agent, Haiku by default) paints Spark's expression of each turn in the room below her side pane. It sees the turn's shape (how long, which kinds of tools, failures, how much was written) and a short excerpt of the reply (at most 600 characters); never your prompt, paths or commands. Each painting is one short model call through your session and uses tokens (shown under the painting). /spark paint turns it on, /spark paint off stops it. Off by default.",
+      "description": "A small painter (a sub-agent, Haiku by default) paints Spark's expression of each turn in the room below her side pane. It sees the turn's shape (how long, which kinds of tools, failures, how much was written) and a short excerpt of the reply (at most 600 characters); never your prompt, paths or commands. In a long turn it also paints while the turn goes, at most every 15 minutes, from a short reflection the session itself gives on how the build feels (at most 200 characters, never the work). Each painting is one short model call through your session (a live one two) and uses tokens (shown under the painting). /spark paint turns it on, /spark paint off stops it. Off by default.",
       "default": false
     },
     "paintModel": {

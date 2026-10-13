@@ -11,6 +11,13 @@
   already has: a bloom of light, a lean toward the canvas, a ring from her core, a shimmer of her inks, or a hush (she
   goes still a moment). She does it once the painting has reached the canvas. No second call; a few more output tokens
   per painting. Anything else it answers is ignored and she simply lets the painting arrive.
+- **Live paintings in long turns.** While a long turn is still going, Spark paints it: never sooner than 15 minutes
+  after the turn began or her last painting, at a moment that moves her (a mend, a subagent back, a long call settling,
+  thinking turning into writing), or 3 minutes later anyway. A live painting gets no excerpt of the work: Spark asks
+  the builder (a tool-less fork of the session, as `/spark ask` does) for one reflective comment on how the build feels,
+  at most 200 characters, personal and not descriptive, and the painter paints from that and the turn's shape so far.
+  The last reflection shows in `/spark state`. The finished turn still gets its own painting, with up to 600
+  characters of the reply.
 
 ## 1.5.1
 

@@ -33,6 +33,7 @@ test('the painter is a lane of hers: it reaches toward the canvas, below or besi
 
 test('it is not one of the turn\'s tools: no echo, no habit, a turn ending does not cut it short, and a turn\'s own call is named first', async () => {
   const p = mk({ t: 0, type: 'turn.start' }, { t: 0.5, type: 'paint.start', id: 'p1' }, { t: 1, type: 'tool.start', id: 'r', tool: 'Read', input: {} })
+  expect(p.sample(0.8).mode).not.toBe('painting') // mid-turn the painter never speaks for the turn
   expect(p.sample(1.2).mode).toBe('reading') // the turn's own call, not the painter
   p.apply({ t: 1.5, type: 'tool.end', id: 'r' })
   p.apply({ t: 3, type: 'turn.end', reason: 'answer', durationMs: 3000 })

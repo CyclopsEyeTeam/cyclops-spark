@@ -113,12 +113,22 @@ With the **Paint when Spark opens** setting on, a plain `/spark` opens Spark wit
 on, when a turn of 3 seconds or more lands, a small sub-agent paints Spark's expression of it in the room below her side
 pane, laid down mark by mark, with a few words of hers underneath.
 
+**Live paintings in long turns.** A long turn is painted while it is still going too: never sooner than 15 minutes after
+the turn began (or her last painting), at a moment that moves her (a failure mended, a subagent coming back, a long call
+settling, thinking turning into writing), or, with no such moment, 3 minutes later anyway. No limit on how many: just
+one per 15 minutes at most. A live painting is not given the work at all. Instead, Spark asks the builder (this session
+itself, through a tool-less fork, the way `/spark ask` does) for one short reflective comment on how the build feels, at
+most 200 characters, personal rather than descriptive: nothing already on screen, nothing it would rather keep private.
+The painter paints from that and the turn's shape so far. The last reflection shows in `/spark state`.
+
 - **What it sees.** The turn's shape: how long it ran, which kinds of tools and how many, failures, denials and mends,
   how much was thought and written, how it ended, and Spark's own state line; and the gist, a short excerpt of each
   reply (at most 600 characters, marked as data), so a painting can echo the subject. Never your prompt, file paths,
   commands, tool names or model names. The gist comes with the painting: to keep your words out, keep the painter off.
 - **What it costs.** One short, tool-less model call per painting through your own Claude Code session: Haiku by
-  default, or the model in the **Painter model** setting. At most one painting on its own every 20 seconds. What it has
+  default, or the model in the **Painter model** setting. At most one painting on its own every 20 seconds. A live
+  painting is two calls: the reflection (a fork of your session, mostly served from its cache, so its token count is
+  large but most of it is cache reads) and the painting. What it has
   used this session (paintings, tokens, model) shows in small text under the painting, in `/spark state`, and when you
   turn it off.
 - **What comes back** is not an image but a small paint program (lines, dots, rings, glows), checked and clamped, then
