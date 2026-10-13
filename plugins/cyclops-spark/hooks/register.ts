@@ -99,6 +99,16 @@ let paintModel = 'haiku'
 let openPainting = false // the openPainting setting: a bare /spark also turns the painter on. Off by default
 const paintSpent = { paintings: 0, calls: 0, tokens: 0 } // what the painter has used this session, shown under its painting
 let painting: (Painting & { at: number; n: number; shape: string }) | null = null
+// STEADY: Spark's lines keep the rows they have needed at a width (at least two), so a longer state line ("thinking ·
+// xhigh effort") never shoves the painting down and a shorter one never pulls it back up. Kept per width: a resize
+// starts fresh at the new width.
+const textHeld = new Map<number, number>()
+function heldRows(width: number, need: number): number {
+  const h = Math.max(2, need, textHeld.get(width) ?? 0)
+  if (textHeld.size > 64) textHeld.clear()
+  textHeld.set(width, h)
+  return h
+}
 let paintBeside = false // the pane's last layout put the painting beside Spark (a wide, short room), not below her
 let paintRoom: { columns: number; rows: number } | null = null // the room the last painting area had: the next canvas takes its shape
 let paintCount = 0
@@ -478,9 +488,11 @@ function paintBlock(els: any, width: number, room: number): any[] {
   const words = '✎ ' + (painting.title || 'untitled') + busyWord
   const lines = wrapRows(words, width)
   const caption = Text({ children: [words], italic: true, wrap: lines <= room ? 'wrap' : 'truncate-end' })
-  // what it cost, in small (dim) text at the bottom, when there is a row for it after the title
+  // what it cost, in small (dim) text at the bottom, when there is room for it after the title, and never at the cost
+  // of the painting itself (the painting needs at least 3 rows)
   const spend = paintSpent.calls > 0 ? spentText() : ''
-  const spendRows = spend && room >= lines + wrapRows(spend, width) ? wrapRows(spend, width) : 0
+  const sr = spend ? wrapRows(spend, width) : 0
+  const spendRows = sr && (room - lines - sr >= 3 || (room - lines < 3 && room >= lines + sr)) ? sr : 0
   const spent = spendRows ? [Text({ children: [spend], dimColor: true, wrap: 'wrap' })] : []
   const gap = room >= lines + spendRows + 7 ? 1 : 0
   const free = Math.min(60, room - lines - spendRows - gap)
@@ -905,8 +917,10 @@ export const register: Register = (on, options) => {
       // The side pane, laid out for the room it really has, on every render (a resize is just the next render). Text is
       // never cut short: the state line, the Link line and the painting's title wrap, and their rows are counted first.
       const linkText = linkOn && linkView && !replay ? linkLine(linkView) : ''
-      const sparkText = (width: number) => [Text({ children: [label], wrap: 'wrap' }), ...(linkText ? [Text({ children: [linkText], dimColor: true, wrap: 'wrap' })] : [])]
-      const textRows = (width: number) => wrapRows(label, width) + (linkText ? wrapRows(linkText, width) : 0)
+      const textRows = (width: number) => heldRows(width, wrapRows(label, width) + (linkText ? wrapRows(linkText, width) : 0))
+      // her lines in a box of the rows held for them, so whatever sits below never moves when they change
+      const sparkText = (width: number) => [Box({ flexDirection: 'column', width, height: textRows(width),
+        children: [Text({ children: [label], wrap: 'wrap' }), ...(linkText ? [Text({ children: [linkText], dimColor: true, wrap: 'wrap' })] : [])] })]
       const draw = (cols: number, rws: number) => {
         const site = siteFor(PANE, e.surface, cols, rws, 'panel', kitty)
         const fr = frameFor(site, f, true)
