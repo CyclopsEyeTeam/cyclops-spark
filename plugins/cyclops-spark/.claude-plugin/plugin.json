@@ -71,13 +71,7 @@
     "paint": {
       "type": "boolean",
       "title": "Painter",
-      "description": "A small painter (a sub-agent, Haiku by default) paints Spark's expression of each turn in the room below her side pane, and /spark paint makes one any time. It sees only the turn's shape (how long, which kinds of tools, failures, how much was written), never your words, unless Gist is on. Each painting is one short model call through your session. Off by default.",
-      "default": false
-    },
-    "paintGist": {
-      "type": "boolean",
-      "title": "Painter sees the gist",
-      "description": "Also give the painter a short excerpt (at most 600 characters) of each reply, so a painting can echo the subject. Off by default.",
+      "description": "A small painter (a sub-agent, Haiku by default) paints Spark's expression of each turn in the room below her side pane. It sees the turn's shape (how long, which kinds of tools, failures, how much was written) and a short excerpt of the reply (at most 600 characters); never your prompt, paths or commands. Each painting is one short model call through your session and uses tokens (shown under the painting). /spark paint turns it on, /spark paint off stops it. Off by default.",
       "default": false
     },
     "paintModel": {
@@ -85,6 +79,12 @@
       "title": "Painter model",
       "description": "The model that paints: an alias such as haiku or sonnet, or a full model id.",
       "default": "haiku"
+    },
+    "openPainting": {
+      "type": "boolean",
+      "title": "Paint when Spark opens",
+      "description": "When on, opening Spark with /spark (or /spark side) also turns the painter on: one command for both. The painter uses tokens. Off by default.",
+      "default": false
     }
   },
   "license": "MIT"

@@ -10,6 +10,14 @@
 - The painting takes the shape of its room: wide in a short room, square, or tall in a tall side pane, and the painter
   is told that shape (and its size) so it composes for it. A painting keeps its shape after a resize: it is fitted and
   centred, never stretched.
+- Two painter controls instead of seven. `/spark paint` turns the painter on and paints one now (and paints another any
+  time after); `/spark paint off` stops it. Turning it on says plainly that it uses tokens. The gist always comes with
+  the painting now: `/spark paint gist`, `/spark paint model`, `/spark paint status` and the `paintGist` setting are gone
+  (the **Painter model** setting still picks the model; `on` and `now` still work as the old words for `/spark paint`).
+- What the painter has used shows in small (dim) text at the bottom, under its painting: how many paintings and how many
+  tokens this session, and with which model. `/spark state` and `/spark paint off` say the same.
+- New setting **Paint when Spark opens** (`openPainting`, off by default): with it on, `/spark` opens Spark with the
+  painter already on, one command for both.
 
 ## 1.5.0
 

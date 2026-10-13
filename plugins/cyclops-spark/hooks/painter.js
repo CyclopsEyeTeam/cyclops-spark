@@ -1,8 +1,8 @@
 // The painter (off unless you turn it on): a small sub-agent that paints one picture below Spark, her expression of a
 // turn that just ended. It is a single tool-less completion through the session's own client ($.model.complete), Haiku
 // by default. It never sees the work itself, only the turn's shape: how long it ran, which kinds of tools, how many
-// failed or mended, how much was thought and written, how it ended. With the gist switch on it also gets a short
-// excerpt of the reply's final text, so a painting can echo the subject.
+// failed or mended, how much was thought and written, how it ended. It also gets the gist, a short excerpt of the
+// reply's final text (marked as data), so a painting can echo the subject.
 //
 // What comes back is not an image but a small paint program in a fixed vocabulary (lines, dots, rings, glows on a
 // 0..1 canvas), checked and clamped here, then drawn by Spark's own renderer. Anything that does not parse is dropped:

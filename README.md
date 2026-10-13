@@ -81,7 +81,8 @@ Then type `/spark` to open the pane.
 | `/spark replay` | A labelled tour of every state. It runs on its own Spark and never touches the live one. |
 | `/spark ask <question>` | A side question, like `/btw`: answered from a fork of this session (no tools), mid-turn too. Nothing is typed into the terminal. |
 | `/spark link [on\|off\|status]` | Cyclops Link: Keeper and Prism beside Spark when they work in the same folder (below). |
-| `/spark paint [on\|off\|now\|gist on\|off\|model <name>\|status]` | The painter: a small sub-agent paints Spark's expression of each turn below her (below). Off until you turn it on. |
+| `/spark paint` | The painter: turns it on and paints one now; from then on a small sub-agent paints Spark's expression of each turn below her (below). It uses tokens. |
+| `/spark paint off` | Stops the painter and empties the room below Spark. |
 | `/spark help` | This list. |
 
 The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip, Cyclops Link and the
@@ -107,16 +108,19 @@ quietly unlinked. The protocol and its privacy contract are in [docs/CYCLOPS-LIN
 
 ## The painter
 
-Off until you turn it on (the **Painter** setting, or `/spark paint on`). Then, when a turn of 3 seconds or more lands,
-a small sub-agent paints Spark's expression of it in the room below her side pane, laid down mark by mark, with a few
-words of hers underneath. `/spark paint now` paints one any time.
+Two controls: `/spark paint` turns it on and paints one now (again any time you like), `/spark paint off` stops it.
+With the **Paint when Spark opens** setting on, a plain `/spark` opens Spark with the painter already on. While it is
+on, when a turn of 3 seconds or more lands, a small sub-agent paints Spark's expression of it in the room below her side
+pane, laid down mark by mark, with a few words of hers underneath.
 
-- **What it sees.** Only the turn's shape: how long it ran, which kinds of tools and how many, failures, denials and
-  mends, how much was thought and written, how it ended, and Spark's own state line. Never your prompt, the reply, file
-  paths, commands, tool names or model names. Turn on **Painter sees the gist** (or `/spark paint gist on`) and it also
-  gets a short excerpt of each reply (at most 600 characters), so a painting can echo the subject.
+- **What it sees.** The turn's shape: how long it ran, which kinds of tools and how many, failures, denials and mends,
+  how much was thought and written, how it ended, and Spark's own state line; and the gist, a short excerpt of each
+  reply (at most 600 characters, marked as data), so a painting can echo the subject. Never your prompt, file paths,
+  commands, tool names or model names. The gist comes with the painting: to keep your words out, keep the painter off.
 - **What it costs.** One short, tool-less model call per painting through your own Claude Code session: Haiku by
-  default, or the model you name (`/spark paint model sonnet`). At most one painting on its own every 20 seconds.
+  default, or the model in the **Painter model** setting. At most one painting on its own every 20 seconds. What it has
+  used this session (paintings, tokens, model) shows in small text under the painting, in `/spark state`, and when you
+  turn it off.
 - **What comes back** is not an image but a small paint program (lines, dots, rings, glows), checked and clamped, then
   drawn by Spark's own renderer in her palette. An answer that is not a painting is dropped; the last painting stays.
 - **It fits the room, on every resize.** In a tall side pane the painting sits under Spark, in the rows she is not using
@@ -200,8 +204,7 @@ thinks and soft bubbles while it really writes, stopping on its own within a cou
 Spark writes no files and makes no network request of its own. Everything it knows is in memory and gone when Claude Code
 exits. The one exception is Cyclops Link, only while you have it on: then Spark's helper writes her coarse state to one
 small file other presences on this machine can read. The painter, only while you have it on, makes one short model call
-per painting through your own session, with the turn's shape (and, with the gist switch on, a short excerpt of the
-reply). See [docs/PRIVACY.md](docs/PRIVACY.md).
+per painting through your own session, with the turn's shape and a short excerpt of the reply. See [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## Repository layout
 
