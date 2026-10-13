@@ -13,6 +13,16 @@ import { FAMILIES, paletteSeeds } from './core.js'
 export const PAINT_KINDS = ['line', 'dot', 'ring', 'glow']
 export const MAX_MARKS = 48
 export const GIST_CHARS = 600
+// The canvas takes the shape of the room it will be shown in, as width over height in pixels: wide in a short room,
+// square, or tall in a tall one (a full-height side pane). A painting keeps its shape afterwards; it is fitted, never stretched.
+export const SHAPES = { wide: 2, square: 1, tall: 0.5 }
+export function shapeFor(widthPx, heightPx) {
+  const r = widthPx / Math.max(1, heightPx)
+  let best = 'wide', d = Infinity
+  for (const [name, a] of Object.entries(SHAPES)) { const e = Math.abs(Math.log(r / a)); if (e < d) { d = e; best = name } }
+  return best
+}
+const SHAPE_WORDS = { wide: 'about twice as wide as tall', square: 'square', tall: 'about twice as tall as wide' }
 const TITLE_CHARS = 42
 // control, zero-width and bidirectional characters, named by code point so none of them ever sits in this source
 const HIDDEN = new RegExp('[' + [[0x00, 0x1f], [0x7f, 0x9f], [0x200b, 0x200f], [0x202a, 0x202e], [0x2066, 0x2069]].map(([a, b]) => String.fromCharCode(a) + '-' + String.fromCharCode(b)).join('') + ']', 'g')
@@ -48,7 +58,7 @@ export function painterFacts(facts, end) {
 }
 
 // ---------------------------------------------------------------- the request
-export function painterRequest({ facts, palette = 'spark', theme = 'dark', gist = '' }) {
+export function painterRequest({ facts, palette = 'spark', theme = 'dark', gist = '', shape = 'wide', size = null }) {
   const seeds = paletteSeeds(palette).map(toHex)
   const system = [
     "You are the painter inside Cyclops Spark, Claude's living presence in the terminal.",
@@ -57,7 +67,7 @@ export function painterRequest({ facts, palette = 'spark', theme = 'dark', gist 
     'Answer with one JSON object and nothing else.',
   ].join(' ')
   const lines = [
-    'Paint on a canvas from 0 to 1 in both directions (x to the right, y down). It is about twice as wide as tall.',
+    `Paint on a canvas from 0 to 1 in both directions (x to the right, y down). It is ${SHAPE_WORDS[shape] || SHAPE_WORDS.wide}${size ? ` (about ${size[0]} by ${size[1]} pixels)` : ''}; compose for that shape.`,
     `The terminal ground is ${theme === 'light' ? 'light' : 'dark'}. Spark's own colours, in this order (home, think, speak, tool, error, rest, mend): ${seeds.join(' ')}.`,
     'Prefer her colours; error red only if something really failed.',
     '',
@@ -69,7 +79,7 @@ export function painterRequest({ facts, palette = 'spark', theme = 'dark', gist 
     '   {"k":"ring","x":0.5,"y":0.5,"r":0.1,"w":0.01,"c":"#rrggbb","a":0.8},',
     '   {"k":"glow","x":0.5,"y":0.5,"r":0.2,"c":"#rrggbb","a":0.6}',
     ' ]}',
-    `Use 8 to ${MAX_MARKS} marks. Lines have 2 to 12 points, widths 0.004 to 0.08, radii 0.005 to 0.35. Marks are drawn in order, so paint the ground first and the bright accents last. The canvas is tiny (about 40 by 20 pixels), so keep shapes bold and few.`,
+    `Use 8 to ${MAX_MARKS} marks. Lines have 2 to 12 points, widths 0.004 to 0.08, radii 0.005 to 0.35. Marks are drawn in order, so paint the ground first and the bright accents last. The canvas is small, so keep shapes bold and few.`,
     '',
     'The turn, as Spark lived it (counts and kinds only):',
     JSON.stringify(facts),
