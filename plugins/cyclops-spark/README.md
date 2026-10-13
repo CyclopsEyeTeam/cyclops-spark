@@ -51,6 +51,7 @@ cues.
 | `hooks/render-raster.js` | Draws a scene as pixels: half-block cells, or RGBA for kitty / Ghostty. Draws Keeper's eye in his slot. |
 | `hooks/trace.js` | The labelled replay script (`/spark replay`). |
 | `hooks/painter.js` | The painter: the turn's shape, the request, the checked paint program, and how it lands on the raster. |
+| `hooks/layout.js` | How many rows wrapped text takes, so the pane lays everything out whole. |
 | `hooks/colour-engine.js` | Infinite Colour / DrawPlayer Colour Language. |
 | `sounds/` | The synthesised cues and murmur phrases. |
 | `tests/` | `claude plugin test .` |
