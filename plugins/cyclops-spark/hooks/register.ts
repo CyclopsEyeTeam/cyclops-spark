@@ -694,7 +694,16 @@ export const register: Register = (on, options) => {
 
   // ---------------------------------------------------------------- real events → presence events
   on('prompt.edit', async ($, e, next) => { emit({ type: 'prompt.edit' }); return next(e) })
-  on('prompt.submit', async ($, e, next) => { await quietly(() => emit({ type: 'prompt.submit' })); return next(e) })
+  on('prompt.submit', async ($, e, next) => {
+    // typed (or delivered) while a turn runs: it waits until the model takes it in, at her edge
+    await quietly(() => emit(e.turnId ? { type: 'prompt.queue' } : { type: 'prompt.submit' }))
+    return next(e)
+  })
+  // the model takes a waiting message into the running turn: the engine keeps it as a queued_command attachment
+  on('session.append', { door: 'attachment' }, async ($, e, next) => {
+    if (!e.agentId && e.message?.name === 'queued_command') await quietly(() => emit({ type: 'prompt.take' }))
+    return next(e)
+  })
   on('turn.start', async ($, e, next) => { emit({ type: 'turn.start' }); turnFacts = newTurnFacts(); turnBegan = await hostNow($).catch(() => -1); lastStream = ''; spoken = ''; return next(e) })
 
   on('turn.step', async function* ($, e, next) {
