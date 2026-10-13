@@ -123,6 +123,10 @@ pane, laid down mark by mark, with a few words of hers underneath.
   turn it off.
 - **What comes back** is not an image but a small paint program (lines, dots, rings, glows), checked and clamped, then
   drawn by Spark's own renderer in her palette. An answer that is not a painting is dropped; the last painting stays.
+- **It is one of Spark's own lanes.** While it paints, a filament reaches from her toward the canvas, ending in a brush
+  tip with her inks; her state line reads "Spark · painting". The finished painting runs down the lane to the canvas, and
+  she answers it with a move of hers (a bloom, a lean toward it, a ring, a shimmer or a hush), chosen by the painter in
+  the same call.
 - **It fits the room, on every resize.** In a tall side pane the painting sits under Spark, in the rows she is not using
   (she never gets smaller for it), and takes a tall or square shape to fill them. Above the prompt on a small terminal
   (wide and short) Spark and her painting sit side by side. The painter is told the shape it is painting for; afterwards

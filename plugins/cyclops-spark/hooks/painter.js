@@ -6,9 +6,10 @@
 //
 // What comes back is not an image but a small paint program in a fixed vocabulary (lines, dots, rings, glows on a
 // 0..1 canvas), checked and clamped here, then drawn by Spark's own renderer. Anything that does not parse is dropped:
-// the last painting stays, nothing breaks.
+// the last painting stays, nothing breaks. In the same answer it picks how Spark answers her painting, from moves she
+// already has (REACTIONS): two voices, one call.
 
-import { FAMILIES, paletteSeeds } from './core.js'
+import { FAMILIES, REACTIONS, paletteSeeds } from './core.js'
 
 export const PAINT_KINDS = ['line', 'dot', 'ring', 'glow']
 export const MAX_MARKS = 48
@@ -73,6 +74,7 @@ export function painterRequest({ facts, palette = 'spark', theme = 'dark', gist 
     '',
     'The JSON:',
     '{"title": "a few words in Spark\'s own voice, at most 42 characters",',
+    ` "spark": "how Spark herself answers this painting when it arrives, one of: ${REACTIONS.join(' | ')}",`,
     ' "marks": [',
     '   {"k":"line","pts":[[x,y],[x,y],...],"w":0.01,"c":"#rrggbb","c2":"#rrggbb","a":0.9},',
     '   {"k":"dot","x":0.5,"y":0.5,"r":0.03,"c":"#rrggbb","a":1},',
@@ -119,7 +121,8 @@ export function parsePainting(text, palette = 'spark') {
   if (marks.length === 0) return null
   // the title is shown as plain text: printable characters only, one short line
   const title = String(raw.title ?? '').replace(HIDDEN, ' ').replace(/\s+/g, ' ').trim().slice(0, TITLE_CHARS)
-  return { title, marks }
+  const react = REACTIONS.includes(raw.spark) ? raw.spark : null // anything else: she simply lets it arrive
+  return { title, marks, react }
 }
 
 // ---------------------------------------------------------------- onto Spark's renderer

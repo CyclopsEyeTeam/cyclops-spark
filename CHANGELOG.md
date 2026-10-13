@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.2
+
+- **The painter is one of Spark's own lanes.** While it paints, a filament reaches from her toward the canvas (down to it
+  below her, or across to it when the painting sits beside her), ending in a brush tip with her inks turning round it,
+  laying a stroke. Once the turn has landed her state line reads "Spark · painting". When the painting arrives, a drop
+  runs down the lane to the canvas as it starts to appear. It is not one of the turn's tools: no echo, no habit, and a
+  turn ending does not cut it short. A painting that fails shows only on the lane; Spark herself does not flinch.
+- **Two voices, one call.** In the same answer as the painting, the painter picks how Spark answers it, from moves she
+  already has: a bloom of light, a lean toward the canvas, a ring from her core, a shimmer of her inks, or a hush (she
+  goes still a moment). She does it once the painting has reached the canvas. No second call; a few more output tokens
+  per painting. Anything else it answers is ignored and she simply lets the painting arrive.
+
 ## 1.5.1
 
 - The side pane fits whatever room it has, on every resize. Above the prompt on a small terminal (a wide, short room),

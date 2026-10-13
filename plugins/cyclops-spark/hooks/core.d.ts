@@ -7,3 +7,5 @@ export const MAPPING: string[][]
 export const FAMILIES: string[]
 export function paletteSeeds(name: string): number[][]
 export const LOOKS: Record<string, string[]>
+export const PAINT_TOWARD: { below: number; beside: number }
+export const REACTIONS: string[]
