@@ -137,6 +137,11 @@ the words themselves. The last reflection shows in `/spark state`.
   tip with her inks; her state line reads "Spark · painting". The finished painting runs down the lane to the canvas, and
   she answers it with a move of hers (a bloom, a lean toward it, a ring, a shimmer or a hush), chosen by the painter in
   the same call.
+- **Talk to her.** While the painter is on, the bottom of her pane has a line, *say something to Spark*: click her pane
+  and type (ask what a painting means, or whether she's all good). She answers under the painting in her own voice, with a
+  move of hers, from what she already holds: her state, her last painting's title, the builder's last reflection and the
+  turn's shape. One small call on the painter's model (about 1k tokens), never a re-read of the session; it counts in the
+  session's total.
 - **It fits the room, on every resize.** In a tall side pane the painting sits under Spark, in the rows she is not using
   (she never gets smaller for it), and takes a tall or square shape to fill them. Above the prompt on a small terminal
   (wide and short) Spark and her painting sit side by side. The painter is told the shape it is painting for; afterwards
@@ -185,6 +190,10 @@ the most expensive bow ever drawn in a terminal, and certainly the most sincere.
   core, toward the prompt, ringed by a slow breath. Its size is how much the turn really wrote. It stays until you send a
   new prompt or copy the reply with `/copy`. A turn that stopped on an error leaves a hollow red-touched ring there
   instead, a refusal a plain one.
+- **Your message, waiting.** Write while Spark works and what you sent waits at her lower edge: a small warm bead that
+  breathes, one per message, until the model really takes it into the turn. Then it travels in to her core (drunk
+  straight up, spiralled in, or caught by a tendril that reaches down for it, rolled each time) and a ring draws
+  inward. The state line says `your message is waiting`, then `taking in your message`.
 - **Copied.** `/copy` the reply and Spark hands it over: the bead goes out toward you and opens into a widening ring.
 - **Side questions.** While `/spark ask` is being answered, a small satellite circles slowly at the edge, apart from the
   work; the answer opens it into a soft ring.

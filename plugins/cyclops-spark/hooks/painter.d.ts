@@ -15,3 +15,7 @@ export const SHAPES: Record<string, number>
 export function shapeFor(widthPx: number, heightPx: number): string
 export function parsePainting(text: string, palette?: string): Painting | null
 export function paintingScene(p: Painting | null, W: number, H: number, o?: { reveal?: number; theme?: string }): any[]
+export const TALK_IN: number
+export const TALK_OUT: number
+export function talkRequest(o: { said: string; mood?: string; title?: string; reflection?: string; facts?: Record<string, unknown> | null; palette?: string }): { system: string; prompt: string }
+export function parseTalk(text: string): { say: string; react: string | null } | null

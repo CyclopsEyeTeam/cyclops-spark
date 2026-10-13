@@ -40,6 +40,11 @@ visible text, never its thinking, never your prompt). The distiller is asked for
 voice, personal rather than descriptive, naming nothing on screen. Only that comment reaches the painter. The words
 aloud are held in memory for the turn only; the comment is kept in memory and shown in `/spark state` until `/clear`.
 
+When you say something to Spark in her pane (the painter on), one more tool-less `$.model.complete` on the painter's
+model is sent what you typed there (at most 300 characters), her state line, her last painting's title, the builder's
+last reflection, the turn's counts and kinds, and her palette's name. Her answer (at most 160 characters) and what you
+said are kept in memory and shown in her pane until painting goes off or `/clear`.
+
 Never your prompt, file paths, commands, tool names, model names or ids. The answer is a small paint program, checked and
 clamped before it is drawn; its title is shown as plain text. Nothing of it is written anywhere: the last painting is kept
 in memory until painting goes off, `/clear`, or Claude Code exits.

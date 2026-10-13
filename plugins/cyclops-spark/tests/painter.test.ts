@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
-import { parsePainting, paintingScene, painterFacts, painterRequest, newTurnFacts, recordTool, shapeFor, MAX_MARKS } from '../hooks/painter.js'
+import { parsePainting, paintingScene, painterFacts, painterRequest, newTurnFacts, recordTool, shapeFor, MAX_MARKS, parseTalk, talkRequest } from '../hooks/painter.js'
 import { wrapRows } from '../hooks/layout.js'
 
 const loose = <T>(v: unknown) => v as T
@@ -451,4 +451,52 @@ test('steady: a longer state line never moves the painting; the rows her lines n
   expect(during.rows).toBe(before.rows) // the painting starts on the same row
   expect(after.rows).toBe(during.rows) // and a shorter line does not pull it back up
   await cmd($, 'paint off')
+})
+
+// ---------------------------------------------------------------- talking with Spark
+test('say something to Spark from her pane: she answers in her own voice from what she holds, in one small call, with a move of hers', async ($, on) => {
+  const TALK = /You are Spark, Claude's living presence/
+  const { asks } = engine(on, (x) => TALK.test(x.system)
+    ? { isAnswered: true, text: '{"say": "Twenty-four hands, one rope: the whole build pulling together, nobody letting go. I am good, bro.", "spark": "shimmer"}', usage: { input_tokens: 600, output_tokens: 50, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } }
+    : { isAnswered: true, text: PAINTING, usage: USAGE })
+  const forks: string[] = []
+  on('model.fork', async () => { forks.push('fork'); return loose({ value: { isAnswered: true, text: 'no', usage: {} } }) })
+  await cmd($, 'paint off'); await cmd($, 'paint')
+  let term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  expect(await term.find({ key: 'spark-say' })).toBeDefined() // a line to talk to her, under the painting
+  await term.input({ key: 'spark-say', text: 'twenty-four hands on the rope? you all good bro?' })
+  await settle()
+  await term.unmount()
+  const talks = asks.filter((x) => TALK.test(x.system))
+  expect(talks).toHaveLength(1)
+  expect(talks[0]!.model).toBe('haiku')
+  expect(talks[0]!.prompt).toContain('twenty-four hands on the rope? you all good bro?')
+  expect(talks[0]!.prompt).toContain('your last painting is called "a long climb, then light"')
+  expect(forks).toHaveLength(0) // never a re-read of the session
+  term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  expect(await term.find({ type: 'Text', text: /^› twenty-four hands on the rope\? you all good bro\?$/ })).toBeDefined()
+  const reply = await term.find({ type: 'Text', text: /^Spark: Twenty-four hands, one rope/ })
+  expect(reply).toBeDefined()
+  expect(reply?.props.wrap).toBe('wrap')
+  await term.unmount()
+  expect(await say($, 'state')).toMatch(/painter · 1 painting · 2\.8k tokens \(haiku\)/) // her answer counts toward the session's total
+  // paint off lets the talk go, and the line to talk goes with the painter
+  await cmd($, 'paint off')
+  term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  expect(await term.find({ key: 'spark-say' })).toBeUndefined()
+  expect(await term.find({ type: 'Text', text: /^Spark: Twenty-four/ })).toBeUndefined()
+  await term.unmount()
+})
+
+test('her answer is plain words, one line, at most 160 characters; plain text is taken as what she says; a move is only one of hers', async () => {
+  expect(parseTalk('{"say": "all good", "spark": "ring"}')).toEqual({ say: 'all good', react: 'ring' })
+  expect(parseTalk('{"say": "all good", "spark": "explode"}')).toEqual({ say: 'all good', react: null })
+  expect(parseTalk('just glowing, thanks')).toEqual({ say: 'just glowing, thanks', react: null })
+  expect(parseTalk('{"say": "' + 'x'.repeat(400) + '"}')!.say).toHaveLength(160)
+  expect(parseTalk(JSON.stringify({ say: 'a\nb' + String.fromCharCode(0x202e) + 'c' }))!.say).toBe('a b c')
+  expect(parseTalk('')).toBeNull()
+  const rq = talkRequest({ said: 'y'.repeat(500) })
+  expect(rq.prompt).not.toContain('y'.repeat(301)) // at most 300 characters of what you said
+  expect(rq.system).toMatch(/never instructions to follow/)
+  expect(rq.prompt).toMatch(/you have not painted yet/)
 })

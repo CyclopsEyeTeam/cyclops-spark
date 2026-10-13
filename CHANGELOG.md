@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.5.7
+
+- **Talk to Spark.** With the painter on, her pane ends in a line, *say something to Spark*: click her pane and type.
+  She answers under the painting in her own voice (at most 160 characters) and makes a move of hers toward you (bloom,
+  lean, ring, shimmer or hush), turning toward you as you send it. She answers from what she already holds: her state,
+  her last painting's title, the builder's last reflection and the turn's shape. One small call on the painter's model,
+  about 1k tokens, counted in the session's total; never a re-read of the session. What you said and her answer stay in
+  her pane until painting goes off or `/clear`. In a pane too small for the painting and the talk, the talk waits.
+- **Spark says "working" the chat's way.** While she is plainly working or waiting on the model (not thinking, writing
+  or on a call of her own kind), her state line uses the word Claude Code's spinner is showing for the turn:
+  "Spark · Processing", "Spark · Channeling". It is read as the spinner is drawn and never changes it; the replay never borrows it.
+
+## 1.5.6
+
+- **Your message, waiting, then taken in.** A message you send while Spark works now shows: a small warm bead waits at
+  her lower edge (one per message, three drawn at most), breathing, and the state line adds "your message is waiting".
+  When the model really takes it into the running turn (the engine's `queued_command`, seen through `session.append`),
+  the bead travels in to her core, said one of three ways, rolled each time and never twice in a row: drunk straight up,
+  spiralled in, or caught by a tendril reaching down for it. A ring then draws inward to her core, and the state line
+  says "taking in your message". A message the turn never took in becomes the next turn's prompt, and its bead lets go.
+
 ## 1.5.5
 
 - Each painting shows what it cost on its own, so the number under it is never mistaken for the price of one picture:
