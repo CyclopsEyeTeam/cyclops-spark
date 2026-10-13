@@ -152,12 +152,12 @@ test('a small terminal loses nothing: Spark and her label keep their size; the p
     const got = await sparkRows(c, r)
     expect(got.spark).toBe(without[i]!.spark) // Spark is never made smaller for the painting
     expect(got.label).toBe(true)
-    const free = r - got.spark! - 1
+    const free = r - got.spark! - 2 // her line keeps two rows held, so nothing below it moves when it grows
     if (free < 1) { expect(got.title).toBe(false); expect(got.art).toBeUndefined() }
     else if (free < 4) { expect(got.title).toBe(true); expect(got.art).toBeUndefined() } // the title alone
     else { expect(got.title).toBe(true); expect(got.art).toBeGreaterThanOrEqual(3) }
     // never more rows than the pane has
-    expect(got.spark! + 1 + (got.art ?? 0) + (got.title ? 1 : 0) + (got.art && free >= 7 ? 1 : 0)).toBeLessThanOrEqual(r)
+    expect(got.spark! + 2 + (got.art ?? 0) + (got.title ? 1 : 0) + (got.art && free >= 7 ? 1 : 0)).toBeLessThanOrEqual(r)
   }
   await cmd($, 'paint off')
 })
@@ -398,4 +398,35 @@ test('no live painting when the painter is off, or in a turn shorter than 15 min
   expect(asks).toHaveLength(0)
   expect(forks).toHaveLength(0)
   await $.turn.complete(loose({ reason: 'answer', answer: 'ok', durationMs: 1000, isAborted: false, turnId: 'A' }))
+})
+
+test('steady: a longer state line never moves the painting; the rows her lines needed stay held at that width', async ($, on) => {
+  engine(on)
+  on('turn.step', async function* (_$, e) { yield loose<never>({ kind: 'thinking', text: 'hmm, let me weigh this', index: 0 }); return loose({ turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: null }) })
+  await cmd($, 'paint off'); await cmd($, 'paint')
+  // where the painting starts: the rows above it (Spark, then the box her lines are held in)
+  const above = async () => {
+    const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(30, 60) })
+    const tree = await term.drawn()
+    const spark = await term.find({ type: 'Raster', key: 'spark' })
+    const label = await term.find({ type: 'Text', text: /^Spark · / })
+    await term.unmount()
+    const boxes: any[] = []
+    const walk = (n: any) => { if (!n || typeof n !== 'object') return; if (Array.isArray(n)) { n.forEach(walk); return } if (n.type === 'Box' && n.props?.height && JSON.stringify(n).includes('Spark · ')) boxes.push(n); walk(n.children); walk(n.props?.children) }
+    walk(tree)
+    const held = boxes.at(-1)?.props?.height
+    return { rows: (spark?.props.rows ?? 0) + held, held, lines: wrapRows(String(label?.text), 30) }
+  }
+  const before = await above()
+  await $.turn.start(loose({ text: 'go', turnId: 's1' }))
+  for await (const _ of $.turn.step(loose({ turnId: 's1', index: 0, model: 'm', messageCount: 1, effort: 'xhigh' }))) { /* through */ }
+  const during = await above()
+  await $.turn.complete(loose({ reason: 'answer', answer: 'ok', durationMs: 1000, isAborted: false, turnId: 's1' }))
+  const after = await above()
+  expect(before.held).toBeGreaterThanOrEqual(2)
+  expect(during.lines).toBeGreaterThan(before.lines) // "Spark · thinking · xhigh effort" takes two rows at 30
+  expect(during.held).toBeGreaterThanOrEqual(during.lines)
+  expect(during.rows).toBe(before.rows) // the painting starts on the same row
+  expect(after.rows).toBe(during.rows) // and a shorter line does not pull it back up
+  await cmd($, 'paint off')
 })

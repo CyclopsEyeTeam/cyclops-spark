@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.3
+
+- The painting stays put. Spark's state line keeps the rows it has needed at the pane's width (at least two), so when
+  it grows ("Spark · thinking · xhigh effort") or shrinks ("Spark · working") the painting below no longer jumps up and
+  down. A resize starts fresh at the new width.
+- The painter's token line never costs the painting its room: in a tight pane it waits until the painting fits too.
+
 ## 1.5.2
 
 - **The painter is one of Spark's own lanes.** While it paints, a filament reaches from her toward the canvas (down to it
