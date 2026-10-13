@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.4
+
+- Live paintings cost a few thousand tokens instead of a few hundred thousand. The reflection was asked of the whole
+  session (a fork that re-read the entire conversation, about 200k tokens each time, mostly cache reads on the session's
+  own model). It is now distilled by the painter's small model (Haiku by default) from only the last 1,500 characters
+  Claude wrote aloud in the turn, never its thinking: one more short call, a few hundred tokens. Still at most 200
+  characters, in the builder's voice, personal and not descriptive, and the painter still never sees the words.
+  With nothing said aloud yet, the live painting is painted from the turn's shape alone.
+
 ## 1.5.3
 
 - The painting stays put. Spark's state line keeps the rows it has needed at the pane's width (at least two), so when

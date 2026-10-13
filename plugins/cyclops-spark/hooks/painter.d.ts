@@ -4,6 +4,8 @@ export const PAINT_KINDS: string[]
 export const MAX_MARKS: number
 export const GIST_CHARS: number
 export const REFLECTION_CHARS: number
+export const SPOKEN_CHARS: number
+export function reflectRequest(spoken: string): { system: string; prompt: string }
 export function cleanReflection(text: string): string
 export function newTurnFacts(): TurnFacts
 export function recordTool(facts: TurnFacts | null, family: string): void

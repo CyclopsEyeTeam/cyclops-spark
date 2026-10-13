@@ -34,10 +34,11 @@ It is sent:
   with the painter off, nothing is sent.
 
 In a long turn (15 minutes or more since the turn began or the last painting), a live painting is sent the turn's shape
-so far and, instead of the gist, a reflection: one short comment (at most 200 characters) that Spark first asks of this
-session itself, through one tool-less `$.model.fork` over its own transcript, as `/spark ask` does. The fork is asked for
-how the build feels, personal rather than descriptive, describing nothing on screen and sharing nothing private. That
-comment is all of the fork that reaches the painter; it is kept in memory and shown in `/spark state` until `/clear`.
+so far and, instead of the gist, a reflection: one short comment (at most 200 characters) distilled first, by one more
+tool-less `$.model.complete` on the painter's model, from the last 1,500 characters Claude wrote aloud in the turn (its
+visible text, never its thinking, never your prompt). The distiller is asked for how the build feels, in the builder's
+voice, personal rather than descriptive, naming nothing on screen. Only that comment reaches the painter. The words
+aloud are held in memory for the turn only; the comment is kept in memory and shown in `/spark state` until `/clear`.
 
 Never your prompt, file paths, commands, tool names, model names or ids. The answer is a small paint program, checked and
 clamped before it is drawn; its title is shown as plain text. Nothing of it is written anywhere: the last painting is kept
