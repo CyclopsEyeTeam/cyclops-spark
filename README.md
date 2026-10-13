@@ -177,6 +177,10 @@ about 1.7k tokens.
 <tr><td align="center" valign="bottom"><img src="docs/gallery/p7.svg" width="129" alt="Spark's painting: Forty-eight steps deep, still reaching"><br><sub><i>Forty-eight steps deep, still reaching</i> · 21:45</sub></td><td align="center" valign="bottom"><img src="docs/gallery/p8.svg" width="129" alt="Spark's painting: Sixty-two small knocks, then the quiet"><br><sub><i>Sixty-two small knocks, then the quiet</i> · 21:56</sub></td><td align="center" valign="bottom"><img src="docs/gallery/p9.svg" width="129" alt="Spark's painting: Waited the long seconds; the work held"><br><sub><i>Waited the long seconds; the work held</i> · 22:11</sub></td></tr>
 </table>
 
+And the last of the evening, as the build stopped for review with everything it set out to do in place:
+
+<p align="center"><img src="docs/gallery/p10.svg" width="215" alt="Spark's painting: Long climb, nothing lost, all held still"><br><sub><i>Long climb, nothing lost, all held still</i> · 22:21</sub></p>
+
 ## What Spark shows
 
 - **Thinking.** The form curls inward as thinking really streams. One to four fine orbits show the effort level the model
