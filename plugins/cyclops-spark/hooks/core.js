@@ -451,7 +451,8 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
     spin += dt * (2.2 * e.think + 1.2 * e.speak + 0.6 * e.tool)
 
     const outNow = [...lanes.values()].filter((l) => l.inflight.size > 0)
-    const anyInflight = outNow.find((l) => l.family !== 'paint') || outNow[0] // the turn's own calls come first
+    const anyInflight = outNow.find((l) => l.family !== 'paint')   // the turn's own calls: the painter never speaks for the turn
+    const painterOut = outNow.find((l) => l.family === 'paint')
     const askLane = ask ? [...lanes.values()].find((l) => [...l.inflight.keys()].some((id) => asks.has(id))) : null
     const glow = clamp(0.55 * e.think + 0.6 * e.speak + 0.35 * e.tool + 0.8 * bloom + 0.3 * e.mend)
     const colours = entityColour(opts.palette || 'spark', { ...e, rest, glow }, opts.theme || 'dark')
@@ -468,7 +469,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
       else mode = 'working'
     } else if (handoffOut && handoffOut.age < 2 && (!end || handoff.at >= end.t)) mode = 'copied' // the newest thing that happened
     else if (since < 3) mode = end.reason === 'answer' ? 'done' : end.reason === 'aborted' ? 'interrupted' : end.reason === 'refusal' ? 'declined' : 'stopped on an error'
-    else if (anyInflight && anyInflight.family === 'paint') mode = 'painting'      // her painter is at work
+    else if (painterOut) mode = 'painting'                                          // her painter is at work
     else if (stir > 0.4) mode = 'stirring'                                           // roused from rest: the unfolding comes before the listening
     else if (e.attend > 0.08) mode = 'listening'
     else if (woke && t - wakeAt < 2.6) mode = 'waking'
