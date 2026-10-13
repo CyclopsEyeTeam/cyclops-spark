@@ -77,3 +77,32 @@ test('wired to the real events: a prompt typed over a turn waits, and the queued
   await $.session.append(loose({ message: { type: 'attachment', name: 'queued_command', content: [] }, door: 'attachment', origin: { kind: 'engine' }, uuid: 'u1' }))
   expect(await state()).toMatch(/· taking in your message/)
 })
+
+test('while she is plainly working, Spark says it in the chat spinner\'s own word', async ($, on) => {
+  mock.store(on)
+  const clock = mock.clock(on)
+  on('turn.start', async (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', async () => ({ text: '' }))
+  on('ui.render', { component: 'Spinner' }, async ($, e) => $.ui.resolve(e).Text({ children: [(e.props as { word: string }).word] }))
+  const state = async () => String((await $.command.run(loose({ command: 'spark', args: 'state', origin: { kind: 'person' }, presentation: {} }))).text ?? '').split('\n')[0]
+  await $.turn.start(loose({ text: 'go', turnId: 'p1' }))
+  await $.tool.call(loose({ tool: 'Read', file_path: 'x', tool_use_id: 'r1' })).catch(() => undefined)
+  await clock.advance(5000)
+  const spin = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', component: 'Spinner', requestId: 'main', props: { word: 'Photosynthesizing', message: null, suffix: '…', mode: 'thinking' } })
+  await spin.unmount()
+  expect(await state()).toMatch(/^Spark · /) // read as drawn, and the spinner itself is drawn exactly as the engine would
+  await $.turn.complete(loose({ reason: 'answer', answer: 'ok', durationMs: 6000, isAborted: false, turnId: 'p1' }))
+  await clock.advance(5000)
+  expect(await state()).not.toMatch(/Photosynthesizing/) // the turn is over: the word goes with it
+})
+
+test('the chat\'s word stands only for plain working: thinking, writing and her calls keep their own words, and the replay never borrows it', async () => {
+  const p = mk({ t: 0, type: 'turn.start' }, { t: 1, type: 'stream', kind: 'text', n: 40 })
+  expect(p.sample(10, { word: 'Processing' }).hover).toMatch(/^Spark · Processing$/)
+  expect(p.sample(10, {}).hover).toMatch(/^Spark · working$/)
+  p.apply({ t: 11, type: 'stream', kind: 'thinking', n: 40 })
+  expect(p.sample(11.1, { word: 'Processing' }).hover).toMatch(/^Spark · thinking/)
+  p.apply({ t: 12, type: 'tool.start', id: 'r', tool: 'Read', input: {} })
+  expect(p.sample(12.1, { word: 'Processing' }).hover).toMatch(/^Spark · reading/)
+  expect(p.sample(12.1, { word: 'Processing' }).glyph).toBe(p.sample(12.1, {}).glyph)
+})

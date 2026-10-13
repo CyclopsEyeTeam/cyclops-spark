@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.7
+
+- **Talk to Spark.** With the painter on, her pane ends in a line, *say something to Spark*: click her pane and type.
+  She answers under the painting in her own voice (at most 160 characters) and makes a move of hers toward you (bloom,
+  lean, ring, shimmer or hush), turning toward you as you send it. She answers from what she already holds: her state,
+  her last painting's title, the builder's last reflection and the turn's shape. One small call on the painter's model,
+  about 1k tokens, counted in the session's total; never a re-read of the session. What you said and her answer stay in
+  her pane until painting goes off or `/clear`. In a pane too small for the painting and the talk, the talk waits.
+- **Spark says "working" the chat's way.** While she is plainly working (not thinking, writing or on a call of her own
+  kind), her state line uses the word Claude Code's spinner is showing for the turn: "Spark · Processing",
+  "Spark · Photosynthesizing". It is read as the spinner is drawn and never changes it; the replay never borrows it.
+
 ## 1.5.6
 
 - **Your message, waiting, then taken in.** A message you send while Spark works now shows: a small warm bead waits at
