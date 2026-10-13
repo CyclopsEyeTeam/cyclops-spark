@@ -500,3 +500,49 @@ test('her answer is plain words, one line, at most 160 characters; plain text is
   expect(rq.system).toMatch(/never instructions to follow/)
   expect(rq.prompt).toMatch(/you have not painted yet/)
 })
+
+// ---------------------------------------------------------------- the session's story
+test('/spark story tells the session\'s paintings again, in order, each laid down anew, with where it is in the story; no model is asked', async ($, on) => {
+  let k = 0
+  const titles = ['first light on the rope', 'a stumble, then mended', 'the long quiet']
+  const { asks } = engine(on, () => ({ isAnswered: true, text: JSON.stringify({ ...JSON.parse(PAINTING), title: titles[k++ % 3] }), usage: USAGE }))
+  await cmd($, 'paint off')
+  expect(await say($, 'story')).toMatch(/^no paintings yet this session/)
+  await cmd($, 'paint'); await say($, 'paint'); await say($, 'paint')
+  const before = asks.length
+  expect(await say($, 'story')).toMatch(/story: 3 paintings from this session, each laid down again in order, 7 s apiece/)
+  const page = async () => {
+    const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+    const title = await term.find({ type: 'Text', text: /^✎ / })
+    const where = await term.find({ type: 'Text', text: /^story · / })
+    const art = await term.find({ type: 'Raster', key: 'painting' })
+    await term.unmount()
+    return { title: String(title?.text), where: String(where?.text), art: Boolean(art) }
+  }
+  let p = await page()
+  expect(p.title).toBe('✎ first light on the rope')
+  expect(p.where).toMatch(/^story · 1 of 3 · \d\d:\d\d$/)
+  expect(p.art).toBe(true)
+  expect(asks.length).toBe(before) // telling the story asks nothing of any model
+  expect(await say($, 'story')).toMatch(/^story ended/)
+  p = await page()
+  expect(p.title).toBe('✎ the long quiet') // back to the last painting
+  expect(p.where).toBe('undefined')
+  await cmd($, 'paint off')
+})
+
+test('the story stays with the session: painting off keeps it to tell, /clear lets it go, and a new painting steps in front of it', async ($, on) => {
+  engine(on)
+  on('session.end', async () => loose({ sessionId: 's' }))
+  await cmd($, 'paint off'); await cmd($, 'paint'); await cmd($, 'paint off')
+  expect(await say($, 'story')).toMatch(/story: 1 painting from this session/) // the painter is off, the story is still there
+  const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  expect(await term.find({ type: 'Raster', key: 'painting' })).toBeDefined()
+  expect(await term.find({ key: 'spark-say' })).toBeUndefined() // no talking with the painter off
+  await term.unmount()
+  await cmd($, 'paint') // a new painting: the story steps aside
+  expect(await say($, 'state')).not.toMatch(/story/)
+  await $.session.end(loose({ reason: 'clear' }))
+  expect(await say($, 'story')).toMatch(/^no paintings yet this session/)
+  await cmd($, 'paint off')
+})

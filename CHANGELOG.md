@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.8
+
+- **The story of the session.** Spark keeps every painting of the session, in order (in memory only, at most 60).
+  `/spark story` tells them again in her pane: each laid down anew, mark by mark, then held, 7 seconds apiece, with a
+  small line saying where it is in the story and when it was painted (`story · 3 of 9 · 21:01 · while it worked` for a
+  live one). Round and round until `/spark story` again or a new painting arrives. No model is asked, so it costs no
+  tokens; it works with the painter off too. `/clear` lets the story go.
+
 ## 1.5.7
 
 - **Talk to Spark.** With the painter on, her pane ends in a line, *say something to Spark*: click her pane and type.
