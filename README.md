@@ -119,9 +119,13 @@ words of hers underneath. `/spark paint now` paints one any time.
   default, or the model you name (`/spark paint model sonnet`). At most one painting on its own every 20 seconds.
 - **What comes back** is not an image but a small paint program (lines, dots, rings, glows), checked and clamped, then
   drawn by Spark's own renderer in her palette. An answer that is not a painting is dropped; the last painting stays.
-- **Small terminals lose nothing.** The painting takes only rows Spark is not using: she and her label never get smaller
-  for it. With a little room you see just its title; with none it waits until there is room. It stays out of focus, the
-  top strip and the replay. Nothing is written anywhere, and `/clear` empties it with the stars.
+- **It fits the room, on every resize.** In a tall side pane the painting sits under Spark, in the rows she is not using
+  (she never gets smaller for it), and takes a tall or square shape to fill them. Above the prompt on a small terminal
+  (wide and short) Spark and her painting sit side by side. The painter is told the shape it is painting for; afterwards
+  a painting is fitted and centred, never stretched. With only a little room you see its title; with none it waits.
+- **Nothing is cut short.** Spark's state line and the painting's title wrap instead of ending in "…", and the layout
+  counts their rows first. The painter stays out of focus, the top strip and the replay. Nothing is written anywhere,
+  and `/clear` empties it with the stars.
 
 ## What Spark shows
 
