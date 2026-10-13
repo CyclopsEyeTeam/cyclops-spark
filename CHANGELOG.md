@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.5
+
+- Each painting shows what it cost on its own, so the number under it is never mistaken for the price of one picture:
+  "this painting · 1.7k tokens", and under that the session's total, "session · 6 paintings · 10k tokens (haiku)".
+  The total is still in `/spark state` and when the painter is turned off. In a tight pane the painting keeps its room
+  first, then this painting's cost, then the total.
+
 ## 1.5.4
 
 - Live paintings cost a few thousand tokens instead of a few hundred thousand. The reflection was asked of the whole

@@ -288,17 +288,20 @@ test('wrapRows counts rows the way the terminal wraps words', () => {
 })
 
 // ---------------------------------------------------------------- simpler controls, and what it costs
-test('what the painter has used shows in small text under its painting, counted across the session', async ($, on) => {
+test('what each painting cost shows in small text under it, on its own, and the session total under that', async ($, on) => {
   engine(on)
   await cmd($, 'paint off'); await cmd($, 'paint'); await say($, 'paint')
   const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
-  const spent = await term.find({ type: 'Text', text: /^painter · 2 paintings · 4.2k tokens \(haiku\)$/ })
+  const spent = await term.find({ type: 'Text', text: /^this painting · 2.1k tokens$/ }) // the last one alone, not the two together
   expect(spent).toBeDefined()
   expect(spent?.props.dimColor).toBe(true)
+  const total = await term.find({ type: 'Text', text: /^session · 2 paintings · 4.2k tokens \(haiku\)$/ })
+  expect(total).toBeDefined()
+  expect(total?.props.dimColor).toBe(true)
   await term.unmount()
   // no room for it after the title: it waits, nothing else gives way
   const small = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(30, 15) })
-  expect(await small.find({ type: 'Text', text: /^painter · / })).toBeUndefined()
+  expect(await small.find({ type: 'Text', text: /^this painting · / })).toBeUndefined()
   await small.unmount()
   await cmd($, 'paint off')
 })

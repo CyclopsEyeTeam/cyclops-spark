@@ -98,7 +98,7 @@ let paintOn = false
 let paintModel = 'haiku'
 let openPainting = false // the openPainting setting: a bare /spark also turns the painter on. Off by default
 const paintSpent = { paintings: 0, calls: 0, tokens: 0 } // what the painter has used this session, shown under its painting
-let painting: (Painting & { at: number; n: number; shape: string }) | null = null
+let painting: (Painting & { at: number; n: number; shape: string; cost: number }) | null = null // cost: what this one painting used, in tokens
 // STEADY: Spark's lines keep the rows they have needed at a width (at least two), so a longer state line ("thinking ·
 // xhigh effort") never shoves the painting down and a shorter one never pulls it back up. Kept per width: a resize
 // starts fresh at the new width.
@@ -387,7 +387,13 @@ function heal($: EngineInterface) {
 // ---------------------------------------------------------------- painting
 const logRecent = (line: string) => { recent.push(`${now().toFixed(2)} ${line}`); if (recent.length > 12) recent.shift() }
 
-const spend = (u: Record<string, number> | undefined) => { if (u) { paintSpent.calls++; paintSpent.tokens += (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) } }
+// counts a call into the session's total, and says what it used
+const spend = (u: Record<string, number> | undefined): number => {
+  if (!u) return 0
+  const n = (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0)
+  paintSpent.calls++; paintSpent.tokens += n
+  return n
+}
 
 // A live painting, if the turn has run long enough since the last one and this is a moment (or she has waited enough)
 async function maybePaintLive($: EngineInterface, moment: boolean) {
@@ -403,6 +409,7 @@ async function maybePaintLive($: EngineInterface, moment: boolean) {
 async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Promise<string> {
   if (paintBusy) return 'Spark is already painting'
   paintBusy = true
+  let cost = 0 // what this painting uses: its reflection (live) and the painting itself
   lastPaintAt = await hostNow($).catch(() => lastPaintAt)
   const id = 'paint' + (paintCount + 1) + ':' + now().toFixed(2)
   let ok = false, react: string | null = null
@@ -418,14 +425,14 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
     if (live && spoken.trim()) { // the builder's reflection, distilled by the small model from their own last words aloud
       const rq = reflectRequest(spoken)
       const f = await $.model.complete({ model: paintModel, system: rq.system, prompt: rq.prompt, maxTokens: 200, effort: 'low', timeoutMs: 20000 })
-      spend((f as { usage?: Record<string, number> }).usage)
+      cost += spend((f as { usage?: Record<string, number> }).usage)
       words = f.isAnswered ? cleanReflection(f.text) : ''
       if (words) reflection = words
     }
     const shape = paintRoom ? shapeFor(paintRoom.columns, paintRoom.rows * 2) : 'wide' // a cell is one pixel wide, two tall
     const req = painterRequest({ facts, palette, theme: activeTheme(), gist: live ? '' : turn.answer, reflection: words, live, shape, size: paintRoom ? [paintRoom.columns, paintRoom.rows * 2] : null })
     const r = await $.model.complete({ model: paintModel, system: req.system, prompt: req.prompt, maxTokens: 1500, effort: 'low', timeoutMs: 30000 })
-    spend((r as { usage?: Record<string, number> }).usage) // every arm carries what the call really cost
+    cost += spend((r as { usage?: Record<string, number> }).usage) // every arm carries what the call really cost
     if (!r.isAnswered) {
       paintNote = r.reason === 'api-error' ? `the API answered with an error${'status' in r && r.status ? ` (${r.status})` : ''}` : r.reason === 'aborted' ? 'it took too long' : 'the painter sent nothing back'
       logRecent('paint ✕')
@@ -433,7 +440,7 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
     }
     const p = parsePainting(r.text, palette)
     if (!p) { paintNote = 'the painter answered something that was not a painting'; logRecent('paint ✕'); return 'no painting: ' + paintNote }
-    painting = { ...p, at: now(), n: ++paintCount, shape }
+    painting = { ...p, at: now(), n: ++paintCount, shape, cost }
     ok = true; react = p.react
     paintSpent.paintings++
     paintNote = ''
@@ -486,12 +493,17 @@ function paintBlock(els: any, width: number, room: number): any[] {
   const words = '✎ ' + (painting.title || 'untitled') + busyWord
   const lines = wrapRows(words, width)
   const caption = Text({ children: [words], italic: true, wrap: lines <= room ? 'wrap' : 'truncate-end' })
-  // what it cost, in small (dim) text at the bottom, when there is room for it after the title, and never at the cost
-  // of the painting itself (the painting needs at least 3 rows)
-  const spend = paintSpent.calls > 0 ? spentText() : ''
-  const sr = spend ? wrapRows(spend, width) : 0
-  const spendRows = sr && (room - lines - sr >= 3 || (room - lines < 3 && room >= lines + sr)) ? sr : 0
-  const spent = spendRows ? [Text({ children: [spend], dimColor: true, wrap: 'wrap' })] : []
+  // what it cost, in small (dim) text at the bottom: this painting on its own, then the session's total. Each line only
+  // when there is room for it after the title, and never at the cost of the painting itself (it needs at least 3 rows)
+  const costs = painting.cost > 0 ? [`this painting · ${kilo(painting.cost)} tokens`, `session · ${spentText().replace(/^painter · /, '')}`] : []
+  let spendRows = 0
+  const spent: any[] = []
+  for (const c of costs) {
+    const r = wrapRows(c, width), after = spendRows + r
+    if (!(room - lines - after >= 3 || (room - lines < 3 && room >= lines + after))) break
+    spendRows = after
+    spent.push(Text({ children: [c], dimColor: true, wrap: 'wrap' }))
+  }
   const gap = room >= lines + spendRows + 7 ? 1 : 0
   const free = Math.min(60, room - lines - spendRows - gap)
   paintRoom = { columns: width, rows: Math.max(3, free) } // the next painting is composed for this room's shape
