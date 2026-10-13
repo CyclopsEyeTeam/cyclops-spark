@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.6
+
+- **Your message, waiting, then taken in.** A message you send while Spark works now shows: a small warm bead waits at
+  her lower edge (one per message, three drawn at most), breathing, and the state line adds "your message is waiting".
+  When the model really takes it into the running turn (the engine's `queued_command`, seen through `session.append`),
+  the bead travels in to her core, said one of three ways, rolled each time and never twice in a row: drunk straight up,
+  spiralled in, or caught by a tendril reaching down for it. A ring then draws inward to her core, and the state line
+  says "taking in your message". A message the turn never took in becomes the next turn's prompt, and its bead lets go.
+
 ## 1.5.5
 
 - Each painting shows what it cost on its own, so the number under it is never mistaken for the price of one picture:

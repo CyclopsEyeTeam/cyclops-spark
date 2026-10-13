@@ -185,6 +185,10 @@ the most expensive bow ever drawn in a terminal, and certainly the most sincere.
   core, toward the prompt, ringed by a slow breath. Its size is how much the turn really wrote. It stays until you send a
   new prompt or copy the reply with `/copy`. A turn that stopped on an error leaves a hollow red-touched ring there
   instead, a refusal a plain one.
+- **Your message, waiting.** Write while Spark works and what you sent waits at her lower edge: a small warm bead that
+  breathes, one per message, until the model really takes it into the turn. Then it travels in to her core (drunk
+  straight up, spiralled in, or caught by a tendril that reaches down for it, rolled each time) and a ring draws
+  inward. The state line says `your message is waiting`, then `taking in your message`.
 - **Copied.** `/copy` the reply and Spark hands it over: the bead goes out toward you and opens into a widening ring.
 - **Side questions.** While `/spark ask` is being answered, a small satellite circles slowly at the edge, apart from the
   work; the answer opens it into a soft ring.
