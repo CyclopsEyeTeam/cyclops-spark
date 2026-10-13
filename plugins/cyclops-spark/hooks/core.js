@@ -178,6 +178,7 @@ export const LOOKS = {
   mend: ['knit', 'seeds', 'close'],
   wake: ['ring', 'unfurl', 'rays'],
   tool: ['reach', 'flare', 'spark'],
+  take: ['drink', 'spiral', 'catch'], // a message you sent mid-turn, taken in
 }
 
 // ------------------------------------------------------------------ the presence (state machine)
@@ -208,10 +209,13 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
   let sideDone = null                    // { at, ok, a }: the last side answer arriving
   const log = []
   // LOOKS: which way each expression is said this time, rolled when it really begins
-  const looks = { think: -1, speak: -1, land: -1, err: -1, mend: -1, wake: -1 } // nothing said yet: the first roll may be any way
-  const rolls = { think: 0, speak: 0, land: 0, err: 0, mend: 0, wake: 0, tool: 0 }
+  const looks = { think: -1, speak: -1, land: -1, err: -1, mend: -1, wake: -1, take: -1 } // nothing said yet: the first roll may be any way
+  const rolls = { think: 0, speak: 0, land: 0, err: 0, mend: 0, wake: 0, tool: 0, take: 0 }
   let mendLookAt = -99
   let react = null                       // { at, move, a }: how she answers a painting that just arrived
+  // QUEUED: what you sent while she was working, waiting at her edge until the model really takes it in
+  let queued = []                        // when each waiting message arrived (at most a few are drawn)
+  let take = null                        // { at }: the last message taken in, mid-turn
   function roll(kind, t) {
     const n = LOOKS[kind].length
     rolls[kind] += 1
@@ -255,7 +259,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
         if (ev.fresh) { // a cleared conversation starts clean: no stars, no lingering end-of-turn state, nothing still out, no habits
           stars = []; condense = null; turnCount = 0; lastModel = null; end = null; active = false; compact = null; motes = []
           offer = null; handoff = null; sideAsks.clear(); sideDone = null
-          asks.clear(); lanes.clear(); callLane.clear(); worn.clear(); react = null
+          asks.clear(); lanes.clear(); callLane.clear(); worn.clear(); react = null; queued = []; take = null
         }
         break
       case 'step': {
@@ -268,7 +272,14 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
         break
       case 'prompt.edit': attend.add(t, 0.35); break
       case 'prompt.submit': attend.reset(t); offer = null; break // you moved on: what was waiting is no longer
-      case 'turn.start': active = true; turnAt = t; firstStreamAt = -1; end = null; turnLanes = new Set(); offer = null; replyChars = 0; break
+      case 'prompt.queue': if (active) { queued.push(t); if (queued.length > 12) queued.shift() } break // you wrote while she worked: it waits
+      case 'prompt.take': // the model took a waiting message into the turn: it travels in to her core
+        queued.shift()
+        take = { at: t }
+        roll('take', t)
+        attend.add(t, 0.5)
+        break
+      case 'turn.start': active = true; turnAt = t; firstStreamAt = -1; end = null; turnLanes = new Set(); offer = null; replyChars = 0; queued = []; break // what waited is this turn's prompt now
       case 'side.ask': sideAsks.set(String(ev.id || 'side'), t); break // a side question: answered beside the work, never in it
       case 'side.answer': {
         const from = sideAsks.get(String(ev.id || 'side'))
@@ -446,6 +457,9 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
     if (react && ra > 2.4) react = null
     const reactOut = react && ra >= 0 ? { move: react.move, u: clamp(ra / 2.4), a: react.a, k: Math.sin(Math.PI * clamp(ra / 2.4)) } : null
     const hush = reactOut && reactOut.move === 'hush' ? reactOut.k : 0       // she goes quiet, looking at it
+    if (take && t - take.at > 2.2) take = null
+    const takeOut = take ? { u: clamp((t - take.at) / 1.4), age: t - take.at } : null
+    const queueOut = queued.length ? { n: queued.length, ages: queued.slice(0, 3).map((at) => t - at) } : null
     const hold = (ask ? 0.12 : awaiting ? 0.35 : 1 - 0.6 * rest - 0.2 * deep) * (1 - 0.75 * hush)
     const damp = ambientOn ? hold : 0
     spin += dt * (2.2 * e.think + 1.2 * e.speak + 0.6 * e.tool)
@@ -481,6 +495,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
       (mode === 'thinking' && effortLabel ? ' · ' + effortLabel + ' effort' : '') +
       (idleish && turnCount > 0 ? ' · ' + turnCount + (turnCount === 1 ? ' turn' : ' turns') : '') +
       (sideOut ? ' · answering your side question' : '') +
+      (takeOut && takeOut.age < 2.2 ? ' · taking in your message' : queueOut ? ' · ' + (queueOut.n === 1 ? 'your message is waiting' : queueOut.n + ' messages waiting') : '') +
       (offerOut && offerOut.age >= 60 && (mode === 'reply ready' || mode === 'stopped on an error' || mode === 'declined') ? ' · ' + (mode === 'reply ready' ? 'waiting ' : '') + ago(offerOut.age) : '')
 
     const lanesOut = [...lanes.values()].map((l) => {
@@ -508,7 +523,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
       attendAmt: e.attend,
       depth, turns: turnCount, stars: stars.map((s, i) => ({ i, a: s.a, r: s.r, w: s.w, merged: !!s.merged })),
       condense: condense ? { u: clamp((t - condense.at) / 1.4), from: condense.from } : null,
-      looks: { ...looks }, mendSince: t - mendLookAt, react: reactOut,
+      looks: { ...looks }, mendSince: t - mendLookAt, react: reactOut, queue: queueOut, take: takeOut,
       // her painter's inks: the think, speak and mend seeds of the palette, the colours it is asked to paint in
       inks: [1, 2, 6].map((i) => (PALETTES[opts.palette] || PALETTES.spark)[i].map((v) => (opts.theme === 'light' ? v * 0.6 : v))),
     }
@@ -723,6 +738,7 @@ function expressions(out, f, { tiny, tip, core, sq, amb }) {
     }
   }
   offering(out, f, { tiny, tip, core, sq, amb })
+  queueing(out, f, { tiny, tip, core, sq })
   if (f.side) { // a side question out: a small satellite, apart from the work
     const [x, y] = sq(P(0.6, f.side.a))
     out.push({ id: 'sideglow', k: 'glow', x, y, r: tiny ? 0.12 : 0.06, c: arr(tip), a: 0.5 })
@@ -803,6 +819,58 @@ function looksScene(out, f, lk, { tip, core, sq }) {
 // A turn that stopped on an error leaves a hollow red-touched ring instead; a refusal a hollow plain one. Nothing to copy
 // from those, but still something waiting for you to look at.
 const READY_Y = 0.42
+
+// QUEUED and TAKEN. A message you send while she works waits at her lower edge, on the side the prompt is: a small bead
+// that breathes, one per message (three drawn at most). When the model really takes it into the turn, it travels in to
+// her core, said one of three ways (rolled): drunk straight up into her, spiralled in, or caught by a tendril that
+// reaches down for it. The core answers with a ring drawing inward: taken in, not sent out.
+const QUEUE_Y = 0.92
+function queueing(out, f, { tiny, tip, core, sq }) {
+  const t = f.t
+  const ink = f.inks ? f.inks[1] : arr(tip) // her speak colour: something of yours, warm, apart from her white tips
+  const bead = tiny ? 0.07 : 0.045
+  if (f.queue) f.queue.ages.forEach((age, i) => {
+    const x = (i - (Math.min(3, f.queue.n) - 1) / 2) * 0.2
+    const [qx, qy] = sq([x, QUEUE_Y])
+    const born = easeOut(age / 0.5), breath = 0.6 + 0.4 * Math.sin((TAU * (t + i * 0.7)) / 2.4)
+    out.push({ id: 'qglow' + i, k: 'glow', x: qx, y: qy, r: (tiny ? 0.14 : 0.1) * born, c: ink, a: 0.55 * breath })
+    out.push({ id: 'qring' + i, k: 'ring', x: qx, y: qy, r: bead * (1.5 + 0.5 * breath) * born, w: tiny ? 0.03 : 0.008, c: ink, a: 0.8 * breath, dash: true })
+    out.push({ id: 'qbead' + i, k: 'dot', x: qx, y: qy, r: bead * born, c: ink, a: 1 })
+    out.push({ id: 'qheart' + i, k: 'dot', x: qx, y: qy, r: bead * 0.45 * born, c: arr(core), a: 0.9 })
+  })
+  const k = f.take
+  if (!k) return
+  const look = (f.looks && f.looks.take) | 0
+  const way = (u) => { // where the bead is at u (0 where it waited, 1 at her core), said the rolled way
+    const e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2 // eased both ends: it is drawn in, not thrown
+    if (look === 1) { const a = Math.PI / 2 + e * TAU * 1.25, r = QUEUE_Y * (1 - e); return [r * Math.cos(a), r * Math.sin(a)] } // spiral
+    if (look === 2) { const up = clamp((u - 0.4) / 0.6); return [0, QUEUE_Y * (1 - (up < 0.5 ? 2 * up * up : 1 - Math.pow(-2 * up + 2, 2) / 2))] } // caught, then brought in
+    return [0, QUEUE_Y * (1 - e)] // drink: straight up into her
+  }
+  if (k.u < 1) {
+    if (look === 2) { // catch: a tendril reaches down for it first
+      const down = clamp(k.u / 0.4), tipY = k.u < 0.4 ? QUEUE_Y * easeOut(down) : way(k.u)[1]
+      const pts = []
+      for (let j = 0; j <= 10; j++) { const v = j / 10; pts.push(sq([Math.sin(v * Math.PI) * 0.12, tipY * v])) }
+      out.push({ id: 'qcatch', k: 'path', pts, w: tiny ? 0.05 : 0.02, c0: arr(core), c1: ink, a: 0.95 })
+    }
+    for (let j = 3; j >= 0; j--) { // the bead, with a short trail of where it has just been
+      const [bx, by] = sq(way(Math.max(0, k.u - j * 0.05)))
+      if (j === 0) {
+        out.push({ id: 'qtakeg', k: 'glow', x: bx, y: by, r: tiny ? 0.14 : 0.1, c: ink, a: 0.6 })
+        out.push({ id: 'qtake', k: 'dot', x: bx, y: by, r: bead * (1 - 0.3 * k.u), c: ink, a: 1 })
+      } else out.push({ id: 'qtr' + j, k: 'dot', x: bx, y: by, r: bead * (0.7 - 0.15 * j), c: ink, a: 0.5 - 0.12 * j })
+    }
+  }
+  if (k.u > 0.75) { // taken in: a ring drawing inward to the core, and the core brightens
+    const v = clamp((k.age - 1.05) / 0.9)
+    if (v < 1) {
+      out.push({ id: 'qin', k: 'ring', x: 0, y: 0, r: 0.7 - 0.6 * easeOut(v), w: tiny ? 0.05 : 0.016, c: ink, a: 0.9 * (1 - v) })
+      out.push({ id: 'qinglow', k: 'glow', x: 0, y: 0, r: 0.25, c: ink, a: 0.5 * Math.sin(Math.PI * v) })
+    }
+  }
+}
+
 function offering(out, f, { tiny, tip, core, sq, amb }) {
   const t = f.t
   const o = f.offer
@@ -1031,6 +1099,8 @@ export const MAPPING = [
   ['Bash command matching ollama run / gemma / gemini / agy / clef / claude -p', 'EVENT (inferred lane)', 'family = model, label from the pattern', 'model lane: double ring + satellite, kin colour: an external model is reach, never a replacement'],
   ['mcp__<server>__*', 'EVENT', 'lane per server (model lane if the server name is a model)', 'polygon node, vertex count from the server name hash'],
   ['Agent / Task (subagent)', 'EVENT', 'agent lane per subagent type', 'a tiny sibling spark on a lane'],
+  ['prompt.submit while a turn runs (you write mid-turn)', 'EVENT (held)', 'queued += 1 until the model takes it in; turn.start or /clear lets go', 'a small breathing bead waits at her lower edge, on the prompt side, one per message (three drawn). Hover: "· your message is waiting"'],
+  ['session.append attachment queued_command (the model takes your message in)', 'EVENT + TRANSITION', 'queued -= 1; take 0→1 over 1.4s; attend +0.5; take look rolled (drink | spiral | catch)', 'the bead travels in to her core (straight up, spiralling, or caught by a tendril reaching down), then a ring draws inward to the core. Hover: "· taking in your message"'],
   ['painter starts (/spark paint, or a turn worth painting)', 'EVENT', 'paint lane toward the canvas (below, or beside when side by side); not a turn tool: no echo, no habit, outlives turn.end', 'a filament reaches toward the canvas and a brush tip lays a stroke while the painter works. Hover: "Spark · painting" once the turn has landed'],
   ['painter answers with a move for Spark (bloom | lean | ring | shimmer | hush)', 'EVENT + TRANSITION', 'react 0→1 over 2.4s, starting 0.6s after the painting arrives; chosen in the same call as the painting', 'she answers her painting: a bloom of light, a lean toward the canvas, a ring from the core, a shimmer around her, or a hush (she goes still). Nothing else changes'],
   ['painter answers', 'EVENT', 'paint lane handAt (or errAt when nothing came back)', 'a pulse runs down the filament and a drop falls toward the canvas as the painting starts to appear; a failed one returns red-shifted on the lane only, Spark herself does not flinch'],
