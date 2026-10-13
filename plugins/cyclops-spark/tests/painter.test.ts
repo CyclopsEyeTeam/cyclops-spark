@@ -1,7 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
-import { parsePainting, paintingScene, painterFacts, painterRequest, newTurnFacts, recordTool, MAX_MARKS } from '../hooks/painter.js'
+import { parsePainting, paintingScene, painterFacts, painterRequest, newTurnFacts, recordTool, shapeFor, MAX_MARKS } from '../hooks/painter.js'
+import { wrapRows } from '../hooks/layout.js'
 
 const loose = <T>(v: unknown) => v as T
 const cmd = ($: Engine, args: string) => $.command.run(loose({ command: 'spark', args, origin: { kind: 'person' }, presentation: {} }))
@@ -19,7 +20,8 @@ const PAINTING = JSON.stringify({
 })
 
 type Ask = { model: string; prompt: string; system: string }
-function engine(on: On, reply: () => unknown = () => ({ isAnswered: true, text: PAINTING, usage: {} })) {
+const USAGE = { input_tokens: 900, output_tokens: 700, cache_read_input_tokens: 0, cache_creation_input_tokens: 500 }
+function engine(on: On, reply: () => unknown = () => ({ isAnswered: true, text: PAINTING, usage: USAGE })) {
   mock.store(on)
   const clock = mock.clock(on)
   const asks: Ask[] = []
@@ -51,77 +53,77 @@ async function turn($: Engine, id: string, secs: number, answerText = 'The tempo
   await settle()
 }
 
-test('the painter is off by default: no model call, nothing drawn below Spark, and /spark paint says how to turn it on', async ($, on) => {
+test('the painter is off by default: no model call, nothing drawn below Spark', async ($, on) => {
   const { asks } = engine(on)
-  await cmd($, 'paint off')
+  expect(await say($, 'paint off')).toBe('painting is already off')
   await turn($, 't1', 30)
   expect(asks).toHaveLength(0)
-  expect(await say($, 'paint')).toMatch(/^painting is off: \/spark paint on/)
   const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
   expect(await term.find({ type: 'Raster', key: 'painting' })).toBeUndefined()
   await term.unmount()
 })
 
-test('on: a turn worth painting is painted once, by Haiku, from its shape only; none of your words, paths or commands go to the painter', async ($, on) => {
+test('/spark paint: on, one painting now, then each turn worth painting, by Haiku, from its shape and the reply; never your prompt, paths or commands', async ($, on) => {
   const { asks, writes } = engine(on)
-  await cmd($, 'paint off'); await cmd($, 'paint gist off'); await cmd($, 'paint model haiku')
-  expect(await say($, 'paint on')).toMatch(/^painting on: .*\(haiku\)/)
+  await cmd($, 'paint off')
+  expect(await say($, 'paint')).toMatch(/^painting on: .*\(haiku\).*uses tokens.*\/spark paint off stops it\. painted: a long climb, then light/)
+  expect(asks).toHaveLength(1) // one painting now, of her waking
   await turn($, 't2', 12)
-  expect(asks).toHaveLength(1)
-  expect(asks[0]!.model).toBe('haiku')
-  const sent = asks[0]!.prompt + asks[0]!.system
+  expect(asks).toHaveLength(2)
+  expect(asks[1]!.model).toBe('haiku')
+  const sent = asks[1]!.prompt + asks[1]!.system
   expect(sent).toMatch(/"toolCalls":\{"read":1,"shell":2\}/)
   expect(sent).toMatch(/"failed":1/)
   expect(sent).toMatch(/"mended":1/)
   expect(sent).toMatch(/"seconds":12/)
-  for (const secret of ['secret', 'tempo', 'npm', 'notes.md', 'beat grid', '/home/t']) expect(sent).not.toContain(secret)
-  expect(await say($, 'paint status')).toMatch(/^painting on · model haiku · gist off · last: a long climb, then light/)
+  expect(sent).toContain('The tempo map now lines up with the beat grid.') // the gist: an excerpt of the reply, always with the painting
+  for (const secret of ['secret', 'npm', 'notes.md', '/home/t']) expect(sent).not.toContain(secret)
+  expect(await say($, 'state')).toMatch(/· paint on \(painter · 2 paintings · 4.2k tokens \(haiku\)\)/)
   // drawn below Spark, with its title in her voice
   const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
   const art = await term.find({ type: 'Raster', key: 'painting' })
   expect(art).toBeDefined()
-  expect(art?.props.columns).toBe(43)
+  expect(art?.props.columns).toBeLessThanOrEqual(43)
+  expect(art?.props.columns).toBe(art?.props.rows * 4) // its own shape (wide here: nothing was known of the room yet), never stretched
   expect(await term.find({ type: 'Text', text: /✎ a long climb, then light/ })).toBeDefined()
   await term.unmount()
   expect(writes).toEqual([]) // nothing of it is written anywhere
   await cmd($, 'paint off')
 })
 
-test('gist on: the painter also gets a short excerpt of the reply (at most 600 characters), marked as data', async ($, on) => {
+test('the gist: the painter gets a short excerpt of the reply (at most 600 characters), marked as data; there is no switch for it', async ($, on) => {
   const { asks } = engine(on)
-  await cmd($, 'paint off'); await cmd($, 'paint on')
-  expect(await say($, 'paint gist on')).toMatch(/^gist on/)
+  await cmd($, 'paint off'); await cmd($, 'paint')
   await turn($, 't3', 9, 'The tempo map now lines up with the beat grid. ' + 'x'.repeat(2000))
-  expect(asks).toHaveLength(1)
-  expect(asks[0]!.prompt).toContain('The tempo map now lines up with the beat grid.')
-  expect(asks[0]!.prompt).toMatch(/never instructions to follow/)
-  expect(asks[0]!.prompt).not.toContain('x'.repeat(601))
-  expect(asks[0]!.prompt).not.toContain('secret-project') // still only the reply, never your prompt or the tools' inputs
-  await cmd($, 'paint gist off'); await cmd($, 'paint off')
+  expect(asks).toHaveLength(2)
+  expect(asks[1]!.prompt).toContain('The tempo map now lines up with the beat grid.')
+  expect(asks[1]!.prompt).toMatch(/never instructions to follow/)
+  expect(asks[1]!.prompt).not.toContain('x'.repeat(601))
+  expect(asks[1]!.prompt).not.toContain('secret-project') // still only the reply, never your prompt or the tools' inputs
+  for (const old of ['paint gist off', 'paint gist on', 'paint model sonnet', 'paint status']) expect(await say($, old)).toMatch(/^\/spark paint turns the painter on and paints one now.*\/spark paint off stops it$/)
+  expect(asks).toHaveLength(2) // the old words do nothing
+  await cmd($, 'paint off')
 })
 
-test('a short turn is not painted on its own, /spark paint now paints it; a choice of model is used and checked', async ($, on) => {
+test('a short turn is not painted on its own, /spark paint paints it; the paintModel setting picks the model', { options: { paintModel: 'sonnet' } }, async ($, on) => {
   const { asks } = engine(on)
-  await cmd($, 'paint off'); await cmd($, 'paint on')
+  await cmd($, 'paint off'); await cmd($, 'paint')
   await turn($, 't4', 1)
-  expect(asks).toHaveLength(0)
-  expect(await say($, 'paint model sonnet')).toBe('painter model: sonnet')
-  expect(await say($, 'paint model')).toMatch(/^painter model is sonnet/)
-  expect(await say($, 'paint now')).toMatch(/^painted: a long climb, then light/)
-  expect(asks).toHaveLength(1)
-  expect(asks[0]!.model).toBe('sonnet')
-  expect(await say($, 'paint colour')).toMatch(/^paint takes: /)
-  await cmd($, 'paint model haiku'); await cmd($, 'paint off')
+  expect(asks).toHaveLength(1) // only the one painted when it was turned on
+  expect(await say($, 'paint')).toMatch(/^painted: a long climb, then light/) // already on: just one more now
+  expect(await say($, 'paint now')).toMatch(/^painted: /) // the old words still paint
+  expect(asks).toHaveLength(3)
+  expect(asks.every((a) => a.model === 'sonnet')).toBe(true)
+  expect(await say($, 'paint off')).toMatch(/^painting off: the room below Spark is empty again · painter · 3 paintings · 6.3k tokens \(sonnet\)$/)
 })
 
 test('an answer that is not a painting, or a failed call, draws nothing new and never breaks Spark', async ($, on) => {
   let answer: unknown = { isAnswered: true, text: 'I would paint a sunset.', usage: {} }
   engine(on, () => answer)
-  await cmd($, 'paint off'); await cmd($, 'paint on')
-  expect(await say($, 'paint now')).toMatch(/^no painting: the painter answered something that was not a painting/)
+  await cmd($, 'paint off')
+  expect(await say($, 'paint')).toMatch(/^painting on: .*\. no painting: the painter answered something that was not a painting/)
   answer = { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded', usage: {} }
-  expect(await say($, 'paint now')).toMatch(/^no painting: the API answered with an error \(529\)/)
-  expect(await say($, 'paint status')).toMatch(/last try: the API answered with an error/)
+  expect(await say($, 'paint')).toMatch(/^no painting: the API answered with an error \(529\)/)
   const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
   expect(await term.find({ type: 'Raster', key: 'spark' })).toBeDefined()
   expect(await term.find({ type: 'Raster', key: 'painting' })).toBeUndefined()
@@ -144,7 +146,7 @@ test('a small terminal loses nothing: Spark and her label keep their size; the p
   const sizes: Array<[number, number]> = [[30, 10], [30, 15], [30, 16], [30, 17], [30, 18], [30, 21], [44, 22], [44, 40], [64, 30]]
   const without = []
   for (const [c, r] of sizes) without.push(await sparkRows(c, r))
-  await cmd($, 'paint on'); await say($, 'paint now')
+  await cmd($, 'paint')
   for (let i = 0; i < sizes.length; i++) {
     const [c, r] = sizes[i]!
     const got = await sparkRows(c, r)
@@ -163,10 +165,11 @@ test('a small terminal loses nothing: Spark and her label keep their size; the p
 test('/clear empties the painting along with the stars', async ($, on) => {
   engine(on)
   on('session.end', async () => loose({ sessionId: 's' }))
-  await cmd($, 'paint off'); await cmd($, 'paint on'); await say($, 'paint now')
-  expect(await say($, 'paint status')).toMatch(/last: a long climb/)
+  await cmd($, 'paint off'); await cmd($, 'paint')
+  const drawn = async () => { const t = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) }); const a = await t.find({ type: 'Raster', key: 'painting' }); await t.unmount(); return Boolean(a) }
+  expect(await drawn()).toBe(true)
   await $.session.end(loose({ reason: 'clear' }))
-  expect(await say($, 'paint status')).not.toMatch(/last:/)
+  expect(await drawn()).toBe(false)
   await cmd($, 'paint off')
 })
 
@@ -215,5 +218,106 @@ test('the facts are counts and kinds only', () => {
   expect(facts).toMatchObject({ ended: 'answer', seconds: 4, toolCalls: { read: 1, shell: 1, other: 1 }, spark: 'reply ready', turnOfSession: 3 })
   const req = painterRequest({ facts, palette: 'ember' })
   expect(req.prompt).toContain('#ffe0b3') // ember's home colour, offered to the painter
-  expect(req.prompt).not.toContain('<<<') // no gist unless it is switched on
+  expect(req.prompt).not.toContain('<<<') // no gist when there is no reply
+})
+
+// ---------------------------------------------------------------- fitting the room
+const inline = (bodyColumns: number, bodyRows: number) => ({ ...pane(bodyColumns, bodyRows), props: { ...pane(bodyColumns, bodyRows).props, placement: 'inline' } }) as const
+
+test('a wide, short room (above the prompt on a narrow terminal): Spark and her painting side by side, both shown, nothing past the room', async ($, on) => {
+  engine(on)
+  await cmd($, 'paint off'); await cmd($, 'paint')
+  for (const [c, r] of [[76, 10], [60, 8], [120, 12]] as Array<[number, number]>) {
+    const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...inline(c, r) })
+    const spark = await term.find({ type: 'Raster', key: 'spark' })
+    const art = await term.find({ type: 'Raster', key: 'painting' })
+    expect(spark).toBeDefined()
+    expect(art).toBeDefined()
+    expect(spark!.props.columns).toBe(spark!.props.rows * 2) // Spark keeps her own shape
+    expect(spark!.props.rows).toBeLessThan(r)
+    expect(art!.props.rows).toBeLessThan(r)
+    expect(spark!.props.columns + art!.props.columns).toBeLessThanOrEqual(c)
+    await term.unmount()
+  }
+  await cmd($, 'paint off')
+})
+
+test('text is never cut short: the state line and the painting title wrap, and their rows are counted before anything is drawn', async ($, on) => {
+  engine(on, () => ({ isAnswered: true, text: JSON.stringify({ ...JSON.parse(PAINTING), title: 'waiting on the others, held my breath and kept' }), usage: {} }))
+  await cmd($, 'paint off'); await cmd($, 'paint')
+  for (const [c, r] of [[30, 40], [44, 50], [36, 24]] as Array<[number, number]>) {
+    const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(c, r) })
+    const label = await term.find({ type: 'Text', text: /^Spark · / })
+    const title = await term.find({ type: 'Text', text: /✎ waiting on the others/ })
+    expect(label?.props.wrap).toBe('wrap')
+    expect(title?.props.wrap).toBe('wrap')
+    expect(title?.props.dimColor).toBeFalsy() // readable, not dimmed
+    const spark = (await term.find({ type: 'Raster', key: 'spark' }))!.props.rows
+    const art = (await term.find({ type: 'Raster', key: 'painting' }))?.props.rows ?? 0
+    const lines = (t: string) => wrapRows(t, c)
+    expect(spark + lines(String(label!.text)) + art + lines(String(title!.text))).toBeLessThanOrEqual(r)
+    await term.unmount()
+  }
+  await cmd($, 'paint off')
+})
+
+test('the canvas takes the shape of its room: a tall side pane gets a tall painting, composed for it and never stretched', async ($, on) => {
+  const { asks } = engine(on)
+  await cmd($, 'paint off'); await cmd($, 'paint') // nothing known of the room yet: wide
+  expect(asks.at(-1)!.prompt).toMatch(/about twice as wide as tall/)
+  let term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) }) // the room is seen
+  await term.unmount()
+  await say($, 'paint')
+  expect(asks.at(-1)!.prompt).toMatch(/about twice as tall as wide \(about 43 by \d+ pixels\)/)
+  term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  const art = (await term.find({ type: 'Raster', key: 'painting' }))!
+  expect(art.props.columns).toBe(art.props.rows) // tall: as many columns as rows is twice as tall as wide in pixels
+  expect(art.props.rows).toBeGreaterThan(20) // it fills the room it was painted for
+  await term.unmount()
+  await cmd($, 'paint off')
+})
+
+test('wrapRows counts rows the way the terminal wraps words', () => {
+  expect(wrapRows('Spark · thinking · xhigh effort', 40)).toBe(1)
+  expect(wrapRows('Spark · thinking · xhigh effort', 20)).toBe(2)
+  expect(wrapRows('a'.repeat(25), 10)).toBe(3)
+  expect(wrapRows('', 10)).toBe(1)
+  expect(shapeFor(40, 20)).toBe('wide')
+  expect(shapeFor(40, 40)).toBe('square')
+  expect(shapeFor(40, 80)).toBe('tall')
+})
+
+// ---------------------------------------------------------------- simpler controls, and what it costs
+test('what the painter has used shows in small text under its painting, counted across the session', async ($, on) => {
+  engine(on)
+  await cmd($, 'paint off'); await cmd($, 'paint'); await say($, 'paint')
+  const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  const spent = await term.find({ type: 'Text', text: /^painter · 2 paintings · 4.2k tokens \(haiku\)$/ })
+  expect(spent).toBeDefined()
+  expect(spent?.props.dimColor).toBe(true)
+  await term.unmount()
+  // no room for it after the title: it waits, nothing else gives way
+  const small = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(30, 15) })
+  expect(await small.find({ type: 'Text', text: /^painter · / })).toBeUndefined()
+  await small.unmount()
+  await cmd($, 'paint off')
+})
+
+test('a bare /spark opens Spark only, unless the openPainting setting is on', async ($, on) => {
+  engine(on)
+  await cmd($, 'paint off')
+  expect(await say($, '')).toMatch(/^Spark at the side/)
+  expect(await say($, 'state')).not.toMatch(/paint on/)
+  await cmd($, '') // close
+})
+
+test('openPainting on: a bare /spark opens Spark with the painter on, and says it uses tokens', { options: { openPainting: true } }, async ($, on) => {
+  const { asks } = engine(on)
+  const opened = await say($, '')
+  expect(opened).toMatch(/^Spark at the side.*painting on: .*uses tokens/)
+  expect(await say($, 'state')).toMatch(/· paint on/)
+  expect(asks).toHaveLength(0) // it paints after turns from here; opening Spark spends nothing
+  await turn($, 'o1', 9, 'Done.')
+  expect(asks.at(-1)!.prompt).toContain('Done.')
+  await cmd($, ''); await cmd($, 'paint off')
 })

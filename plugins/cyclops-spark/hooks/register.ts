@@ -13,8 +13,9 @@
 //   /spark replay  the scripted tour of every state, in the pane, labelled as a replay (never live data)
 //   /spark ask Q   a side question, answered from a fork of this session (no tools), mid-turn too, never typed anywhere
 //   /spark link    on | off | status: Cyclops Link, Keeper and Prism beside Spark when they work in the same folder
-//   /spark paint   on | off | now | gist on|off | model <name> | status: the painter, a small sub-agent that paints
-//                  Spark's expression of each turn in the room below her (off until you turn it on)
+//   /spark paint   the painter, a small sub-agent that paints Spark's expression of each turn in the room below her:
+//                  /spark paint turns it on and paints one now, /spark paint off stops it. It sees the turn's shape and a
+//                  short excerpt of the reply. It uses tokens: what it has used shows under the painting
 //
 // When a turn ends and you have not acted on it yet, Spark holds the reply out to you (reply ready) until you send a new
 // prompt or copy it with /copy.
@@ -31,7 +32,8 @@ import { base64, createRaster, toHalfBlocks, toRGBA8 } from './render-raster.js'
 import { buildTrace, replayAt } from './trace.js'
 import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
 import { KEEPER, PRISM } from './link-marks.js'
-import { newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, type Painting, type TurnFacts } from './painter.js'
+import { newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
+import { wrapRows } from './layout.js'
 
 const PANE = 'cyclops-spark'
 const T0 = Date.now()
@@ -90,12 +92,14 @@ const linkSheets: Record<string, MarkSheet | null> = {}
 
 // ---------------------------------------------------------------- the painter (off unless you turn it on)
 // One tool-less completion per painting ($.model.complete, Haiku unless you pick another model), given only the turn's
-// shape (counts and kinds), and with the gist switch on a short excerpt of the reply too. Its answer is a small paint
+// shape (counts and kinds) and a short excerpt of the reply (the gist). Its answer is a small paint
 // program, drawn by Spark's own renderer in the room under her: only room she is not using, so she never gets smaller.
 let paintOn = false
-let paintGist = false
 let paintModel = 'haiku'
-let painting: (Painting & { at: number; n: number }) | null = null
+let openPainting = false // the openPainting setting: a bare /spark also turns the painter on. Off by default
+const paintSpent = { paintings: 0, calls: 0, tokens: 0 } // what the painter has used this session, shown under its painting
+let painting: (Painting & { at: number; n: number; shape: string }) | null = null
+let paintRoom: { columns: number; rows: number } | null = null // the room the last painting area had: the next canvas takes its shape
 let paintCount = 0
 let paintBusy = false
 let paintNote = ''      // why the last painting did not come
@@ -366,8 +370,11 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked'): Promise<stri
   const turn = lastTurn ?? { facts: null, end: { reason: 'answer', durationMs: 0 }, answer: '' }
   try {
     const facts = painterFacts(turn.facts, { ...turn.end, mood: String(liveFrame().hover).replace(/^Spark · /, ''), turn: turnsSeen })
-    const req = painterRequest({ facts, palette, theme: activeTheme(), gist: paintGist ? turn.answer : '' })
+    const shape = paintRoom ? shapeFor(paintRoom.columns, paintRoom.rows * 2) : 'wide' // a cell is one pixel wide, two tall
+    const req = painterRequest({ facts, palette, theme: activeTheme(), gist: turn.answer, shape, size: paintRoom ? [paintRoom.columns, paintRoom.rows * 2] : null })
     const r = await $.model.complete({ model: paintModel, system: req.system, prompt: req.prompt, maxTokens: 1500, effort: 'low', timeoutMs: 30000 })
+    const u = (r as { usage?: Record<string, number> }).usage // every arm carries what the call really cost
+    if (u) { paintSpent.calls++; paintSpent.tokens += (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) }
     if (!r.isAnswered) {
       paintNote = r.reason === 'api-error' ? `the API answered with an error${'status' in r && r.status ? ` (${r.status})` : ''}` : r.reason === 'aborted' ? 'it took too long' : 'the painter sent nothing back'
       logRecent('paint ✕')
@@ -375,7 +382,8 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked'): Promise<stri
     }
     const p = parsePainting(r.text, palette)
     if (!p) { paintNote = 'the painter answered something that was not a painting'; logRecent('paint ✕'); return 'no painting: ' + paintNote }
-    painting = { ...p, at: now(), n: ++paintCount }
+    painting = { ...p, at: now(), n: ++paintCount, shape }
+    paintSpent.paintings++
     paintNote = ''
     logRecent('paint ' + why)
     return 'painted' + (p.title ? ': ' + p.title : '') + (paneOpen && !focusMode ? '' : ' (it shows below Spark at the side: /spark)')
@@ -409,22 +417,39 @@ function paintFrame(columns: number, rows: number): PaintSite['frame'] {
   return site.frame
 }
 
-// What goes in the room under Spark and her label: only rows she is not using, so a small terminal never loses her.
-// Enough room: the painting and its title. A little: the title alone. None: nothing (the painting waits for room).
-function paintBlock(els: any, columns: number, room: number): any[] {
-  if (!paintOn || room < 1) return []
-  const { Text, Raster, Image } = els
+// What the painter has used this session, said plainly: shown small (dim) under the painting, in /spark state and when the painter is turned off
+const kilo = (n: number) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n)
+const paintOnText = () => `painting on: after each turn a small painter (${paintModel}) paints Spark's expression of it below her, from the turn's shape and a short excerpt of the reply. Each painting is one short ${paintModel} call through your session and uses tokens; what it has used shows under the painting. /spark paint paints one any time, /spark paint off stops it`
+const spentText = () => `painter · ${paintSpent.paintings} ${paintSpent.paintings === 1 ? 'painting' : 'paintings'} · ${kilo(paintSpent.tokens)} tokens (${paintModel})`
+
+// What goes in the room it is given, `width` columns by `room` rows: the painting at its own shape (wide, square or tall,
+// whichever the room had when it was painted), as large as fits, centred, and its title in full under it. A little room:
+// the title alone. None: nothing (the painting waits for room).
+function paintBlock(els: any, width: number, room: number): any[] {
+  if (!paintOn || room < 1 || width < 4) return []
+  const { Box, Text, Raster, Image } = els
   const busyWord = paintBusy ? (painting ? ' · painting…' : 'painting…') : ''
-  if (!painting) return busyWord ? [Text({ children: ['✎ ' + busyWord], dimColor: true, wrap: 'truncate-end' })] : []
-  const caption = Text({ children: ['✎ ' + (painting.title || 'untitled') + busyWord], dimColor: true, wrap: 'truncate-end' })
-  const gap = room >= 7 ? 1 : 0
-  const rows = Math.min(room - 1 - gap, Math.max(3, Math.round(columns / 4)))
-  if (rows < 3) return [caption]
+  if (!painting) return busyWord ? [Text({ children: ['✎ ' + busyWord], italic: true, wrap: 'truncate-end' })] : []
+  const words = '✎ ' + (painting.title || 'untitled') + busyWord
+  const lines = wrapRows(words, width)
+  const caption = Text({ children: [words], italic: true, wrap: lines <= room ? 'wrap' : 'truncate-end' })
+  // what it cost, in small (dim) text at the bottom, when there is a row for it after the title
+  const spend = paintSpent.calls > 0 ? spentText() : ''
+  const spendRows = spend && room >= lines + wrapRows(spend, width) ? wrapRows(spend, width) : 0
+  const spent = spendRows ? [Text({ children: [spend], dimColor: true, wrap: 'wrap' })] : []
+  const gap = room >= lines + spendRows + 7 ? 1 : 0
+  const free = Math.min(60, room - lines - spendRows - gap)
+  paintRoom = { columns: width, rows: Math.max(3, free) } // the next painting is composed for this room's shape
+  const a = SHAPES[painting.shape] ?? 2 // width over height, in pixels (a cell is one pixel wide, two tall)
+  const rows = Math.min(free, Math.floor(width / (2 * a)))
+  if (rows < 3) return [caption, ...spent]
+  const columns = Math.max(4, Math.min(width, Math.round(rows * 2 * a))) // its own shape: fitted, never stretched
   const fr = paintFrame(columns, rows)
   const art = fr.cells
     ? Raster({ key: 'painting', columns, rows, cells: fr.cells })
     : Image({ key: 'painting', columns, rows, alt: painting.title || 'a painting', source: { rgba: fr.rgba!, width: fr.width!, height: fr.height! } })
-  return [...(gap ? [Text({ children: [' '] })] : []), art, caption]
+  const centred = Box({ flexDirection: 'row', justifyContent: 'center', width, children: [art] })
+  return [...(gap ? [Text({ children: [' '] })] : []), centred, caption, ...spent]
 }
 
 // Spark's coarse facts, written for the helper only when they change (at most four times a second)
@@ -500,7 +525,7 @@ const HELP = [
   '/spark focus   Spark large beside the conversation, which keeps rolling (Esc or /spark returns)',
   '/spark ask Q   a side question: answered beside the work (no tools), mid-turn too',
   '/spark link    on | off | status: Keeper and Prism beside Spark (Cyclops Link, off until you turn it on)',
-  '/spark paint   on | off | now | gist on|off | model <name> | status: a small painter paints each turn below Spark (off until you turn it on)',
+  '/spark paint   a small painter paints each turn below Spark, and one now (it uses tokens); /spark paint off stops it',
 ].join('\n')
 
 // focus asks for about 60% of the terminal (at least 64 columns, and always 40 left for the conversation), and the full
@@ -573,8 +598,8 @@ export const register: Register = (on, options) => {
   if (typeof o.chimeAfterSeconds === 'number' && o.chimeAfterSeconds >= 0) chimeAfter = o.chimeAfterSeconds
   if (typeof o.link === 'boolean') linkOn = o.link
   if (typeof o.paint === 'boolean') paintOn = o.paint
-  if (typeof o.paintGist === 'boolean') paintGist = o.paintGist
   if (typeof o.paintModel === 'string' && MODEL_ID.test(o.paintModel.trim())) paintModel = o.paintModel.trim()
+  if (typeof o.openPainting === 'boolean') openPainting = o.openPainting
 
   on('session.start', async ($, e, next) => {
     await refreshTheme($)
@@ -684,7 +709,7 @@ export const register: Register = (on, options) => {
 
   // ---------------------------------------------------------------- command
   on('command.run', { command: 'spark' }, async ($, e) => {
-    const [word = '', arg = '', arg2 = ''] = e.args.trim().toLowerCase().split(/\s+/)
+    const [word = '', arg = ''] = e.args.trim().toLowerCase().split(/\s+/)
     let text: string
     if (typeof e.presentation?.columns === 'number' && e.presentation.columns > 0 && !focusMode) lastTerminal = e.presentation.columns
     if (word === 'top' || word === 'band') { // a short strip above the prompt; the side pane gives way to it
@@ -698,6 +723,7 @@ export const register: Register = (on, options) => {
       else {
         band = false // one place at a time
         text = paneOpen ? 'Spark is already at the side' : await openPane($)
+        if (openPainting && !paintOn) { paintOn = true; text += '; ' + paintOnText() } // the openPainting setting
         if (!named && sound !== 'off') { named = true; await cue($, 'name', 'soft') }
       }
     }
@@ -749,7 +775,7 @@ export const register: Register = (on, options) => {
       }
     }
     else if (word === 'state') {
-      text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${paintOn ? ' · paint ' + (paintGist ? 'on+gist' : 'on') : ''}\n` + recent.join('\n')
+      text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${paintOn ? ' · paint on' + (paintSpent.calls ? ` (${spentText()})` : '') : ''}\n` + recent.join('\n')
     }
     else if (word === 'link') {
       if (arg === 'on' || arg === 'off') {
@@ -762,26 +788,18 @@ export const register: Register = (on, options) => {
         text = 'link ' + (linkOn ? linkStatus : 'off') + (linkOn && linkView ? ' · ' + linkLine(linkView) : '') + (linkWanted !== null ? ' (SPARK_LINK overrides the setting)' : '')
       } else text = 'link takes: on | off | status'
     }
-    else if (word === 'paint') {
-      const where = paneOpen && !focusMode ? '' : ' It shows below Spark at the side (/spark).'
-      if (arg === 'on' || arg === 'off') {
-        paintOn = arg === 'on'
-        if (!paintOn) { painting = null; paintSite = null }
-        text = paintOn ? `painting on: after each turn a small painter (${paintModel}) paints Spark's expression of it below her, from the turn's shape only${paintGist ? ' and a short excerpt of the reply' : ''}. /spark paint now makes one any time.` + where : 'painting off: the room below Spark is empty again'
-      } else if (arg === 'gist') {
-        if (arg2 === 'on' || arg2 === 'off') paintGist = arg2 === 'on'
-        text = arg2 === 'on' || arg2 === 'off'
-          ? (paintGist ? 'gist on: the painter also gets a short excerpt (at most 600 characters) of each reply, so a painting can echo the subject' : 'gist off: the painter gets the turn\'s shape only (counts and kinds)')
-          : 'gist takes: on | off (it is ' + (paintGist ? 'on' : 'off') + ')'
-      } else if (arg === 'model') {
-        const id = e.args.trim().split(/\s+/)[2] ?? ''
-        if (MODEL_ID.test(id)) { paintModel = id; text = 'painter model: ' + id }
-        else text = 'painter model is ' + paintModel + ' (/spark paint model <name>, for example haiku or sonnet)'
-      } else if (arg === 'status') {
-        text = 'painting ' + (paintOn ? 'on' : 'off') + ` · model ${paintModel} · gist ${paintGist ? 'on' : 'off'}` + (paintBusy ? ' · painting now' : '') + (painting ? ` · last: ${painting.title || 'untitled'}` : '') + (paintNote ? ` · last try: ${paintNote}` : '')
-      } else if (arg === '' || arg === 'now') {
-        text = paintOn ? await paintNow($, 'asked') : 'painting is off: /spark paint on lets a small painter paint below Spark (it uses ' + paintModel + ' through this session)'
-      } else text = 'paint takes: on | off | now | gist on|off | model <name> | status'
+    else if (word === 'paint') { // two controls: /spark paint (on, and one now) and /spark paint off
+      const where = paneOpen && !focusMode ? '' : ' (it shows below Spark at the side: /spark)'
+      if (arg === 'off') {
+        const was = paintOn
+        paintOn = false; painting = null; paintSite = null
+        text = (was ? 'painting off: the room below Spark is empty again' : 'painting is already off') + (paintSpent.calls ? ' · ' + spentText() : '')
+      } else if (arg === '' || arg === 'on' || arg === 'now') { // on and now are the old words for the same thing
+        const turning = !paintOn
+        paintOn = true
+        const made = await paintNow($, 'asked')
+        text = turning ? paintOnText() + '. ' + made.replace(/ \(it shows below Spark at the side: \/spark\)$/, '') + where : made
+      } else text = '/spark paint turns the painter on and paints one now (it uses tokens); /spark paint off stops it'
     }
     else if (word === 'help' || (word !== '' && word !== 'pane')) text = HELP
     else if (focusMode) text = await leaveFocus($, false) // a bare /spark in focus: back to your view
@@ -789,6 +807,7 @@ export const register: Register = (on, options) => {
     else { // opening Spark: the first time in a session it says its name (when sound is on); never again in that session
       band = false // at the side now, so the strip above the prompt gives way
       text = await openPane($)
+      if (openPainting && !paintOn) { paintOn = true; text += '; ' + paintOnText() } // the openPainting setting
       if (!named && sound !== 'off') { named = true; await cue($, 'name', 'soft') }
     }
     $.ui.invalidate('ui.render')
@@ -809,20 +828,19 @@ export const register: Register = (on, options) => {
     if (e.surface === 'terminal') {
       paneSeenOnTerminal = true
       const { Box, Text, Raster, Image } = $.ui.resolve(e)
-      let columns = Math.max(16, Math.min(160, (e.props.bodyColumns ?? 60) - 1))
-      let rows = Math.max(8, Math.min(60, Math.round(columns / 2.1)))
+      const W = e.props.bodyColumns ?? 60
       const bodyRows = e.props.scroll?.bodyRows ?? 0
-      // the label (and the Link line) always fit under the drawing: it never pushes them out of a short pane
-      const under = 1 + (linkOn && linkView && !replay ? 1 : 0)
-      if (!focusMode && bodyRows > under + 2 && rows > bodyRows - under) rows = bodyRows - under
+      let columns = Math.max(16, Math.min(160, W - 1))
+      let rows = Math.max(8, Math.min(60, Math.round(columns / 2.1)))
       if (focusMode) {
         // the whole body, as it is *now*: every render recomputes from the pane's current size, so a resize is
         // recompute → recompose → keep painting. Never larger than the room (a drawing taller than its pane is clipped
         // away), with the truthful line under it when there is room for both
-        const bodyCols = e.props.bodyColumns ?? 60
-        const showLabel = bodyRows >= 6
-        const room = (bodyRows || 8) - (showLabel ? 1 : 0) // a size not reported yet: draw small, the next render has it
-        if (room < 4 || bodyCols < 8) return Box({ flexDirection: 'row', justifyContent: 'center', width: bodyCols, children: [Text({ children: [f.glyph + ' ' + label], wrap: 'truncate-end' })] })
+        const bodyCols = W
+        const labelRows = wrapRows(label, bodyCols)
+        const showLabel = bodyRows >= 5 + labelRows
+        const room = (bodyRows || 8) - (showLabel ? labelRows : 0) // a size not reported yet: draw small, the next render has it
+        if (room < 4 || bodyCols < 8) return Box({ flexDirection: 'row', justifyContent: 'center', width: bodyCols, children: [Text({ children: [f.glyph + ' ' + label], wrap: 'wrap' })] })
         rows = Math.min(120, room)
         columns = Math.min(320, bodyCols)
         const site = siteFor(PANE, e.surface, columns, rows, 'panel', kitty, true)
@@ -831,18 +849,40 @@ export const register: Register = (on, options) => {
           ? Raster({ key: 'spark', columns, rows, cells: fr.cells })
           : Image({ key: 'spark', columns, rows, alt: label, source: { rgba: fr.rgba!, width: fr.width!, height: fr.height! } })
         return Box({ flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: bodyCols, ...(bodyRows ? { height: bodyRows } : {}),
-          children: showLabel ? [art, Text({ children: [label], dimColor: true, wrap: 'truncate-end' })] : [art] })
+          children: showLabel ? [art, Text({ children: [label], wrap: 'wrap' })] : [art] })
       }
-      if (e.props.placement === 'inline' && bodyRows > 0 && bodyRows - 1 < rows) { rows = Math.max(2, bodyRows - 1); columns = Math.min(columns, rows * 2) } // a short inline pane: fit it, never clip it
-      const site = siteFor(PANE, e.surface, columns, rows, 'panel', kitty)
-      const fr = frameFor(site, f, true)
-      const art = fr.cells
-        ? Raster({ key: 'spark', columns, rows, cells: fr.cells })
-        : Image({ key: 'spark', columns, rows, alt: label, source: { rgba: fr.rgba!, width: fr.width!, height: fr.height! } })
-      const linked = linkOn && linkView && !replay ? [Text({ children: [linkLine(linkView)], dimColor: true, wrap: 'truncate-end' })] : []
-      // the painting lives only in the rows Spark, her label and the Link line leave free (never in the replay)
-      const painted = !replay && bodyRows > 0 ? paintBlock(els, columns, bodyRows - rows - 1 - linked.length) : []
-      return Box({ flexDirection: 'column', children: [art, Text({ children: [label], dimColor: true, wrap: 'truncate-end' }), ...linked, ...painted] })
+      // The side pane, laid out for the room it really has, on every render (a resize is just the next render). Text is
+      // never cut short: the state line, the Link line and the painting's title wrap, and their rows are counted first.
+      const linkText = linkOn && linkView && !replay ? linkLine(linkView) : ''
+      const sparkText = (width: number) => [Text({ children: [label], wrap: 'wrap' }), ...(linkText ? [Text({ children: [linkText], dimColor: true, wrap: 'wrap' })] : [])]
+      const textRows = (width: number) => wrapRows(label, width) + (linkText ? wrapRows(linkText, width) : 0)
+      const draw = (cols: number, rws: number) => {
+        const site = siteFor(PANE, e.surface, cols, rws, 'panel', kitty)
+        const fr = frameFor(site, f, true)
+        return fr.cells
+          ? Raster({ key: 'spark', columns: cols, rows: rws, cells: fr.cells })
+          : Image({ key: 'spark', columns: cols, rows: rws, alt: label, source: { rgba: fr.rgba!, width: fr.width!, height: fr.height! } })
+      }
+      const painted = paintOn && !replay && (painting !== null || paintBusy)
+      // A wide, short room (above the prompt on a narrow terminal, or a pane dragged wide): Spark and her painting side by
+      // side, so neither has to give way. Spark keeps her own shape (twice as many columns as rows) and the larger share.
+      if (painted && bodyRows > 0 && W >= 40 && (e.props.placement === 'inline' || W >= bodyRows * 3)) {
+        const left = Math.max(16, Math.floor((W - 2) * 0.45)), right = W - 2 - left
+        let rws = Math.max(2, Math.min(60, bodyRows - textRows(left)))
+        let cols = Math.min(left, rws * 2)
+        if (cols < rws * 2) rws = Math.max(2, Math.floor(cols / 2))
+        cols = Math.max(4, cols)
+        return Box({ flexDirection: 'row', columnGap: 2, children: [
+          Box({ flexDirection: 'column', width: left, children: [draw(cols, rws), ...sparkText(left)] }),
+          Box({ flexDirection: 'column', width: right, children: paintBlock(els, right, bodyRows) }),
+        ] })
+      }
+      // Otherwise a column: Spark, her line, then the painting in the rows she does not use (she never gets smaller for it)
+      const under = textRows(W)
+      if (bodyRows > under + 2 && rows > bodyRows - under) rows = bodyRows - under
+      if (e.props.placement === 'inline' && bodyRows > 0 && bodyRows - under < rows) { rows = Math.max(2, bodyRows - under); columns = Math.min(columns, rows * 2) } // a short inline pane: fit it, never clip it
+      const below = painted && bodyRows > 0 ? paintBlock(els, columns, bodyRows - rows - under) : []
+      return Box({ flexDirection: 'column', width: W, children: [draw(columns, rows), ...sparkText(W), ...below] })
     }
     // not a terminal: the glyph and the same truthful line, nothing drawn
     const { Box, Text } = els

@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.5.1
+
+- The side pane fits whatever room it has, on every resize. Above the prompt on a small terminal (a wide, short room),
+  Spark and her painting sit side by side, so the painting shows there too. In a tall side pane they stack.
+- Nothing is cut short any more: Spark's state line, the Link line and the painting's title wrap instead of ending in
+  an ellipsis, and their rows are counted before anything is drawn, so nothing is pushed out of the pane. They are drawn
+  at full brightness (the title in italics) so they read well at full screen.
+- The painting takes the shape of its room: wide in a short room, square, or tall in a tall side pane, and the painter
+  is told that shape (and its size) so it composes for it. A painting keeps its shape after a resize: it is fitted and
+  centred, never stretched.
+- Two painter controls instead of seven. `/spark paint` turns the painter on and paints one now (and paints another any
+  time after); `/spark paint off` stops it. Turning it on says plainly that it uses tokens. The gist always comes with
+  the painting now: `/spark paint gist`, `/spark paint model`, `/spark paint status` and the `paintGist` setting are gone
+  (the **Painter model** setting still picks the model; `on` and `now` still work as the old words for `/spark paint`).
+- What the painter has used shows in small (dim) text at the bottom, under its painting: how many paintings and how many
+  tokens this session, and with which model. `/spark state` and `/spark paint off` say the same.
+- New setting **Paint when Spark opens** (`openPainting`, off by default): with it on, `/spark` opens Spark with the
+  painter already on, one command for both.
+
 ## 1.5.0
 
 - **The painter** (off until you turn it on): a small sub-agent paints Spark's expression of each turn in the room below
