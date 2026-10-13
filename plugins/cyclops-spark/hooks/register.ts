@@ -32,7 +32,7 @@ import { base64, createRaster, toHalfBlocks, toRGBA8 } from './render-raster.js'
 import { buildTrace, replayAt } from './trace.js'
 import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
 import { KEEPER, PRISM } from './link-marks.js'
-import { cleanReflection, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
+import { cleanReflection, reflectRequest, SPOKEN_CHARS, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
 
 const PANE = 'cyclops-spark'
@@ -137,10 +137,7 @@ let lastLiveAt = -1e9   // when she last began a live one
 const hostNow = async ($: EngineInterface) => (await $.clock.now()) / 1000
 let lastStream = ''     // the main loop's last stream kind, to notice thinking turning into writing
 let reflection = ''     // the builder's last reflection, as sent to the painter (shown in /spark state)
-const REFLECT = 'Spark, your presence in the terminal, is about to paint a moment of this long turn and asks you, privately, for one ' +
-  'short reflective comment for her painter: how this build feels to you right now, as the one building it (a feeling, a hope, a doubt, a sense ' +
-  'of momentum). Personal and reflective, not descriptive: do not describe the work, files, commands, errors or anything already on screen, and ' +
-  'share nothing you would rather keep private. At most 200 characters, plain words, no preamble. Answer with the comment only.'
+let spoken = ''         // the last SPOKEN_CHARS the builder said aloud this turn (text, never thinking), in memory only
 const MODEL_ID = /^[\w.:\-\[\]\/@]{1,80}$/
 
 type Replay = { t0: number; presence: ReturnType<typeof createPresence>; trace: ReturnType<typeof buildTrace>; i: number; loop: number }
@@ -418,8 +415,9 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
   try {
     const facts = painterFacts(turn.facts, { ...turn.end, mood: String(liveFrame().hover).replace(/^Spark · /, ''), turn: live ? turnsSeen + 1 : turnsSeen })
     let words = ''
-    if (live) { // the builder's own reflection, asked of this session itself (a tool-less fork, as /spark ask is), never the work
-      const f = await $.model.fork({ prompt: REFLECT })
+    if (live && spoken.trim()) { // the builder's reflection, distilled by the small model from their own last words aloud
+      const rq = reflectRequest(spoken)
+      const f = await $.model.complete({ model: paintModel, system: rq.system, prompt: rq.prompt, maxTokens: 200, effort: 'low', timeoutMs: 20000 })
       spend((f as { usage?: Record<string, number> }).usage)
       words = f.isAnswered ? cleanReflection(f.text) : ''
       if (words) reflection = words
@@ -676,7 +674,7 @@ export const register: Register = (on, options) => {
 
   // a /clear ends the conversation without a new session.start: the stars are gone and Spark wakes again
   on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full'); painting = null; paintSite = null; lastTurn = null; turnsSeen = 0; reflection = '' }
+    if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full'); painting = null; paintSite = null; lastTurn = null; turnsSeen = 0; reflection = ''; spoken = '' }
     const res = await next(e)
     if (e.reason === 'clear' && linkOn) { await stopLink(); await startLink($) } // a new conversation is a new instance
     return res
@@ -685,7 +683,7 @@ export const register: Register = (on, options) => {
   // ---------------------------------------------------------------- real events → presence events
   on('prompt.edit', async ($, e, next) => { emit({ type: 'prompt.edit' }); return next(e) })
   on('prompt.submit', async ($, e, next) => { await quietly(() => emit({ type: 'prompt.submit' })); return next(e) })
-  on('turn.start', async ($, e, next) => { emit({ type: 'turn.start' }); turnFacts = newTurnFacts(); turnBegan = await hostNow($).catch(() => -1); lastStream = ''; return next(e) })
+  on('turn.start', async ($, e, next) => { emit({ type: 'turn.start' }); turnFacts = newTurnFacts(); turnBegan = await hostNow($).catch(() => -1); lastStream = ''; spoken = ''; return next(e) })
 
   on('turn.step', async function* ($, e, next) {
     const sub = Boolean(e.agentId)
@@ -698,6 +696,7 @@ export const register: Register = (on, options) => {
         emit(sub ? { type: 'agent.stream', n: chunk.text.length } : { type: 'stream', kind: chunk.kind, n: chunk.text.length }, sub)
         if (turnFacts) { if (sub) turnFacts.agentStreams++; else if (chunk.kind === 'thinking') turnFacts.thinkChars += chunk.text.length; else turnFacts.textChars += chunk.text.length }
         if (!sub && murmurOn) await murmur($, chunk.kind === 'thinking' ? 'think' : 'write')
+        if (!sub && chunk.kind === 'text') spoken = (spoken + chunk.text).slice(-SPOKEN_CHARS) // what the builder says aloud, never its thinking
         if (!sub) { await quietly(() => maybePaintLive($, lastStream === 'thinking' && chunk.kind === 'text')); lastStream = chunk.kind } // thinking turning into writing moves her
       }
       yield chunk
@@ -755,7 +754,7 @@ export const register: Register = (on, options) => {
         const sinceLive = (await hostNow($).catch(() => Infinity)) - lastLiveAt
         if (paintOn && !paintBusy && e.durationMs >= AUTO_MIN_MS && now() - lastAutoPaint >= AUTO_GAP_S && sinceLive >= AUTO_GAP_S) { lastAutoPaint = now(); void quietly(() => paintNow($, 'turn')) }
       }
-      turnFacts = null
+      turnFacts = null; spoken = ''
       turnBegan = -1
     }
     return next(e)
@@ -979,7 +978,7 @@ export const register: Register = (on, options) => {
     }
     const { Box, Text } = els
     // Spark and her truthful line side by side, so the strip stays as short as the drawing
-    const words = [Text({ children: [f.hover], dimColor: true, wrap: 'truncate-end' }), ...(linkOn && linkView ? [Text({ children: [linkLine(linkView)], dimColor: true, wrap: 'truncate-end' })] : [])]
+    const words = [Text({ children: [f.hover], dimColor: true, wrap: 'truncate-end' }), ...(linkText(linkOn, linkView) ? [] : []), ...(linkOn && linkView ? [Text({ children: [linkLine(linkView)], dimColor: true, wrap: 'truncate-end' })] : [])]
     const left = art
       ? Box({ flexDirection: 'row', columnGap: 1, alignItems: 'center', children: [art, Box({ flexDirection: 'column', children: words })] })
       : Box({ flexDirection: 'row', columnGap: 1, children: [Text({ children: [f.glyph] }), ...words] })
