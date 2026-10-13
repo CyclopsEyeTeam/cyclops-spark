@@ -116,10 +116,11 @@ pane, laid down mark by mark, with a few words of hers underneath.
 **Live paintings in long turns.** A long turn is painted while it is still going too: never sooner than 15 minutes after
 the turn began (or her last painting), at a moment that moves her (a failure mended, a subagent coming back, a long call
 settling, thinking turning into writing), or, with no such moment, 3 minutes later anyway. No limit on how many: just
-one per 15 minutes at most. A live painting is not given the work at all. Instead, Spark asks the builder (this session
-itself, through a tool-less fork, the way `/spark ask` does) for one short reflective comment on how the build feels, at
-most 200 characters, personal rather than descriptive: nothing already on screen, nothing it would rather keep private.
-The painter paints from that and the turn's shape so far. The last reflection shows in `/spark state`.
+one per 15 minutes at most. A live painting is not given the work at all. Instead, the painter's small model first
+distils one short reflective comment in the builder's own voice from the last things Claude said aloud in the turn (at
+most 1,500 characters of them, never its thinking): how the build feels, at most 200 characters, personal rather than
+descriptive, nothing already on screen. The painter paints from that comment and the turn's shape so far; it never sees
+the words themselves. The last reflection shows in `/spark state`.
 
 - **What it sees.** The turn's shape: how long it ran, which kinds of tools and how many, failures, denials and mends,
   how much was thought and written, how it ended, and Spark's own state line; and the gist, a short excerpt of each
@@ -127,8 +128,7 @@ The painter paints from that and the turn's shape so far. The last reflection sh
   commands, tool names or model names. The gist comes with the painting: to keep your words out, keep the painter off.
 - **What it costs.** One short, tool-less model call per painting through your own Claude Code session: Haiku by
   default, or the model in the **Painter model** setting. At most one painting on its own every 20 seconds. A live
-  painting is two calls: the reflection (a fork of your session, mostly served from its cache, so its token count is
-  large but most of it is cache reads) and the painting. What it has
+  painting is two small calls, the reflection and the painting: a few thousand tokens in all. What it has
   used this session (paintings, tokens, model) shows in small text under the painting, in `/spark state`, and when you
   turn it off.
 - **What comes back** is not an image but a small paint program (lines, dots, rings, glows), checked and clamped, then

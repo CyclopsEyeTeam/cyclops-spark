@@ -21,14 +21,14 @@ const PAINTING = JSON.stringify({
 
 type Ask = { model: string; prompt: string; system: string }
 const USAGE = { input_tokens: 900, output_tokens: 700, cache_read_input_tokens: 0, cache_creation_input_tokens: 500 }
-function engine(on: On, reply: () => unknown = () => ({ isAnswered: true, text: PAINTING, usage: USAGE })) {
+function engine(on: On, reply: (x: Ask) => unknown = () => ({ isAnswered: true, text: PAINTING, usage: USAGE })) {
   mock.store(on)
   const clock = mock.clock(on)
   const asks: Ask[] = []
   const writes: string[] = []
   on('turn.start', async (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', async () => ({ text: '' }))
-  on('model.complete', async (_$, e) => { const x = e as unknown as Ask; asks.push({ model: x.model, prompt: String(x.prompt), system: String(x.system ?? '') }); return loose({ value: reply() }) })
+  on('model.complete', async (_$, e) => { const x = e as unknown as Ask; const ask = { model: x.model, prompt: String(x.prompt), system: String(x.system ?? '') }; asks.push(ask); return loose({ value: reply(ask) }) })
   on('fs.write', async (_$, e) => { writes.push(String((e as { path: string }).path)); return loose({ value: undefined }) })
   on('ui.open', async () => loose({ value: { isPlaced: true } }))
   on('ui.close', async () => loose({ value: undefined }))
@@ -323,11 +323,14 @@ test('openPainting on: a bare /spark opens Spark with the painter on, and says i
 })
 
 // ---------------------------------------------------------------- live paintings in a long turn
-test('a long turn is painted while it goes: never sooner than 15 minutes, at a moment that moves her, with the builder\'s own reflection, never the work', async ($, on) => {
-  const { asks, clock } = engine(on)
-  const forks: string[] = []
+test('a long turn is painted while it goes: never sooner than 15 minutes, at a moment that moves her, with a reflection distilled from the builder\'s own words, never the work', async ($, on) => {
   const REFLECTION = 'It feels like the shape is finally holding; I trust it more than I did an hour ago. ' + 'and more '.repeat(40)
-  on('model.fork', async (_$, e) => { forks.push(String((e as { prompt: string }).prompt)); return loose({ value: { isAnswered: true, text: REFLECTION, usage: { input_tokens: 10, output_tokens: 40, cache_read_input_tokens: 5000, cache_creation_input_tokens: 0 } } }) })
+  const DISTIL = /You distil one short reflective comment/
+  const { asks, clock } = engine(on, (x) => DISTIL.test(x.system)
+    ? { isAnswered: true, text: REFLECTION, usage: { input_tokens: 500, output_tokens: 40, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } }
+    : { isAnswered: true, text: PAINTING, usage: USAGE })
+  const forks: string[] = []
+  on('model.fork', async () => { forks.push('fork'); return loose({ value: { isAnswered: true, text: 'no', usage: {} } }) })
   let chunks: Array<{ kind: string; text: string }> = []
   on('turn.step', async function* (_$, e) {
     for (const c of chunks) yield loose<never>({ ...c, index: 0 })
@@ -339,65 +342,81 @@ test('a long turn is painted while it goes: never sooner than 15 minutes, at a m
     await $.tool.call(loose({ tool: 'Bash', command: 'npm test --secret-flag', tool_use_id: n + 'b2' }))
     await settle()
   }
+  const paints = () => asks.filter((x) => !DISTIL.test(x.system))
+  const distils = () => asks.filter((x) => DISTIL.test(x.system))
   await cmd($, 'paint off'); await cmd($, 'paint')
-  expect(asks).toHaveLength(1)
+  expect(paints()).toHaveLength(1)
   await $.turn.start(loose({ text: 'please fix the secret-project tempo map', turnId: 'L' }))
-  await say1('thinking', 'hmm'); await say1('text', 'Now the secret-project layout.')
+  await say1('thinking', 'my private thought: hidden-musing'); await say1('text', 'Now the secret-project layout. ' + 'x'.repeat(3000) + ' I think this will hold.')
   await clock.advance(10 * 60 * 1000)
   await mendNow('a') // a moment, but only 10 minutes in
   expect(asks).toHaveLength(1)
-  expect(forks).toHaveLength(0)
   await clock.advance(6 * 60 * 1000)
-  await say1('text', 'more') // 16 minutes, but no moment yet: she waits for one
+  await say1('text', ' Still going.') // 16 minutes, but no moment yet: she waits for one
   expect(asks).toHaveLength(1)
   await mendNow('b') // a mend: now she paints
   await settle()
-  expect(forks).toHaveLength(1)
-  expect(forks[0]).toMatch(/reflective comment/)
-  expect(forks[0]).toMatch(/not descriptive/)
-  expect(asks).toHaveLength(2)
-  const live = asks[1]!.prompt
+  expect(forks).toHaveLength(0) // the session is never re-read
+  expect(distils()).toHaveLength(1)
+  const d = distils()[0]!
+  expect(d.model).toBe('haiku')
+  expect(d.prompt).toContain('I think this will hold. Still going.') // the builder's own last words aloud
+  expect(d.prompt).not.toContain('hidden-musing') // never its thinking
+  expect(d.prompt).not.toContain('please fix') // never your prompt
+  expect(d.prompt.length).toBeLessThan(1700) // at most 1,500 characters of them
+  expect(paints()).toHaveLength(2)
+  const live = paints()[1]!.prompt
   expect(live).toMatch(/still going/)
   expect(live).toContain('It feels like the shape is finally holding')
   expect(live).not.toContain('and more '.repeat(20)) // at most 200 characters of it
-  for (const secret of ['secret', 'npm', 'tempo', 'Now the']) expect(live).not.toContain(secret) // never the work, never what is on screen
-  expect(asks[1]!.system).toMatch(/paint a moment inside it/)
+  for (const secret of ['secret', 'npm', 'tempo', 'Now the', 'I think this will hold']) expect(live).not.toContain(secret) // the painter never gets the words themselves
+  expect(paints()[1]!.system).toMatch(/paint a moment inside it/)
   expect(await say($, 'state')).toMatch(/last reflection \(sent to the painter\): It feels like the shape is finally holding/)
+  expect(await say($, 'state')).toMatch(/painter · 2 paintings · 4\.7k tokens \(haiku\)/) // a few thousand, not a re-read of the session
   // the next moment soon after: not again for 15 minutes
   await clock.advance(5 * 60 * 1000)
   await mendNow('c')
-  expect(asks).toHaveLength(2)
+  expect(paints()).toHaveLength(2)
   // 15 minutes and no moment: 3 minutes later she paints anyway, at the next real event
-  await clock.advance(11 * 60 * 1000) // 16 minutes since that painting, no moment: she waits
-  await say1('text', 'still at it')
-  expect(asks).toHaveLength(2)
-  await clock.advance(3 * 60 * 1000) // 19 minutes: past her 3 minutes of waiting
-  await say1('text', 'still at it')
+  await clock.advance(11 * 60 * 1000)
+  await say1('text', ' still at it')
+  expect(paints()).toHaveLength(2)
+  await clock.advance(3 * 60 * 1000)
+  await say1('text', ' still at it')
   await settle()
-  expect(asks).toHaveLength(3)
-  expect(forks).toHaveLength(2)
-  // the finished turn gets its own painting, with the gist of the reply (up to 600 characters)
+  expect(paints()).toHaveLength(3)
+  expect(distils()).toHaveLength(2)
+  // the finished turn gets its own painting, with the gist of the reply (up to 600 characters), and no reflection
   await clock.advance(60 * 1000)
   await $.turn.complete(loose({ reason: 'answer', answer: 'The tempo map now lines up.', durationMs: 40 * 60 * 1000, isAborted: false, turnId: 'L' }))
   await settle()
-  expect(asks).toHaveLength(4)
-  expect(asks[3]!.prompt).toContain('The tempo map now lines up.')
-  expect(asks[3]!.prompt).not.toMatch(/still going/)
+  expect(paints()).toHaveLength(4)
+  expect(distils()).toHaveLength(2)
+  expect(paints()[3]!.prompt).toContain('The tempo map now lines up.')
+  expect(paints()[3]!.prompt).not.toMatch(/still going/)
   await cmd($, 'paint off')
 })
 
-test('no live painting when the painter is off, or in a turn shorter than 15 minutes', async ($, on) => {
+test('no live painting when the painter is off, or in a turn shorter than 15 minutes; with nothing said aloud, no reflection is asked', async ($, on) => {
   const { asks, clock } = engine(on)
-  const forks: string[] = []
-  on('model.fork', async () => { forks.push('x'); return loose({ value: { isAnswered: true, text: 'fine', usage: {} } }) })
   await cmd($, 'paint off')
   await $.turn.start(loose({ text: 'go', turnId: 'A' }))
   await clock.advance(30 * 60 * 1000)
   await $.tool.call(loose({ tool: 'Bash', command: 'x', tool_use_id: 'Ab1' })); await $.tool.call(loose({ tool: 'Bash', command: 'x', tool_use_id: 'Ab2' }))
   await settle()
   expect(asks).toHaveLength(0)
-  expect(forks).toHaveLength(0)
   await $.turn.complete(loose({ reason: 'answer', answer: 'ok', durationMs: 1000, isAborted: false, turnId: 'A' }))
+  // on, a long turn with nothing said aloud: painted from its shape alone, no distilling
+  await cmd($, 'paint')
+  await $.turn.start(loose({ text: 'go', turnId: 'B' }))
+  await clock.advance(16 * 60 * 1000)
+  await $.tool.call(loose({ tool: 'Bash', command: 'x', tool_use_id: 'Bb1' })); await $.tool.call(loose({ tool: 'Bash', command: 'x', tool_use_id: 'Bb2' }))
+  await settle()
+  expect(asks.filter((x) => /You distil/.test(x.system))).toHaveLength(0)
+  expect(asks.at(-1)!.prompt).toMatch(/still going/)
+  expect(asks.at(-1)!.prompt).not.toContain('<<<')
+  await $.turn.complete(loose({ reason: 'answer', answer: 'ok', durationMs: 1000, isAborted: false, turnId: 'B' }))
+  await cmd($, 'paint off')
 })
 
 test('steady: a longer state line never moves the painting; the rows her lines needed stay held at that width', async ($, on) => {
