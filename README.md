@@ -145,6 +145,17 @@ the words themselves. The last reflection shows in `/spark state`.
   counts their rows first. The painter stays out of focus, the top strip and the replay. Nothing is written anywhere,
   and `/clear` empties it with the stars.
 
+### From the wall
+
+<p align="center"><img src="docs/gallery/first-live-painting.svg" width="200" alt="Spark's first live painting: a dark ring around a glowing eye, crossed by a long bow-like stroke, captioned 'steady hands, the answer forming', with the line 'painter · 2 paintings · 208k tokens (haiku)' beneath it"></p>
+
+**Exhibit A: *steady hands, the answer forming*.** 13 October 2026. Haiku on half-blocks.
+
+Spark's first live painting, made 25 minutes into a long audio-timing investigation. It cost 208,000 tokens, nearly all
+of them spent re-reading the entire conversation so Spark could say how the build *felt*. That makes it quite possibly
+the most expensive bow ever drawn in a terminal, and certainly the most sincere. From 1.5.4 the same feeling costs about
+4.7k. The painting keeps its value; the receipt stays on the wall.
+
 ## What Spark shows
 
 - **Thinking.** The form curls inward as thinking really streams. One to four fine orbits show the effort level the model
