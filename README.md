@@ -161,6 +161,16 @@ of them spent re-reading the entire conversation so Spark could say how the buil
 the most expensive bow ever drawn in a terminal, and certainly the most sincere. From 1.5.4 the same feeling costs about
 4.7k. The painting keeps its value; the receipt stays on the wall.
 
+**The rest of the first evening.** The same long audio-acquisition build, 13 October 2026, painted turn by turn from
+each turn's shape and Spark's mood. The numbers in the titles are the turn's real counts. From 1.5.4 on, each one cost
+about 1.7k tokens.
+
+<table>
+<tr><td align="center" valign="bottom"><img src="docs/gallery/p1.svg" width="90" alt="Spark's painting: a first word, set down gently"><br><sub><i>a first word, set down gently</i> · 19:37</sub></td><td align="center" valign="bottom"><img src="docs/gallery/p2.svg" width="129" alt="Spark's painting: Still reaching; one stumble, then mended"><br><sub><i>Still reaching; one stumble, then mended</i> · 20:54</sub></td><td align="center" valign="bottom"><img src="docs/gallery/p3.svg" width="129" alt="Spark's painting: eighteen steps, one stumble, then mended"><br><sub><i>eighteen steps, one stumble, then mended</i> · 20:55</sub></td></tr>
+<tr><td align="center" valign="bottom"><img src="docs/gallery/p4.svg" width="129" alt="Spark's painting: Gate passed. Probe running. Waiting easy."><br><sub><i>Gate passed. Probe running. Waiting easy.</i> · 21:01</sub></td><td align="center" valign="bottom"><img src="docs/gallery/p5.svg" width="129" alt="Spark's painting: Seven answers laid down, nothing broken"><br><sub><i>Seven answers laid down, nothing broken</i> · 21:09</sub></td><td align="center" valign="bottom"><img src="docs/gallery/p6.svg" width="129" alt="Spark's painting: Long hum, twenty-four hands on the rope"><br><sub><i>Long hum, twenty-four hands on the rope</i> · 21:28</sub></td></tr>
+<tr><td align="center" valign="bottom"><img src="docs/gallery/p7.svg" width="129" alt="Spark's painting: Forty-eight steps deep, still reaching"><br><sub><i>Forty-eight steps deep, still reaching</i> · 21:45</sub></td><td align="center" valign="bottom"><img src="docs/gallery/p8.svg" width="129" alt="Spark's painting: Sixty-two small knocks, then the quiet"><br><sub><i>Sixty-two small knocks, then the quiet</i> · 21:56</sub></td><td align="center" valign="bottom"><img src="docs/gallery/p9.svg" width="129" alt="Spark's painting: Waited the long seconds; the work held"><br><sub><i>Waited the long seconds; the work held</i> · 22:11</sub></td></tr>
+</table>
+
 ## What Spark shows
 
 - **Thinking.** The form curls inward as thinking really streams. One to four fine orbits show the effort level the model
