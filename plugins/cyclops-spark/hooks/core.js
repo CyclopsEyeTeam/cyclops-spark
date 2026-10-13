@@ -273,6 +273,10 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
       case 'prompt.edit': attend.add(t, 0.35); break
       case 'prompt.submit': attend.reset(t); offer = null; break // you moved on: what was waiting is no longer
       case 'prompt.queue': if (active) { queued.push(t); if (queued.length > 12) queued.shift() } break // you wrote while she worked: it waits
+      case 'spark.answer': // she answers what you said to her in her pane, with a move of hers, toward you
+        attend.add(t, 0.4)
+        if (REACTIONS.includes(ev.react)) react = { at: t + 0.1, move: ev.react, a: Math.PI / 2 }
+        break
       case 'prompt.take': // the model took a waiting message into the turn: it travels in to her core
         queued.shift()
         take = { at: t }
@@ -491,7 +495,9 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
     else mode = deepNow > 0.5 ? 'dozing' : restNow > 0.5 ? 'resting' : 'idle'
     const laneShown = askLane || anyInflight
     const idleish = mode === 'idle' || mode === 'resting' || mode === 'dozing' || mode === 'listening'
-    const hover = 'Spark · ' + mode + (laneShown && laneShown.family !== 'peer' && laneShown.family !== 'paint' ? ' · ' + laneShown.label + ' lane' : '') +
+    // while she is plainly working, she says it in the chat's own word (Processing, Swirling…), as Claude Code draws it
+    const said = mode === 'working' && typeof opts.word === 'string' && opts.word ? opts.word : mode
+    const hover = 'Spark · ' + said + (laneShown && laneShown.family !== 'peer' && laneShown.family !== 'paint' ? ' · ' + laneShown.label + ' lane' : '') +
       (mode === 'thinking' && effortLabel ? ' · ' + effortLabel + ' effort' : '') +
       (idleish && turnCount > 0 ? ' · ' + turnCount + (turnCount === 1 ? ' turn' : ' turns') : '') +
       (sideOut ? ' · answering your side question' : '') +
@@ -1101,6 +1107,7 @@ export const MAPPING = [
   ['Agent / Task (subagent)', 'EVENT', 'agent lane per subagent type', 'a tiny sibling spark on a lane'],
   ['prompt.submit while a turn runs (you write mid-turn)', 'EVENT (held)', 'queued += 1 until the model takes it in; turn.start or /clear lets go', 'a small breathing bead waits at her lower edge, on the prompt side, one per message (three drawn). Hover: "· your message is waiting"'],
   ['session.append attachment queued_command (the model takes your message in)', 'EVENT + TRANSITION', 'queued -= 1; take 0→1 over 1.4s; attend +0.5; take look rolled (drink | spiral | catch)', 'the bead travels in to her core (straight up, spiralling, or caught by a tendril reaching down), then a ring draws inward to the core. Hover: "· taking in your message"'],
+  ['you say something to Spark in her pane (painter on)', 'EVENT', 'attend +0.35 as you send it; on her answer attend +0.4 and react (bloom | lean | ring | shimmer | hush) toward the prompt, chosen in the same call', 'she turns toward you, and answers with a move of hers as her words appear under the painting'],
   ['painter starts (/spark paint, or a turn worth painting)', 'EVENT', 'paint lane toward the canvas (below, or beside when side by side); not a turn tool: no echo, no habit, outlives turn.end', 'a filament reaches toward the canvas and a brush tip lays a stroke while the painter works. Hover: "Spark · painting" once the turn has landed'],
   ['painter answers with a move for Spark (bloom | lean | ring | shimmer | hush)', 'EVENT + TRANSITION', 'react 0→1 over 2.4s, starting 0.6s after the painting arrives; chosen in the same call as the painting', 'she answers her painting: a bloom of light, a lean toward the canvas, a ring from the core, a shimmer around her, or a hush (she goes still). Nothing else changes'],
   ['painter answers', 'EVENT', 'paint lane handAt (or errAt when nothing came back)', 'a pulse runs down the filament and a drop falls toward the canvas as the painting starts to appear; a failed one returns red-shifted on the lane only, Spark herself does not flinch'],
