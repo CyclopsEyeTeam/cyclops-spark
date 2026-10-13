@@ -32,7 +32,7 @@ import { base64, createRaster, toHalfBlocks, toRGBA8 } from './render-raster.js'
 import { buildTrace, replayAt } from './trace.js'
 import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
 import { KEEPER, PRISM } from './link-marks.js'
-import { cleanReflection, reflectRequest, SPOKEN_CHARS, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
+import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
 
 const PANE = 'cyclops-spark'
@@ -137,6 +137,9 @@ let lastLiveAt = -1e9   // when she last began a live one
 const hostNow = async ($: EngineInterface) => (await $.clock.now()) / 1000
 let lastStream = ''     // the main loop's last stream kind, to notice thinking turning into writing
 let reflection = ''     // the builder's last reflection, as sent to the painter (shown in /spark state)
+// TALK: what you last said to Spark from her pane, and her answer (in memory only; /clear and painting off let it go)
+let talk: { said: string; reply: string; busy: boolean } | null = null
+let sayTo: ((words: string) => void) | null = null // the pane's Input sends here
 let spoken = ''         // the last SPOKEN_CHARS the builder said aloud this turn (text, never thinking), in memory only
 const MODEL_ID = /^[\w.:\-\[\]\/@]{1,80}$/
 
@@ -198,8 +201,10 @@ function siteFor(requestId: string, surface: string, columns: number, rows: numb
 
 // ---------------------------------------------------------------- what is drawn: the live presence, or the labelled replay
 const sampleOpts = () => ({ ambient: !calm, theme: activeTheme(), palette })
+// the word Claude Code's spinner is showing for this turn (Processing, Swirling…), read as it is drawn, never changed
+let spinnerWord = ''
 
-function liveFrame(): any { return spark.sample(now(), sampleOpts()) }
+function liveFrame(): any { return spark.sample(now(), { ...sampleOpts(), word: spinnerWord }) }
 
 // The pane may show the replay instead of the live presence. Everything else (band, status line) is always live.
 function paneFrame(): { f: any; label: string } {
@@ -395,6 +400,29 @@ const spend = (u: Record<string, number> | undefined): number => {
   return n
 }
 
+// You said something to her: she answers in her own voice, from what she already holds (one short call, never the session)
+async function talkTo($: EngineInterface, words: string): Promise<void> {
+  const said = cleanReflection(words).slice(0, TALK_IN) || String(words || '').replace(/\s+/g, ' ').trim().slice(0, TALK_IN)
+  if (!said || talk?.busy) return
+  talk = { said, reply: '', busy: true }
+  emit({ type: 'prompt.edit' }, true) // she turns toward you
+  $.ui.invalidate('ui.render')
+  try {
+    const rq = talkRequest({ said, mood: String(liveFrame().hover).replace(/^Spark · /, ''), title: painting?.title || '', reflection, facts: turnFacts ? painterFacts(turnFacts, { reason: 'still going', durationMs: 0, mood: '', turn: turnsSeen + 1 }) : null, palette })
+    const r = await $.model.complete({ model: paintModel, system: rq.system, prompt: rq.prompt, maxTokens: 300, effort: 'low', timeoutMs: 20000 })
+    spend((r as { usage?: Record<string, number> }).usage)
+    const a = r.isAnswered ? parseTalk(r.text) : null
+    talk = { said, reply: a ? a.say : 'no answer came back this time', busy: false }
+    if (a) emit({ type: 'spark.answer', react: a.react }, true)
+    logRecent('talk')
+  } catch (err) {
+    talk = { said, reply: 'no answer came back: ' + String((err as Error)?.message || err).slice(0, 80), busy: false }
+  } finally {
+    if (talk) talk.busy = false
+    $.ui.invalidate('ui.render')
+  }
+}
+
 // A live painting, if the turn has run long enough since the last one and this is a moment (or she has waited enough)
 async function maybePaintLive($: EngineInterface, moment: boolean) {
   if (!paintOn || paintBusy || turnBegan < 0 || !turnFacts) return
@@ -485,11 +513,24 @@ const spentText = () => `painter · ${paintSpent.paintings} ${paintSpent.paintin
 // What goes in the room it is given, `width` columns by `room` rows: the painting at its own shape (wide, square or tall,
 // whichever the room had when it was painted), as large as fits, centred, and its title in full under it. A little room:
 // the title alone. None: nothing (the painting waits for room).
-function paintBlock(els: any, width: number, room: number): any[] {
-  if (!paintOn || room < 1 || width < 4) return []
-  const { Box, Text, Raster, Image } = els
+function paintBlock(els: any, width: number, room0: number): any[] {
+  if (!paintOn || room0 < 1 || width < 4) return []
+  const { Box, Text, Raster, Image, Input } = els
+  // TALK, at the very bottom: what you last said, her answer, and a line to say something to her. It takes its rows
+  // first only in a room big enough to hold the painting too; in a small one it waits
+  const talkEls: any[] = []
+  let talkRows = 0
+  if (sayTo && Input && room0 >= 8) {
+    const heard = talk ? [Text({ children: ['› ' + talk.said], dimColor: true, wrap: 'truncate-end' })] : []
+    const answer = talk ? (talk.busy ? 'Spark is listening…' : 'Spark: ' + talk.reply) : ''
+    const answerRows = answer ? wrapRows(answer, width) : 0
+    talkRows = heard.length + answerRows + 1
+    talkEls.push(...heard, ...(answer ? [Text({ children: [answer], italic: true, wrap: 'wrap' })] : []),
+      Input({ key: 'spark-say', placeholder: 'say something to Spark', submitLabel: 'say', value: '', autoFocus: true, onSubmit: (v: string) => { if (sayTo) sayTo(v) } })) // autoFocus: a click on her pane puts you here
+  }
+  const room = room0 - talkRows
   const busyWord = paintBusy ? (painting ? ' · painting…' : 'painting…') : ''
-  if (!painting) return busyWord ? [Text({ children: ['✎ ' + busyWord], italic: true, wrap: 'truncate-end' })] : []
+  if (!painting) return [...(busyWord ? [Text({ children: ['✎ ' + busyWord], italic: true, wrap: 'truncate-end' })] : []), ...talkEls]
   const words = '✎ ' + (painting.title || 'untitled') + busyWord
   const lines = wrapRows(words, width)
   const caption = Text({ children: [words], italic: true, wrap: lines <= room ? 'wrap' : 'truncate-end' })
@@ -509,14 +550,14 @@ function paintBlock(els: any, width: number, room: number): any[] {
   paintRoom = { columns: width, rows: Math.max(3, free) } // the next painting is composed for this room's shape
   const a = SHAPES[painting.shape] ?? 2 // width over height, in pixels (a cell is one pixel wide, two tall)
   const rows = Math.min(free, Math.floor(width / (2 * a)))
-  if (rows < 3) return [caption, ...spent]
+  if (rows < 3) return [caption, ...spent, ...talkEls]
   const columns = Math.max(4, Math.min(width, Math.round(rows * 2 * a))) // its own shape: fitted, never stretched
   const fr = paintFrame(columns, rows)
   const art = fr.cells
     ? Raster({ key: 'painting', columns, rows, cells: fr.cells })
     : Image({ key: 'painting', columns, rows, alt: painting.title || 'a painting', source: { rgba: fr.rgba!, width: fr.width!, height: fr.height! } })
   const centred = Box({ flexDirection: 'row', justifyContent: 'center', width, children: [art] })
-  return [...(gap ? [Text({ children: [' '] })] : []), centred, caption, ...spent]
+  return [...(gap ? [Text({ children: [' '] })] : []), centred, caption, ...spent, ...talkEls]
 }
 
 // Spark's coarse facts, written for the helper only when they change (at most four times a second)
@@ -686,7 +727,7 @@ export const register: Register = (on, options) => {
 
   // a /clear ends the conversation without a new session.start: the stars are gone and Spark wakes again
   on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full'); painting = null; paintSite = null; lastTurn = null; turnsSeen = 0; reflection = ''; spoken = '' }
+    if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full'); painting = null; paintSite = null; lastTurn = null; turnsSeen = 0; reflection = ''; spoken = ''; talk = null }
     const res = await next(e)
     if (e.reason === 'clear' && linkOn) { await stopLink(); await startLink($) } // a new conversation is a new instance
     return res
@@ -697,6 +738,13 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     // typed (or delivered) while a turn runs: it waits until the model takes it in, at her edge
     await quietly(() => emit(e.turnId ? { type: 'prompt.queue' } : { type: 'prompt.submit' }))
+    return next(e)
+  })
+  // the chat's spinner: Spark reads the word it shows, so "working" says it the same way. It draws exactly what it would
+  on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
+    const p = e.props as { word?: string; message?: string | null }
+    const w = String((p.message || p.word || '')).replace(/[….]+$/, '').trim()
+    if (w && w.length <= 40) spinnerWord = w
     return next(e)
   })
   // the model takes a waiting message into the running turn: the engine keeps it as a queued_command attachment
@@ -775,7 +823,7 @@ export const register: Register = (on, options) => {
         const sinceLive = (await hostNow($).catch(() => Infinity)) - lastLiveAt
         if (paintOn && !paintBusy && e.durationMs >= AUTO_MIN_MS && now() - lastAutoPaint >= AUTO_GAP_S && sinceLive >= AUTO_GAP_S) { lastAutoPaint = now(); void quietly(() => paintNow($, 'turn')) }
       }
-      turnFacts = null; spoken = ''
+      turnFacts = null; spoken = ''; spinnerWord = ''
       turnBegan = -1
     }
     return next(e)
@@ -875,7 +923,7 @@ export const register: Register = (on, options) => {
       const where = paneOpen && !focusMode ? '' : ' (it shows below Spark at the side: /spark)'
       if (arg === 'off') {
         const was = paintOn
-        paintOn = false; painting = null; paintSite = null
+        paintOn = false; painting = null; paintSite = null; talk = null
         text = (was ? 'painting off: the room below Spark is empty again' : 'painting is already off') + (paintSpent.calls ? ' · ' + spentText() : '')
       } else if (arg === '' || arg === 'on' || arg === 'now') { // on and now are the old words for the same thing
         const turning = !paintOn
@@ -906,6 +954,7 @@ export const register: Register = (on, options) => {
 
   // ---------------------------------------------------------------- drawing
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    sayTo = (words: string) => { void quietly(() => talkTo($, words)) } // the Input under her painting talks to her
     const els = $.ui.resolve(e)
     const { f, label } = paneFrame()
     if (e.surface === 'terminal') {
@@ -967,7 +1016,7 @@ export const register: Register = (on, options) => {
       const under = textRows(W)
       if (bodyRows > under + 2 && rows > bodyRows - under) rows = bodyRows - under
       if (e.props.placement === 'inline' && bodyRows > 0 && bodyRows - under < rows) { rows = Math.max(2, bodyRows - under); columns = Math.min(columns, rows * 2) } // a short inline pane: fit it, never clip it
-      const below = painted && bodyRows > 0 ? paintBlock(els, columns, bodyRows - rows - under) : []
+      const below = paintOn && !replay && bodyRows > 0 ? paintBlock(els, columns, bodyRows - rows - under) : [] // the painter on: her painting, and a line to talk to her
       return Box({ flexDirection: 'column', width: W, children: [draw(columns, rows), ...sparkText(W), ...below] })
     }
     // not a terminal: the glyph and the same truthful line, nothing drawn
