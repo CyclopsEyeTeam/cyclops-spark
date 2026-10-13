@@ -27,7 +27,7 @@
 // constellation and the replay all follow it (the replay is a separate presence, labelled, and never touches the live one).
 
 import type { EngineInterface, Register } from 'claude-code'
-import { buildScene, createPresence, laneFor, PALETTE_NAMES } from './core.js'
+import { buildScene, createPresence, laneFor, PAINT_TOWARD, PALETTE_NAMES } from './core.js'
 import { base64, createRaster, toHalfBlocks, toRGBA8 } from './render-raster.js'
 import { buildTrace, replayAt } from './trace.js'
 import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
@@ -99,6 +99,7 @@ let paintModel = 'haiku'
 let openPainting = false // the openPainting setting: a bare /spark also turns the painter on. Off by default
 const paintSpent = { paintings: 0, calls: 0, tokens: 0 } // what the painter has used this session, shown under its painting
 let painting: (Painting & { at: number; n: number; shape: string }) | null = null
+let paintBeside = false // the pane's last layout put the painting beside Spark (a wide, short room), not below her
 let paintRoom: { columns: number; rows: number } | null = null // the room the last painting area had: the next canvas takes its shape
 let paintCount = 0
 let paintBusy = false
@@ -366,6 +367,9 @@ const logRecent = (line: string) => { recent.push(`${now().toFixed(2)} ${line}`)
 async function paintNow($: EngineInterface, why: 'turn' | 'asked'): Promise<string> {
   if (paintBusy) return 'Spark is already painting'
   paintBusy = true
+  const id = 'paint' + (paintCount + 1) + ':' + now().toFixed(2)
+  let ok = false, react: string | null = null
+  emit({ type: 'paint.start', id, toward: paintBeside ? PAINT_TOWARD.beside : PAINT_TOWARD.below }, true) // her painter is her own lane
   $.ui.invalidate('ui.render')
   const turn = lastTurn ?? { facts: null, end: { reason: 'answer', durationMs: 0 }, answer: '' }
   try {
@@ -383,6 +387,7 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked'): Promise<stri
     const p = parsePainting(r.text, palette)
     if (!p) { paintNote = 'the painter answered something that was not a painting'; logRecent('paint ✕'); return 'no painting: ' + paintNote }
     painting = { ...p, at: now(), n: ++paintCount, shape }
+    ok = true; react = p.react
     paintSpent.paintings++
     paintNote = ''
     logRecent('paint ' + why)
@@ -393,6 +398,7 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked'): Promise<stri
     return 'no painting: ' + paintNote
   } finally {
     paintBusy = false
+    emit({ type: 'paint.end', id, ok, react }, true) // handed down to the canvas (and how she answers it), or nothing came
     $.ui.invalidate('ui.render')
   }
 }
@@ -866,7 +872,8 @@ export const register: Register = (on, options) => {
       const painted = paintOn && !replay && (painting !== null || paintBusy)
       // A wide, short room (above the prompt on a narrow terminal, or a pane dragged wide): Spark and her painting side by
       // side, so neither has to give way. Spark keeps her own shape (twice as many columns as rows) and the larger share.
-      if (painted && bodyRows > 0 && W >= 40 && (e.props.placement === 'inline' || W >= bodyRows * 3)) {
+      paintBeside = bodyRows > 0 && W >= 40 && (e.props.placement === 'inline' || W >= bodyRows * 3) // where her painter's lane reaches
+      if (painted && paintBeside) {
         const left = Math.max(16, Math.floor((W - 2) * 0.45)), right = W - 2 - left
         let rws = Math.max(2, Math.min(60, bodyRows - textRows(left)))
         let cols = Math.min(left, rws * 2)
