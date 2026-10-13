@@ -32,7 +32,7 @@ import { base64, createRaster, toHalfBlocks, toRGBA8 } from './render-raster.js'
 import { buildTrace, replayAt } from './trace.js'
 import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
 import { KEEPER, PRISM } from './link-marks.js'
-import { newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
+import { cleanReflection, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
 
 const PANE = 'cyclops-spark'
@@ -114,6 +114,23 @@ let paintSite: PaintSite | null = null
 const REVEAL_S = 2.4          // a new painting is laid down mark by mark over this long
 const AUTO_MIN_MS = 3000      // turns shorter than this are not painted on their own (/spark paint still paints them)
 const AUTO_GAP_S = 20         // at most one painting on its own every 20 s
+// LIVE: in a long turn she paints while it is still going: never sooner than 15 minutes after the turn began or her last
+// painting, at a moment that moves her (a mend, a subagent coming back, a long call settling, thinking turning into
+// writing); with no such moment, 3 minutes later anyway
+const LIVE_GAP_S = 15 * 60
+const LIVE_WAIT_S = 3 * 60
+const LONG_CALL_S = 60
+// these three in the host's own time ($.clock.now, in seconds), the clock a long turn is really measured by
+let turnBegan = -1      // when the turn still going began (-1: none is)
+let lastPaintAt = -1e9  // when she last began a painting
+let lastLiveAt = -1e9   // when she last began a live one
+const hostNow = async ($: EngineInterface) => (await $.clock.now()) / 1000
+let lastStream = ''     // the main loop's last stream kind, to notice thinking turning into writing
+let reflection = ''     // the builder's last reflection, as sent to the painter (shown in /spark state)
+const REFLECT = 'Spark, your presence in the terminal, is about to paint a moment of this long turn and asks you, privately, for one ' +
+  'short reflective comment for her painter: how this build feels to you right now, as the one building it (a feeling, a hope, a doubt, a sense ' +
+  'of momentum). Personal and reflective, not descriptive: do not describe the work, files, commands, errors or anything already on screen, and ' +
+  'share nothing you would rather keep private. At most 200 characters, plain words, no preamble. Answer with the comment only.'
 const MODEL_ID = /^[\w.:\-\[\]\/@]{1,80}$/
 
 type Replay = { t0: number; presence: ReturnType<typeof createPresence>; trace: ReturnType<typeof buildTrace>; i: number; loop: number }
@@ -363,22 +380,44 @@ function heal($: EngineInterface) {
 // ---------------------------------------------------------------- painting
 const logRecent = (line: string) => { recent.push(`${now().toFixed(2)} ${line}`); if (recent.length > 12) recent.shift() }
 
-// One painting, of the last turn (or of her waking, before any turn). One at a time; nothing is written anywhere.
-async function paintNow($: EngineInterface, why: 'turn' | 'asked'): Promise<string> {
+const spend = (u: Record<string, number> | undefined) => { if (u) { paintSpent.calls++; paintSpent.tokens += (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) } }
+
+// A live painting, if the turn has run long enough since the last one and this is a moment (or she has waited enough)
+async function maybePaintLive($: EngineInterface, moment: boolean) {
+  if (!paintOn || paintBusy || turnBegan < 0 || !turnFacts) return
+  const since = (await hostNow($)) - Math.max(turnBegan, lastPaintAt)
+  if (since < LIVE_GAP_S || (!moment && since < LIVE_GAP_S + LIVE_WAIT_S)) return
+  lastLiveAt = lastPaintAt = Math.max(turnBegan, lastPaintAt) + since // the turn's end waits its 20 s after it
+  void quietly(() => paintNow($, 'live'))
+}
+
+// One painting: of the last turn (or of her waking, before any turn), or, live, of the long turn still going. One at a
+// time; nothing is written anywhere.
+async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Promise<string> {
   if (paintBusy) return 'Spark is already painting'
   paintBusy = true
+  lastPaintAt = await hostNow($).catch(() => lastPaintAt)
   const id = 'paint' + (paintCount + 1) + ':' + now().toFixed(2)
   let ok = false, react: string | null = null
   emit({ type: 'paint.start', id, toward: paintBeside ? PAINT_TOWARD.beside : PAINT_TOWARD.below }, true) // her painter is her own lane
   $.ui.invalidate('ui.render')
-  const turn = lastTurn ?? { facts: null, end: { reason: 'answer', durationMs: 0 }, answer: '' }
+  const live = why === 'live' && turnBegan >= 0
+  const turn = live
+    ? { facts: turnFacts, end: { reason: 'still going', durationMs: (lastPaintAt - turnBegan) * 1000 }, answer: '' }
+    : lastTurn ?? { facts: null, end: { reason: 'answer', durationMs: 0 }, answer: '' }
   try {
-    const facts = painterFacts(turn.facts, { ...turn.end, mood: String(liveFrame().hover).replace(/^Spark · /, ''), turn: turnsSeen })
+    const facts = painterFacts(turn.facts, { ...turn.end, mood: String(liveFrame().hover).replace(/^Spark · /, ''), turn: live ? turnsSeen + 1 : turnsSeen })
+    let words = ''
+    if (live) { // the builder's own reflection, asked of this session itself (a tool-less fork, as /spark ask is), never the work
+      const f = await $.model.fork({ prompt: REFLECT })
+      spend((f as { usage?: Record<string, number> }).usage)
+      words = f.isAnswered ? cleanReflection(f.text) : ''
+      if (words) reflection = words
+    }
     const shape = paintRoom ? shapeFor(paintRoom.columns, paintRoom.rows * 2) : 'wide' // a cell is one pixel wide, two tall
-    const req = painterRequest({ facts, palette, theme: activeTheme(), gist: turn.answer, shape, size: paintRoom ? [paintRoom.columns, paintRoom.rows * 2] : null })
+    const req = painterRequest({ facts, palette, theme: activeTheme(), gist: live ? '' : turn.answer, reflection: words, live, shape, size: paintRoom ? [paintRoom.columns, paintRoom.rows * 2] : null })
     const r = await $.model.complete({ model: paintModel, system: req.system, prompt: req.prompt, maxTokens: 1500, effort: 'low', timeoutMs: 30000 })
-    const u = (r as { usage?: Record<string, number> }).usage // every arm carries what the call really cost
-    if (u) { paintSpent.calls++; paintSpent.tokens += (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) }
+    spend((r as { usage?: Record<string, number> }).usage) // every arm carries what the call really cost
     if (!r.isAnswered) {
       paintNote = r.reason === 'api-error' ? `the API answered with an error${'status' in r && r.status ? ` (${r.status})` : ''}` : r.reason === 'aborted' ? 'it took too long' : 'the painter sent nothing back'
       logRecent('paint ✕')
@@ -625,7 +664,7 @@ export const register: Register = (on, options) => {
 
   // a /clear ends the conversation without a new session.start: the stars are gone and Spark wakes again
   on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full'); painting = null; paintSite = null; lastTurn = null; turnsSeen = 0 }
+    if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full'); painting = null; paintSite = null; lastTurn = null; turnsSeen = 0; reflection = '' }
     const res = await next(e)
     if (e.reason === 'clear' && linkOn) { await stopLink(); await startLink($) } // a new conversation is a new instance
     return res
@@ -634,7 +673,7 @@ export const register: Register = (on, options) => {
   // ---------------------------------------------------------------- real events → presence events
   on('prompt.edit', async ($, e, next) => { emit({ type: 'prompt.edit' }); return next(e) })
   on('prompt.submit', async ($, e, next) => { await quietly(() => emit({ type: 'prompt.submit' })); return next(e) })
-  on('turn.start', async ($, e, next) => { emit({ type: 'turn.start' }); turnFacts = newTurnFacts(); return next(e) })
+  on('turn.start', async ($, e, next) => { emit({ type: 'turn.start' }); turnFacts = newTurnFacts(); turnBegan = await hostNow($).catch(() => -1); lastStream = ''; return next(e) })
 
   on('turn.step', async function* ($, e, next) {
     const sub = Boolean(e.agentId)
@@ -647,6 +686,7 @@ export const register: Register = (on, options) => {
         emit(sub ? { type: 'agent.stream', n: chunk.text.length } : { type: 'stream', kind: chunk.kind, n: chunk.text.length }, sub)
         if (turnFacts) { if (sub) turnFacts.agentStreams++; else if (chunk.kind === 'thinking') turnFacts.thinkChars += chunk.text.length; else turnFacts.textChars += chunk.text.length }
         if (!sub && murmurOn) await murmur($, chunk.kind === 'thinking' ? 'think' : 'write')
+        if (!sub) { await quietly(() => maybePaintLive($, lastStream === 'thinking' && chunk.kind === 'text')); lastStream = chunk.kind } // thinking turning into writing moves her
       }
       yield chunk
     }
@@ -658,7 +698,9 @@ export const register: Register = (on, options) => {
     const id = e.tool_use_id ?? 'call' + ++ids
     const raw = e as unknown as Record<string, unknown>
     const input = { command: raw.command, subagent_type: raw.subagent_type, model: raw.model, url: raw.url }
-    await quietly(() => { emit({ type: 'tool.start', id, tool: e.tool, input }); recordTool(turnFacts, laneFor(e.tool, input as Record<string, unknown>).family) })
+    const family = laneFor(e.tool, input as Record<string, unknown>).family
+    const began = now() // wall time: read without a wait, so the call goes out exactly as before
+    await quietly(() => { emit({ type: 'tool.start', id, tool: e.tool, input }); recordTool(turnFacts, family) })
     let failed = false
     let denied = false // you (or a rule) said no: a boundary, not a fault — the gate closes, nothing turns red
     let threw = true   // a call that throws was cut short (an interrupt), not failed: it settles without red
@@ -674,7 +716,8 @@ export const register: Register = (on, options) => {
         if (turnFacts) { if (threw) turnFacts.interrupted++; else if (denied) turnFacts.denied++; else if (failed) turnFacts.errors++; else if (failedTools.has(e.tool)) turnFacts.mends++ }
         if (threw || denied) { /* neither a failure nor a mend */ }
         else if (failed) failedTools.add(e.tool)
-        else if (failedTools.delete(e.tool)) await cue($, 'mend', 'full') // it worked where the last call failed
+        else if (failedTools.delete(e.tool)) { await cue($, 'mend', 'full'); await maybePaintLive($, true); return } // it worked where the last call failed
+        await maybePaintLive($, !threw && (family === 'agent' || now() - began >= LONG_CALL_S)) // a subagent back, or a long call settled
       })
     }
   })
@@ -697,9 +740,11 @@ export const register: Register = (on, options) => {
         turnsSeen++
         lastTurn = { facts: turnFacts, end: { reason, durationMs: e.durationMs }, answer: typeof e.answer === 'string' ? e.answer : '' }
         // the painter, on its own: a turn worth painting, at most one every 20 s, never in the turn's way
-        if (paintOn && !paintBusy && e.durationMs >= AUTO_MIN_MS && now() - lastAutoPaint >= AUTO_GAP_S) { lastAutoPaint = now(); void quietly(() => paintNow($, 'turn')) }
+        const sinceLive = (await hostNow($).catch(() => Infinity)) - lastLiveAt
+        if (paintOn && !paintBusy && e.durationMs >= AUTO_MIN_MS && now() - lastAutoPaint >= AUTO_GAP_S && sinceLive >= AUTO_GAP_S) { lastAutoPaint = now(); void quietly(() => paintNow($, 'turn')) }
       }
       turnFacts = null
+      turnBegan = -1
     }
     return next(e)
   })
@@ -781,7 +826,7 @@ export const register: Register = (on, options) => {
       }
     }
     else if (word === 'state') {
-      text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${paintOn ? ' · paint on' + (paintSpent.calls ? ` (${spentText()})` : '') : ''}\n` + recent.join('\n')
+      text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${paintOn ? ' · paint on' + (paintSpent.calls ? ` (${spentText()})` : '') : ''}\n` + (reflection ? `last reflection (sent to the painter): ${reflection}\n` : '') + recent.join('\n')
     }
     else if (word === 'link') {
       if (arg === 'on' || arg === 'off') {
