@@ -83,6 +83,7 @@ Then type `/spark` to open the pane.
 | `/spark link [on\|off\|status]` | Cyclops Link: Keeper and Prism beside Spark when they work in the same folder (below). |
 | `/spark paint` | The painter: turns it on and paints one now; from then on a small sub-agent paints Spark's expression of each turn below her (below). It uses tokens. |
 | `/spark paint off` | Stops the painter and empties the room below Spark. |
+| `/spark story` | The session's paintings told again, in order, each laid down anew (no tokens). Again to end it. |
 | `/spark help` | This list. |
 
 The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip, Cyclops Link and the
@@ -142,6 +143,11 @@ the words themselves. The last reflection shows in `/spark state`.
   move of hers, from what she already holds: her state, her last painting's title, the builder's last reflection and the
   turn's shape. One small call on the painter's model (about 1k tokens), never a re-read of the session; it counts in the
   session's total.
+- **The story of the session.** Every painting of the session is kept (in memory only) in the order it came.
+  `/spark story` tells them again in her pane, each laid down mark by mark as it first was and held for a few seconds,
+  with where it is in the story and when it was painted (`story · 3 of 9 · 21:01`), round and round until you say
+  `/spark story` again or a new painting arrives. It asks nothing of any model, works with the painter off, and `/clear`
+  lets it go.
 - **It fits the room, on every resize.** In a tall side pane the painting sits under Spark, in the rows she is not using
   (she never gets smaller for it), and takes a tall or square shape to fill them. Above the prompt on a small terminal
   (wide and short) Spark and her painting sit side by side. The painter is told the shape it is painting for; afterwards
@@ -160,6 +166,20 @@ Spark's first live painting, made 25 minutes into a long audio-timing investigat
 of them spent re-reading the entire conversation so Spark could say how the build *felt*. That makes it quite possibly
 the most expensive bow ever drawn in a terminal, and certainly the most sincere. From 1.5.4 the same feeling costs about
 4.7k. The painting keeps its value; the receipt stays on the wall.
+
+**The rest of the first evening.** The same long audio-acquisition build, 13 October 2026, painted turn by turn from
+each turn's shape and Spark's mood. The numbers in the titles are the turn's real counts. From 1.5.4 on, each one cost
+about 1.7k tokens.
+
+<table>
+<tr><td align="center" valign="bottom"><img src="docs/gallery/p1.svg" width="90" alt="Spark's painting: a first word, set down gently"><br><sub><i>a first word, set down gently</i> · 19:37</sub></td><td align="center" valign="bottom"><img src="docs/gallery/p2.svg" width="129" alt="Spark's painting: Still reaching; one stumble, then mended"><br><sub><i>Still reaching; one stumble, then mended</i> · 20:54</sub></td><td align="center" valign="bottom"><img src="docs/gallery/p3.svg" width="129" alt="Spark's painting: eighteen steps, one stumble, then mended"><br><sub><i>eighteen steps, one stumble, then mended</i> · 20:55</sub></td></tr>
+<tr><td align="center" valign="bottom"><img src="docs/gallery/p4.svg" width="129" alt="Spark's painting: Gate passed. Probe running. Waiting easy."><br><sub><i>Gate passed. Probe running. Waiting easy.</i> · 21:01</sub></td><td align="center" valign="bottom"><img src="docs/gallery/p5.svg" width="129" alt="Spark's painting: Seven answers laid down, nothing broken"><br><sub><i>Seven answers laid down, nothing broken</i> · 21:09</sub></td><td align="center" valign="bottom"><img src="docs/gallery/p6.svg" width="129" alt="Spark's painting: Long hum, twenty-four hands on the rope"><br><sub><i>Long hum, twenty-four hands on the rope</i> · 21:28</sub></td></tr>
+<tr><td align="center" valign="bottom"><img src="docs/gallery/p7.svg" width="129" alt="Spark's painting: Forty-eight steps deep, still reaching"><br><sub><i>Forty-eight steps deep, still reaching</i> · 21:45</sub></td><td align="center" valign="bottom"><img src="docs/gallery/p8.svg" width="129" alt="Spark's painting: Sixty-two small knocks, then the quiet"><br><sub><i>Sixty-two small knocks, then the quiet</i> · 21:56</sub></td><td align="center" valign="bottom"><img src="docs/gallery/p9.svg" width="129" alt="Spark's painting: Waited the long seconds; the work held"><br><sub><i>Waited the long seconds; the work held</i> · 22:11</sub></td></tr>
+</table>
+
+And the last of the evening, as the build stopped for review with everything it set out to do in place:
+
+<p align="center"><img src="docs/gallery/p10.svg" width="215" alt="Spark's painting: Long climb, nothing lost, all held still"><br><sub><i>Long climb, nothing lost, all held still</i> · 22:21</sub></p>
 
 ## What Spark shows
 

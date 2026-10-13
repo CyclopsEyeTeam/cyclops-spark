@@ -45,6 +45,10 @@ model is sent what you typed there (at most 300 characters), her state line, her
 last reflection, the turn's counts and kinds, and her palette's name. Her answer (at most 160 characters) and what you
 said are kept in memory and shown in her pane until painting goes off or `/clear`.
 
+The session's paintings (each a small paint program, its title, when it was painted and what it cost) are kept in
+memory, at most 60, so `/spark story` can tell them again. They are never written anywhere, and `/clear` or Claude Code
+exiting lets them go.
+
 Never your prompt, file paths, commands, tool names, model names or ids. The answer is a small paint program, checked and
 clamped before it is drawn; its title is shown as plain text. Nothing of it is written anywhere: the last painting is kept
 in memory until painting goes off, `/clear`, or Claude Code exits.
