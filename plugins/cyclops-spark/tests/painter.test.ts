@@ -1,7 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
-import { parsePainting, paintingScene, painterFacts, painterRequest, newTurnFacts, recordTool, MAX_MARKS } from '../hooks/painter.js'
+import { parsePainting, paintingScene, painterFacts, painterRequest, newTurnFacts, recordTool, shapeFor, MAX_MARKS } from '../hooks/painter.js'
+import { wrapRows } from '../hooks/layout.js'
 
 const loose = <T>(v: unknown) => v as T
 const cmd = ($: Engine, args: string) => $.command.run(loose({ command: 'spark', args, origin: { kind: 'person' }, presentation: {} }))
@@ -80,7 +81,8 @@ test('on: a turn worth painting is painted once, by Haiku, from its shape only; 
   const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
   const art = await term.find({ type: 'Raster', key: 'painting' })
   expect(art).toBeDefined()
-  expect(art?.props.columns).toBe(43)
+  expect(art?.props.columns).toBeLessThanOrEqual(43)
+  expect(art?.props.columns).toBe(art?.props.rows * 4) // its own shape (wide here: nothing was known of the room yet), never stretched
   expect(await term.find({ type: 'Text', text: /✎ a long climb, then light/ })).toBeDefined()
   await term.unmount()
   expect(writes).toEqual([]) // nothing of it is written anywhere
@@ -216,4 +218,70 @@ test('the facts are counts and kinds only', () => {
   const req = painterRequest({ facts, palette: 'ember' })
   expect(req.prompt).toContain('#ffe0b3') // ember's home colour, offered to the painter
   expect(req.prompt).not.toContain('<<<') // no gist unless it is switched on
+})
+
+// ---------------------------------------------------------------- fitting the room
+const inline = (bodyColumns: number, bodyRows: number) => ({ ...pane(bodyColumns, bodyRows), props: { ...pane(bodyColumns, bodyRows).props, placement: 'inline' } }) as const
+
+test('a wide, short room (above the prompt on a narrow terminal): Spark and her painting side by side, both shown, nothing past the room', async ($, on) => {
+  engine(on)
+  await cmd($, 'paint off'); await cmd($, 'paint on'); await say($, 'paint now')
+  for (const [c, r] of [[76, 10], [60, 8], [120, 12]] as Array<[number, number]>) {
+    const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...inline(c, r) })
+    const spark = await term.find({ type: 'Raster', key: 'spark' })
+    const art = await term.find({ type: 'Raster', key: 'painting' })
+    expect(spark).toBeDefined()
+    expect(art).toBeDefined()
+    expect(spark!.props.columns).toBe(spark!.props.rows * 2) // Spark keeps her own shape
+    expect(spark!.props.rows).toBeLessThan(r)
+    expect(art!.props.rows).toBeLessThan(r)
+    expect(spark!.props.columns + art!.props.columns).toBeLessThanOrEqual(c)
+    await term.unmount()
+  }
+  await cmd($, 'paint off')
+})
+
+test('text is never cut short: the state line and the painting title wrap, and their rows are counted before anything is drawn', async ($, on) => {
+  engine(on, () => ({ isAnswered: true, text: JSON.stringify({ ...JSON.parse(PAINTING), title: 'waiting on the others, held my breath and kept' }), usage: {} }))
+  await cmd($, 'paint off'); await cmd($, 'paint on'); await say($, 'paint now')
+  for (const [c, r] of [[30, 40], [44, 50], [36, 24]] as Array<[number, number]>) {
+    const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(c, r) })
+    const label = await term.find({ type: 'Text', text: /^Spark · / })
+    const title = await term.find({ type: 'Text', text: /✎ waiting on the others/ })
+    expect(label?.props.wrap).toBe('wrap')
+    expect(title?.props.wrap).toBe('wrap')
+    expect(title?.props.dimColor).toBeFalsy() // readable, not dimmed
+    const spark = (await term.find({ type: 'Raster', key: 'spark' }))!.props.rows
+    const art = (await term.find({ type: 'Raster', key: 'painting' }))?.props.rows ?? 0
+    const lines = (t: string) => wrapRows(t, c)
+    expect(spark + lines(String(label!.text)) + art + lines(String(title!.text))).toBeLessThanOrEqual(r)
+    await term.unmount()
+  }
+  await cmd($, 'paint off')
+})
+
+test('the canvas takes the shape of its room: a tall side pane gets a tall painting, composed for it and never stretched', async ($, on) => {
+  const { asks } = engine(on)
+  await cmd($, 'paint off'); await cmd($, 'paint on'); await say($, 'paint now') // nothing known of the room yet: wide
+  expect(asks.at(-1)!.prompt).toMatch(/about twice as wide as tall/)
+  let term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) }) // the room is seen
+  await term.unmount()
+  await say($, 'paint now')
+  expect(asks.at(-1)!.prompt).toMatch(/about twice as tall as wide \(about 43 by \d+ pixels\)/)
+  term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  const art = (await term.find({ type: 'Raster', key: 'painting' }))!
+  expect(art.props.columns).toBe(art.props.rows) // tall: as many columns as rows is twice as tall as wide in pixels
+  expect(art.props.rows).toBeGreaterThan(20) // it fills the room it was painted for
+  await term.unmount()
+  await cmd($, 'paint off')
+})
+
+test('wrapRows counts rows the way the terminal wraps words', () => {
+  expect(wrapRows('Spark · thinking · xhigh effort', 40)).toBe(1)
+  expect(wrapRows('Spark · thinking · xhigh effort', 20)).toBe(2)
+  expect(wrapRows('a'.repeat(25), 10)).toBe(3)
+  expect(wrapRows('', 10)).toBe(1)
+  expect(shapeFor(40, 20)).toBe('wide')
+  expect(shapeFor(40, 40)).toBe('square')
+  expect(shapeFor(40, 80)).toBe('tall')
 })
