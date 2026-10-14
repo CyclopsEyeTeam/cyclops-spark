@@ -142,9 +142,9 @@ the words themselves. The last reflection shows in `/spark state`.
   she answers it with a move of hers (a bloom, a lean toward it, a ring, a shimmer or a hush), chosen by the painter in
   the same call.
 - **Talk to her.** While the painter is on, the bottom of her pane has a line, *say something to Spark*: click her pane
-  and type (ask what a painting means, or whether she's all good). She answers under the painting in her own voice, with a
-  move of hers, from what she already holds: her state, her last painting's title, the builder's last reflection and the
-  turn's shape. One small call on the painter's model (about 1k tokens), never a re-read of the session; it counts in the
+  and type (ask what a painting means, or whether she's all good). She answers under the painting in her own voice (at
+  most 250 characters), with a move of hers, from what she already holds: her state, her last painting's title, the
+  builder's last reflection and the turn's shape. One small call on the painter's model (about 1k tokens), never a re-read of the session; it counts in the
   session's total.
 - **The story of the session.** Every painting of the session is kept (in memory only) in the order it came.
   `/spark story` tells them again in her pane, each laid down mark by mark as it first was and held for a few seconds,
