@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.1
+
+- Spark's answers in her pane can run to 250 characters (they were 160, and sometimes ended mid-word). She is asked
+  for whole sentences, never cut mid-thought.
+
 ## 1.6.0
 
 - **Claude's own line.** While a turn runs, a line in Claude's colour sits above Spark's text: Claude's breath, a small
