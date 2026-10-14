@@ -42,7 +42,7 @@ aloud are held in memory for the turn only; the comment is kept in memory and sh
 
 When you say something to Spark in her pane (the painter on), one more tool-less `$.model.complete` on the painter's
 model is sent what you typed there (at most 300 characters), her state line, her last painting's title, the builder's
-last reflection, the turn's counts and kinds, and her palette's name. Her answer (at most 160 characters) and what you
+last reflection, the turn's counts and kinds, and her palette's name. Her answer (at most 250 characters) and what you
 said are kept in memory and shown in her pane until painting goes off or `/clear`.
 
 The session's paintings (each a small paint program, its title, when it was painted and what it cost) are kept in
