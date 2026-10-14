@@ -674,7 +674,15 @@ const focusOpen = (columns: number, rows: number) => ({ id: PANE, title: 'Spark'
 // A size you drag wins, and the drawing always fits the room it is given
 const SIDE_ROWS = 10
 let lastTerminal = 0 // the terminal width the last /spark command reported (0: not known)
-const sideColumns = (terminal: number) => terminal > 0 ? Math.max(30, Math.min(44, Math.round(terminal * 0.25))) : 36
+let lastViewport = 0 // the terminal width the surface last drew at (any of Spark's drawings, the spinner too)
+let sideWidth = 0    // the sideWidth setting: the side pane's width in columns, 0 for automatic
+// automatic: a quarter of the widest terminal width known, 30 to 44 columns; 44 when none is known yet
+const sideColumns = (terminal: number) => {
+  if (sideWidth > 0) return Math.max(24, Math.min(120, Math.round(sideWidth)))
+  const t = Math.max(terminal, lastViewport)
+  return t > 0 ? Math.max(30, Math.min(44, Math.round(t * 0.25))) : 44
+}
+const seeViewport = (e: { viewport?: { columns?: number } }) => { const c = e.viewport?.columns; if (typeof c === 'number' && c > 0) lastViewport = c }
 
 async function openPane($: EngineInterface, wide = 0, tall = 200): Promise<string> {
   paneOpen = true
@@ -735,6 +743,7 @@ export const register: Register = (on, options) => {
   if (typeof o.paint === 'boolean') paintOn = o.paint
   if (typeof o.paintModel === 'string' && MODEL_ID.test(o.paintModel.trim())) paintModel = o.paintModel.trim()
   if (typeof o.openPainting === 'boolean') openPainting = o.openPainting
+  if (typeof o.sideWidth === 'number' && o.sideWidth >= 0) sideWidth = o.sideWidth
 
   on('session.start', async ($, e, next) => {
     await refreshTheme($)
@@ -769,6 +778,7 @@ export const register: Register = (on, options) => {
   })
   // the chat's spinner: Spark reads the word it shows, so "working" says it the same way. It draws exactly what it would
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
+    seeViewport(e as never)
     const p = e.props as { word?: string; message?: string | null }
     const w = String((p.message || p.word || '')).replace(/[….]+$/, '').trim()
     if (w && w.length <= 40) spinnerWord = w
@@ -990,6 +1000,7 @@ export const register: Register = (on, options) => {
 
   // ---------------------------------------------------------------- drawing
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    seeViewport(e as never)
     sayTo = (words: string) => { void quietly(() => talkTo($, words)) } // the Input under her painting talks to her
     const els = $.ui.resolve(e)
     const { f, label } = paneFrame()
@@ -1068,6 +1079,7 @@ export const register: Register = (on, options) => {
   // Spark's speech bubble, joined to it by a short line. Nothing in it is read, copied or changed: it is their own tree,
   // so its keys still answer it.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    seeViewport(e as never)
     const below = await next(e)
     const els = $.ui.resolve(e)
     if (focusMode || !band) return below // in focus, what draws above the prompt is left exactly as it is

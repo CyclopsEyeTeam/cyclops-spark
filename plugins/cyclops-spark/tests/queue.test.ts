@@ -110,3 +110,27 @@ test('the chat\'s word stands only for plain working and waiting on the model: t
   expect(p.sample(12.1, { word: 'Processing' }).hover).toMatch(/^Spark · reading/)
   expect(p.sample(12.1, { word: 'Processing' }).glyph).toBe(p.sample(12.1, {}).glyph)
 })
+
+test('the side pane opens at the size you knew: the real terminal width when the command cannot say, 44 when nothing is known, or the Side pane width setting', async ($, on) => {
+  mock.store(on)
+  const opens: Array<Record<string, unknown>> = []
+  on('ui.open', async (_$, e) => { opens.push({ ...(e as object) }); return loose({ value: { isPlaced: true } }) })
+  on('ui.close', async () => loose({ value: undefined }))
+  on('ui.render', { component: 'Spinner' }, async ($, e) => $.ui.resolve(e).Text({ children: ['…'] }))
+  const run = (args: string, columns?: number) => $.command.run(loose({ command: 'spark', args, origin: { kind: 'person' }, presentation: columns ? { columns } : {} }))
+  await run('side')
+  expect(opens.at(-1)).toMatchObject({ columns: 44 }) // nothing known yet: the roomy size, not a squeezed one
+  await run('side')
+  const spin = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', component: 'Spinner', requestId: 'main', props: { word: 'Mulling', message: null, suffix: '…', mode: 'thinking' }, viewport: { columns: 240, rows: 60 } } as never)
+  await spin.unmount()
+  await run('side', 120) // the command reports less than the terminal really is: the drawing's own width wins
+  expect(opens.at(-1)).toMatchObject({ columns: 44 })
+})
+
+test('the Side pane width setting opens it the size you like, every time', { options: { sideWidth: 56 } }, async ($, on) => {
+  mock.store(on)
+  const opens: Array<Record<string, unknown>> = []
+  on('ui.open', async (_$, e) => { opens.push({ ...(e as object) }); return loose({ value: { isPlaced: true } }) })
+  await $.command.run(loose({ command: 'spark', args: 'side', origin: { kind: 'person' }, presentation: { columns: 120 } }))
+  expect(opens.at(-1)).toMatchObject({ columns: 56 })
+})

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.9
+
+- The side pane opens roomy again. It is a quarter of the widest terminal width Spark knows (30 to 44 columns), and
+  she now learns that width from what the terminal really draws (her own pane, the band, the chat's spinner) as well as
+  from the command, which could report less than the terminal is. With nothing known yet it opens at 44, not 36.
+- New setting **Side pane width** (`sideWidth`, 24 to 120 columns; 0, the default, is automatic): the side pane opens
+  that wide every time. A size you drag still wins for the session.
+
 ## 1.5.8
 
 - **The story of the session.** Spark keeps every painting of the session, in order (in memory only, at most 60).

@@ -86,8 +86,8 @@ Then type `/spark` to open the pane.
 | `/spark story` | The session's paintings told again, in order, each laid down anew (no tokens). Again to end it. |
 | `/spark help` | This list. |
 
-The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip, Cyclops Link and the
-painter are in the plugin's config menu. The commands change them for the current session.
+The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip, Cyclops Link, the
+painter and the side pane's width are in the plugin's config menu. The commands change them for the current session.
 
 ## Cyclops Link
 
