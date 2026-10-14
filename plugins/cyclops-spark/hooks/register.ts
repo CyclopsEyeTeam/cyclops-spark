@@ -491,7 +491,7 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
     }
     const shape = paintRoom ? shapeFor(paintRoom.columns, paintRoom.rows * 2) : 'wide' // a cell is one pixel wide, two tall
     const req = painterRequest({ facts, palette, theme: activeTheme(), gist: live ? '' : turn.answer, reflection: words, live, shape, size: paintRoom ? [paintRoom.columns, paintRoom.rows * 2] : null })
-    const r = await $.model.complete({ model: paintModel, system: req.system, prompt: req.prompt, maxTokens: 1500, effort: 'low', timeoutMs: 30000 })
+    const r = await $.model.complete({ model: paintModel, system: req.system, prompt: req.prompt, maxTokens: 3000, effort: 'low', timeoutMs: 40000 })
     cost += spend((r as { usage?: Record<string, number> }).usage) // every arm carries what the call really cost
     if (!r.isAnswered) {
       paintNote = r.reason === 'api-error' ? `the API answered with an error${'status' in r && r.status ? ` (${r.status})` : ''}` : r.reason === 'aborted' ? 'it took too long' : 'the painter sent nothing back'
