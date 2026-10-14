@@ -4,7 +4,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { parsePainting, paintingScene } from '../hooks/painter.js'
-import { canvasFor, flattenRGBA, galleryHTML, revisitRequest, sceneSVG, slug } from '../hooks/convert.js'
+import { canvasFor, captionHeight, captionLines, captionStrip, flattenRGBA, galleryHTML, revisitRequest, sceneSVG, slug, withCaption } from '../hooks/convert.js'
 
 const loose = <T>(v: unknown) => v as T
 const cmd = ($: Engine, args: string) => $.command.run(loose({ command: 'spark', args, origin: { kind: 'person' }, presentation: {} }))
@@ -62,7 +62,8 @@ test('faithful: the same marks drawn large, SVG written by Spark and PNG by the 
   expect(out).toMatch(/^converted \(faithful, 320 wide\) into \/home\/t\/zilo\/spark-paintings: 01-a-fox-under-three-moons-faithful\.svg, 01-a-fox-under-three-moons-faithful\.png, index\.html$/)
   expect(asks.length).toBe(before) // nothing asked of any model
   const svg = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.svg')!
-  expect(svg).toMatch(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="320" height="160"/) // wide: 2:1, the painting's own shape
+  expect(svg).toMatch(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="320" height="230"/) // wide: 2:1, the painting's own shape, and the caption strip under it
+  expect(svg).toMatch(/<text [^>]*font-style="italic">a fox under three moons<\/text><text [^>]*>Spark · \d{1,2} \w{3} \d{4} · faithful<\/text>/) // the caption, on the picture
   expect(svg).toContain('<title>a fox under three moons</title>')
   expect(svg).toContain('mix-blend-mode:screen') // additive light, as on the dark terminal
   expect((svg.match(/<polygon/g) || []).length).toBe(2) // the fill, and its mirror
@@ -75,9 +76,9 @@ test('faithful: the same marks drawn large, SVG written by Spark and PNG by the 
   expect(spawns).toHaveLength(1)
   expect(spawns[0]![0]).toBe('python3')
   expect(spawns[0]![1]).toMatch(/\/link\/spark_png\.py$/)
-  expect(spawns[0]!.slice(2)).toEqual(['/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.rgb.b64', '/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.png', '320', '160'])
+  expect(spawns[0]!.slice(2)).toEqual(['/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.rgb.b64', '/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.png', '320', '230'])
   const b64 = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.rgb.b64')!
-  expect(b64.length).toBe(Math.ceil((320 * 160 * 3) / 3) * 4) // base64 of exactly W×H×3 bytes
+  expect(b64.length).toBe(Math.ceil((320 * 230 * 3) / 3) * 4) // base64 of exactly W×H×3 bytes, the caption strip included
   const page = files.get('/home/t/zilo/spark-paintings/index.html')!
   expect(page).toContain('<img src="01-a-fox-under-three-moons-faithful.png" alt="a fox under three moons">')
   expect(page).toContain('faithful')
@@ -168,5 +169,37 @@ test('a bare /spark convert asks which way, in Claude Code\'s own dialog, and do
   expect([...files.keys()].some((f) => f.endsWith('-refined.svg'))).toBe(true)
   answer = null
   expect(await say($, 'convert')).toBe('convert: nothing chosen')
+  await cmd($, 'paint off')
+})
+
+test('the caption is drawn on the picture itself: the title bright, the line under it dim, in a small bitmap font scaled to the width; off by the setting', async ($, on) => {
+  const lines = captionLines('Long climb, nothing lost', 'refined', '14 Oct 2026')
+  expect(lines).toEqual([{ text: 'Long climb, nothing lost', dim: false }, { text: 'Spark · 14 Oct 2026 · refined', dim: true }])
+  expect(captionHeight(1920)).toBe(4 * 4 + 2 * (11 * 4 + 12) + 12) // scale 4 at 1920 wide
+  expect(captionHeight(480)).toBeLessThan(captionHeight(1920))
+  const W = 480, ground = [0.07, 0.07, 0.08]
+  const strip = captionStrip(W, lines, ground)
+  expect(strip.length).toBe(W * captionHeight(W) * 3)
+  let bright = 0, dim = 0
+  for (let i = 0; i < strip.length; i += 3) { if (strip[i] === 236) bright++; else if (strip[i] === 150) dim++ }
+  expect(bright).toBeGreaterThan(200) // the title's pixels
+  expect(dim).toBeGreaterThan(200)    // the dim line's
+  const { rgb, H } = withCaption(new Uint8Array(W * 10 * 3), W, 10, lines, ground)
+  expect(H).toBe(10 + captionHeight(W))
+  expect(rgb.length).toBe(W * H * 3)
+  // accents fall back to their plain letter, the unknown to '?', and nothing throws
+  expect(() => captionStrip(W, [{ text: 'café — ✎ ñ', dim: false }], ground)).not.toThrow()
+  // the SVG without a caption keeps its bare height
+  const p = parsePainting(PAINTING)!
+  expect(sceneSVG(paintingScene(p, 200, 100), 200, 100)).toMatch(/height="100"/)
+  expect(sceneSVG(paintingScene(p, 200, 100), 200, 100, { caption: lines })).toMatch(/height="1\d\d"/)
+})
+
+test('the caption setting off: the picture alone', { options: { convertCaption: false } }, async ($, on) => {
+  const { files, spawns } = engine(on)
+  await cmd($, 'paint'); await settle()
+  await say($, 'convert faithful 320')
+  expect(spawns[0]!.slice(4)).toEqual(['320', '160'])
+  expect(files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.svg')!).not.toContain('<text')
   await cmd($, 'paint off')
 })
