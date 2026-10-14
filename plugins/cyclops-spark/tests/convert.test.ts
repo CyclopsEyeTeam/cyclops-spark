@@ -143,3 +143,30 @@ test('the pieces: slugs, canvases, the flattened bytes, and an SVG that stands o
   const rq = revisitRequest({ painting: p, mode: 'interpretive' })
   expect(rq.prompt).not.toContain('seed') // the painter sees its marks, not the renderer's bookkeeping
 })
+
+test('a bare /spark convert asks which way, in Claude Code\'s own dialog, and does what you click; dismissed, it does nothing', async ($, on) => {
+  const { files, asks } = engine(on)
+  let answer: string | null = 'Refined'
+  const asked: unknown[] = []
+  on('tool.call', { tool: 'AskUserQuestion' }, async (_$, e) => {
+    const q = (e as { questions: Array<{ question: string; options: Array<{ label: string }> }> }).questions
+    asked.push(q)
+    if (answer === null) return loose({ result: 'dismissed', isError: true })
+    return loose({ result: { questions: q, answers: { [q[0]!.question]: answer } } })
+  })
+  expect(await say($, 'convert')).toMatch(/^no paintings yet this session/) // nothing to ask about yet
+  expect(asked).toHaveLength(0)
+  await cmd($, 'paint'); await settle()
+  const n0 = asks.length
+  const out = await say($, 'convert')
+  expect(asked).toHaveLength(1)
+  const q = (asked[0] as Array<{ question: string; options: Array<{ label: string }> }>)[0]!
+  expect(q.question).toBe('How shall Spark make the painting large?')
+  expect(q.options.map((o) => o.label)).toEqual(['Faithful', 'Refined', 'Interpretive', 'All, faithful'])
+  expect(out).toMatch(/^converted \(refined, 1920 wide\)/)
+  expect(asks.length).toBe(n0 + 1) // the refined way: the painter asked once
+  expect([...files.keys()].some((f) => f.endsWith('-refined.svg'))).toBe(true)
+  answer = null
+  expect(await say($, 'convert')).toBe('convert: nothing chosen')
+  await cmd($, 'paint off')
+})
