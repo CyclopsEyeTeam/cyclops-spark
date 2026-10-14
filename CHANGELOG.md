@@ -2,7 +2,8 @@
 
 ## 1.7.0
 
-- **`/spark convert`: a painting made large.** Three ways, after Keeper's idea: **faithful** draws the same marks at
+- **`/spark convert`: a painting made large.** On its own it asks which way in Claude Code's own dialog, and you
+  click one; or say it (`/spark convert refined 4k`). Three ways, after Keeper's idea: **faithful** draws the same marks at
   full size (no model); **refined** asks the painter for its own painting again with finer curves, smoother gradients
   and more detailed light, subject and composition kept; **interpretive** lets it revisit the painting freely. `all`
   does every painting of the session faithfully; `hd` (1920 wide) or `4k`. Each comes as an SVG, written by Spark, and
