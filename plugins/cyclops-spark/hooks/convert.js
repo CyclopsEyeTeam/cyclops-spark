@@ -9,6 +9,7 @@
 // anywhere unless you ask with the command.
 
 import { REACTIONS } from './core.js'
+import { FONT, FONT_H } from './font.js'
 
 export const SIZES = { hd: 1920, '4k': 3840 }
 export const HD_MARKS = 240 // a refined or interpretive painting may use more marks than one for the pane
@@ -64,7 +65,7 @@ const hex = (c) => '#' + c.map((v) => Math.round(Math.max(0, Math.min(1, v)) * 2
 // ---------------------------------------------------------------- the scene as SVG
 // The scene is what paintingScene gives the raster: primitives in unit space (0,0 the middle; min(W,H) spans 2.4).
 // The same mapping the raster uses, so the SVG and the PNG are the one picture.
-export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '' } = {}) {
+export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '', caption = null } = {}) {
   const scale = Math.min(W, H) / 2.4, ox = W / 2, oy = H / 2
   const X = (x) => +(ox + x * scale).toFixed(2), Y = (y) => +(oy + y * scale).toFixed(2), R = (r) => +(r * scale).toFixed(2)
   const col = (c) => hex(c)
@@ -120,15 +121,77 @@ export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '
     }
   }
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  const strip = caption ? captionHeight(W, caption.length) : 0
+  const s = captionScale(W), size = FONT_H * s * 0.95
+  const inks = dark ? ['#ece4f0', '#968ca0'] : ['#282430', '#787080']
+  const text = caption ? caption.map((line, i) => `<text x="${s * 5}" y="${H + s * 4 + i * (FONT_H * s + s * 3) + FONT_H * s * 0.82}" font-family="DejaVu Sans Mono, Menlo, Consolas, monospace" font-size="${size.toFixed(1)}" fill="${inks[line.dim ? 1 : 0]}"${line.dim ? '' : ' font-style="italic"'}>${esc(line.text)}</text>`).join('') : ''
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H + strip}" viewBox="0 0 ${W} ${H + strip}">`,
     title ? `<title>${esc(title)}</title>` : '',
-    `<rect width="${W}" height="${H}" fill="${bg}"/>`,
+    `<rect width="${W}" height="${H + strip}" fill="${bg}"/>`,
     defs.length ? `<defs>${defs.join('')}</defs>` : '',
     `<g${dark ? ' style="mix-blend-mode:screen"' : ''}>${body.join('')}</g>`,
+    text,
     '</svg>',
     '',
   ].filter((l) => l !== '').join('\n')
+}
+
+// ---------------------------------------------------------------- the caption, on the picture itself
+// Under a converted painting: its title, then a dim line (Spark · the date · the way it was made), drawn in a small
+// bitmap font scaled to the picture, on a strip of the ground colour. The SVG writes the same lines as text.
+const captionScale = (W) => Math.max(2, Math.round(W / 480))
+const CELL = 10
+const MIDDOT = String.fromCharCode(0xb7)
+const ACCENTS = new RegExp('[' + String.fromCharCode(0x300) + '-' + String.fromCharCode(0x36f) + ']', 'g') // combining marks, named by code so none sits in this source
+const glyph = (ch) => FONT[ch] || FONT[ch.normalize('NFD').replace(ACCENTS, '')] || FONT['?']
+export function captionLines(title, mode, when) {
+  return [{ text: title || 'untitled', dim: false }, { text: `Spark ${MIDDOT} ${when} ${MIDDOT} ${mode}`, dim: true }]
+}
+export function captionHeight(W, lines = 2) {
+  const s = captionScale(W)
+  return s * 4 + lines * (FONT_H * s + s * 3) + s * 3
+}
+// The strip's RGB (W × captionHeight), the text in the ink colours over the ground
+export function captionStrip(W, lines, ground, { light = false } = {}) {
+  const s = captionScale(W)
+  const H = captionHeight(W, lines.length)
+  const rgb = new Uint8Array(W * H * 3)
+  const g = ground.map((v) => Math.round(v * 255))
+  for (let i = 0; i < W * H; i++) { rgb[i * 3] = g[0]; rgb[i * 3 + 1] = g[1]; rgb[i * 3 + 2] = g[2] }
+  const inks = light ? [[40, 36, 48], [120, 112, 128]] : [[236, 228, 240], [150, 140, 160]]
+  let y0 = s * 4
+  for (const line of lines) {
+    const ink = inks[line.dim ? 1 : 0]
+    let x0 = s * 5
+    for (const ch of String(line.text)) {
+      const [adv, rows] = glyph(ch)
+      for (let y = 0; y < FONT_H; y++) {
+        const bits = parseInt(rows.slice(y * 3, y * 3 + 3), 16)
+        if (!bits) continue
+        for (let x = 0; x < CELL; x++) {
+          if (!((bits >> x) & 1)) continue
+          for (let dy = 0; dy < s; dy++) for (let dx = 0; dx < s; dx++) {
+            const px = x0 + x * s + dx, py = y0 + y * s + dy
+            if (px < 0 || px >= W || py >= H) continue
+            const k = (py * W + px) * 3
+            rgb[k] = ink[0]; rgb[k + 1] = ink[1]; rgb[k + 2] = ink[2]
+          }
+        }
+      }
+      x0 += adv * s
+      if (x0 > W) break
+    }
+    y0 += FONT_H * s + s * 3
+  }
+  return rgb
+}
+// the picture with its caption strip under it: one RGB buffer, W × (H + strip)
+export function withCaption(rgb, W, H, lines, ground, opts) {
+  const strip = captionStrip(W, lines, ground, opts)
+  const out = new Uint8Array(rgb.length + strip.length)
+  out.set(rgb, 0); out.set(strip, rgb.length)
+  return { rgb: out, H: H + captionHeight(W, lines.length) }
 }
 
 // The raster's straight RGBA laid over a ground colour (the PNG has no transparency), as base64 for the helper
