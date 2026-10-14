@@ -132,8 +132,11 @@ the words themselves. The last reflection shows in `/spark state`.
   painting is two small calls, the reflection and the painting: a few thousand tokens in all. Under each painting, in
   small text, is what that painting cost on its own, and under that the session's total (paintings, tokens, model);
   the total is also in `/spark state` and shown when you turn the painter off.
-- **What comes back** is not an image but a small paint program (lines, dots, rings, glows), checked and clamped, then
-  drawn by Spark's own renderer in her palette. An answer that is not a painting is dropped; the last painting stays.
+- **What comes back** is not an image but a small paint program, checked and clamped, then drawn by Spark's own
+  renderer. The brush is a whole vocabulary: lines and smooth curves, dots, rings and arcs, soft glows, filled shapes
+  with a colour running across them, and sprays of specks for stars, rain and dust; up to 96 marks, any colour, and a
+  mirror for faces and symmetric things. The painter is free to paint anything: abstract or figurative, a landscape, a
+  creature, weather, a symbol, a scene. An answer that is not a painting is dropped; the last painting stays.
 - **It is one of Spark's own lanes.** While it paints, a filament reaches from her toward the canvas, ending in a brush
   tip with her inks; her state line reads "Spark · painting". The finished painting runs down the lane to the canvas, and
   she answers it with a move of hers (a bloom, a lean toward it, a ring, a shimmer or a hush), chosen by the painter in
