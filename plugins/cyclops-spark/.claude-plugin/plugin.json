@@ -97,6 +97,12 @@
       "title": "Convert folder",
       "description": "Where /spark convert writes the large SVG and PNG of a painting (and an index.html gallery). Relative to the project you are working in, or an absolute path. Spark writes there only when you run the command.",
       "default": "spark-paintings"
+    },
+    "convertCaption": {
+      "type": "boolean",
+      "title": "Caption on converted paintings",
+      "description": "Write the painting's title, and a small line (Spark, the date, the way it was made), on the picture itself under the painting. On by default.",
+      "default": true
     }
   },
   "license": "MIT"

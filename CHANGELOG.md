@@ -10,7 +10,9 @@
   a PNG, written by a small python helper (`link/spark_png.py`) from bytes she hands it as text, plus an `index.html`
   gallery, into the new **Convert folder** setting (`spark-paintings` in the project by default). The first time Spark
   writes files, and only on the command. The PNG is drawn with each mark over the last, as the SVG is, so a dark mark on
-  a bright one shows.
+  a bright one shows. The caption is on the picture: the title, and under it `Spark · the date · the way`, in a small
+  bitmap font (`hooks/font.js`, traced from a classic terminal font) sized to the picture; the SVG carries the same
+  lines as text. The **Caption on converted paintings** setting turns it off.
 
 ## 1.6.2
 
