@@ -459,10 +459,23 @@ async function talkTo($: EngineInterface, words: string): Promise<void> {
 }
 
 // /spark convert: the painting made large (see hooks/convert.js). The one time Spark writes files, and only when you ask.
+const CONVERT_WAYS: Array<[string, string]> = [
+  ['Faithful', 'the very same marks, drawn large: geometry and composition intact (no tokens)'],
+  ['Refined', 'the painter refines its own painting: finer curves, smoother gradients, more detailed light (one call)'],
+  ['Interpretive', 'the painter revisits it freely: a new work derived from the original (one call)'],
+  ['All, faithful', 'every painting of the session, faithfully (no tokens)'],
+]
 async function convertPainting($: EngineInterface, modeWord: string, sizeWord: string): Promise<string> {
   const modes = ['faithful', 'refined', 'interpretive', 'all']
-  const mode = modeWord === '' ? 'faithful' : modeWord
-  if (!modes.includes(mode)) return 'convert takes: faithful (the same marks, large; the default) | refined | interpretive | all (every painting of the session, faithful), then hd (1920 wide, the default) or 4k'
+  let mode = modeWord
+  if (!mode) { // a bare /spark convert: pick by clicking, in Claude Code's own dialog
+    if (!shownPainting() && !story.length) return 'no paintings yet this session: /spark paint makes one'
+    let choice = ''
+    try { choice = await $.ui.ask('How shall Spark make the painting large?', { options: CONVERT_WAYS.map(([l]) => l), header: 'Convert' }) } catch { return 'convert: nothing chosen' }
+    mode = choice.toLowerCase().startsWith('all') ? 'all' : choice.toLowerCase().trim()
+    if (!modes.includes(mode)) return 'convert: nothing chosen'
+  }
+  if (!modes.includes(mode)) return 'convert takes: faithful (the same marks, large) | refined | interpretive | all (every painting of the session, faithful), then hd (1920 wide, the default) or 4k. On its own, /spark convert lets you click one'
   const width = sizeWord === '' ? SIZES.hd! : SIZES[sizeWord] ?? (/^\d{3,4}$/.test(sizeWord) ? Math.max(256, Math.min(4096, Number(sizeWord))) : 0)
   if (!width) return 'convert size: hd (1920 wide) or 4k (3840)'
   if (convertBusy) return 'Spark is still converting'
@@ -741,7 +754,7 @@ const HELP = [
   '/spark link    on | off | status: Keeper and Prism beside Spark (Cyclops Link, off until you turn it on)',
   '/spark paint   a small painter paints each turn below Spark, and one now (it uses tokens); /spark paint off stops it',
   '/spark story   the session\'s paintings told again in order, each laid down anew (no tokens); /spark story again ends it',
-  '/spark convert [faithful|refined|interpretive|all] [hd|4k]: the painting made large, SVG and PNG, into the convert folder (refined and interpretive ask the painter once)',
+  '/spark convert the painting made large, SVG and PNG, into the convert folder: click faithful, refined, interpretive or all (or say it: /spark convert refined 4k)',
 ].join('\n')
 
 // focus asks for about 60% of the terminal (at least 64 columns, and always 40 left for the conversation), and the full
