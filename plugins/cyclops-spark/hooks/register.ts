@@ -441,7 +441,7 @@ async function talkTo($: EngineInterface, words: string): Promise<void> {
   $.ui.invalidate('ui.render')
   try {
     const rq = talkRequest({ said, mood: String(liveFrame().hover).replace(/^Spark · /, ''), title: painting?.title || '', reflection, facts: turnFacts ? painterFacts(turnFacts, { reason: 'still going', durationMs: 0, mood: '', turn: turnsSeen + 1 }) : null, palette })
-    const r = await $.model.complete({ model: paintModel, system: rq.system, prompt: rq.prompt, maxTokens: 300, effort: 'low', timeoutMs: 20000 })
+    const r = await $.model.complete({ model: paintModel, system: rq.system, prompt: rq.prompt, maxTokens: 400, effort: 'low', timeoutMs: 20000 })
     spend((r as { usage?: Record<string, number> }).usage)
     const a = r.isAnswered ? parseTalk(r.text) : null
     talk = { said, reply: a ? a.say : 'no answer came back this time', busy: false }
