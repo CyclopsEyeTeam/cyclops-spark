@@ -35,6 +35,7 @@ import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet
 import { KEEPER, PRISM } from './link-marks.js'
 import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
+import { motion, motionFor } from './motion.js'
 
 const PANE = 'cyclops-spark'
 const T0 = Date.now()
@@ -239,11 +240,10 @@ function paneFrame(): { f: any; label: string; said: Said } {
 // CLAUDE'S OWN LINE, above Spark's: the builder's breath while a turn really runs, in Claude's colour, beside the word the
 // chat's spinner shows. A ring that fills and empties: slow while thinking, quicker while writing or calling tools.
 // Only while a turn runs; never in the replay
-const BREATH = ['·', '∘', '○', '◎', '◉', '●', '◉', '◎', '○', '∘']
+// Claude's breath: four small motions (hooks/motion.js), one for what the turn is doing right now
 function voiceLine(f: any): string {
   if (replay || turnBegan < 0) return ''
-  const rate = f.mode === 'thinking' ? 4 : 8
-  return BREATH[Math.floor(now() * rate) % BREATH.length] + ' ' + (spinnerWord || 'Working') + '…'
+  return motion(motionFor(f), now()) + ' ' + (spinnerWord || 'Working') + '…'
 }
 
 const statusText = (f: any) => f.glyph + ' ' + String(f.hover).replace(/^Spark · /, '')
