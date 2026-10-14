@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.7.0
+
+- **`/spark convert`: a painting made large.** Three ways, after Keeper's idea: **faithful** draws the same marks at
+  full size (no model); **refined** asks the painter for its own painting again with finer curves, smoother gradients
+  and more detailed light, subject and composition kept; **interpretive** lets it revisit the painting freely. `all`
+  does every painting of the session faithfully; `hd` (1920 wide) or `4k`. Each comes as an SVG, written by Spark, and
+  a PNG, written by a small python helper (`link/spark_png.py`) from bytes she hands it as text, plus an `index.html`
+  gallery, into the new **Convert folder** setting (`spark-paintings` in the project by default). The first time Spark
+  writes files, and only on the command. The PNG is drawn with each mark over the last, as the SVG is, so a dark mark on
+  a bright one shows.
+
 ## 1.6.2
 
 - **Claude's breath has four motions** (`hooks/motion.js`), one for what the turn is doing: a spark swaying side to

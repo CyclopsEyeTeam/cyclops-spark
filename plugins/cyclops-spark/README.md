@@ -53,6 +53,8 @@ cues.
 | `hooks/painter.js` | The painter: the turn's shape, the request, the checked paint program, and how it lands on the raster. |
 | `hooks/layout.js` | How many rows wrapped text takes, so the pane lays everything out whole. |
 | `hooks/motion.js` | Claude's breath above Spark's line: four small motions, one for what the turn is doing. |
+| `hooks/convert.js` | `/spark convert`: a painting as SVG, the painter revisiting its own work, the gallery page. |
+| `link/spark_png.py` | Writes the PNG for `/spark convert` (the plugin can write text, not bytes). Standard library only. |
 | `hooks/colour-engine.js` | Infinite Colour / DrawPlayer Colour Language. |
 | `sounds/` | The synthesised cues and murmur phrases. |
 | `tests/` | `claude plugin test .` |
