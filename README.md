@@ -157,7 +157,9 @@ the words themselves. The last reflection shows in `/spark state`.
   the canvas keeps the painting's shape. Each one is written as an SVG (every mark a vector, any size without loss) and
   a PNG (through a small python helper, the only way to write bytes from the plugin; without python3 you get the SVG),
   plus an `index.html` gallery of the session's conversions, into the **Convert folder** setting (`spark-paintings`
-  inside the project by default, or an absolute path). This is the one time Spark writes files, and only when you ask.
+  inside the project by default, or an absolute path). The caption is on the picture itself: the title, and under it
+  `Spark · the date · the way`, in a small bitmap font sized to the picture (the **Caption** setting turns it off).
+  This is the one time Spark writes files, and only when you ask.
 - **The story of the session.** Every painting of the session is kept (in memory only) in the order it came.
   `/spark story` tells them again in her pane, each laid down mark by mark as it first was and held for a few seconds,
   with where it is in the story and when it was painted (`story · 3 of 9 · 21:01`), round and round until you say
