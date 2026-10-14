@@ -84,7 +84,7 @@ Then type `/spark` to open the pane.
 | `/spark paint` | The painter: turns it on and paints one now; from then on a small sub-agent paints Spark's expression of each turn below her (below). It uses tokens. |
 | `/spark paint off` | Stops the painter and empties the room below Spark. |
 | `/spark story` | The session's paintings told again, in order, each laid down anew (no tokens). Again to end it. |
-| `/spark convert [faithful\|refined\|interpretive\|all] [hd\|4k]` | The painting made large, as SVG and PNG, into the convert folder (below). |
+| `/spark convert` | The painting made large, as SVG and PNG, into the convert folder (below): click faithful, refined, interpretive or all. Or say it: `/spark convert refined 4k`. |
 | `/spark help` | This list. |
 
 The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip, Cyclops Link, the
@@ -148,7 +148,8 @@ the words themselves. The last reflection shows in `/spark state`.
   builder's last reflection and the turn's shape. One small call on the painter's model (about 1k tokens), never a re-read of the session; it counts in the
   session's total.
 - **Made large: `/spark convert`.** A painting is not pixels but a small paint program, so Spark can draw it again at
-  any size. Three ways (Keeper's idea): **faithful** (the default) draws the very same marks at full size, geometry and
+  any size. On its own the command asks which way, in Claude Code's own dialog, and you click one (or say it:
+  `/spark convert refined 4k`). Three ways (Keeper's idea): **faithful** (the default) draws the very same marks at full size, geometry and
   composition intact, asking no model; **refined** gives the painter its own program back and asks for it again with
   finer curves, smoother gradients and more detailed light, the subject and composition kept; **interpretive** lets the
   painter revisit it freely, a new work derived from the original. The last two are one call each, counted in the
