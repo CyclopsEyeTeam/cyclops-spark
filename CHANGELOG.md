@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.2
+
+- **Claude's breath has four motions** (`hooks/motion.js`), one for what the turn is doing: a spark swaying side to
+  side along a short rail while thinking (2.4 s there and back, a trail behind it), a wave rolling along a row of beads
+  while writing, a half-lit moon turning while a call is out, and the ring filling and emptying while waiting. All on a
+  steady beat, never random; the painter's own lane never counts as a call out.
+
 ## 1.6.1
 
 - Spark's answers in her pane can run to 250 characters (they were 160, and sometimes ended mid-word). She is asked

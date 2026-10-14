@@ -52,6 +52,7 @@ cues.
 | `hooks/trace.js` | The labelled replay script (`/spark replay`). |
 | `hooks/painter.js` | The painter: the turn's shape, the request, the checked paint program, and how it lands on the raster. |
 | `hooks/layout.js` | How many rows wrapped text takes, so the pane lays everything out whole. |
+| `hooks/motion.js` | Claude's breath above Spark's line: four small motions, one for what the turn is doing. |
 | `hooks/colour-engine.js` | Infinite Colour / DrawPlayer Colour Language. |
 | `sounds/` | The synthesised cues and murmur phrases. |
 | `tests/` | `claude plugin test .` |
