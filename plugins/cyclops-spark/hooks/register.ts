@@ -1098,7 +1098,7 @@ export const register: Register = (on, options) => {
     // Spark and her truthful line side by side, so the strip stays as short as the drawing
     const words = [Text({ children: [f.hover], dimColor: true, wrap: 'truncate-end' }), ...(linkOn && linkView ? [Text({ children: [linkLine(linkView)], dimColor: true, wrap: 'truncate-end' })] : [])]
     const left = art
-      ? Box({ flexDirection: 'row', columnGap: 1, alignItems: 'center', children: [art, Box({ flexDirection: 'column', children: [art, Box] })] })
+      ? Box({ flexDirection: 'row', columnGap: 1, alignItems: 'center', children: [art, Box({ flexDirection: 'column', children: words })] })
       : Box({ flexDirection: 'row', columnGap: 1, children: [Text({ children: [f.glyph] }), ...words] })
     if (below && asksSomething(below)) // Spark speaking: the offer as its bubble, joined to it
       return Box({ flexDirection: 'row', columnGap: 1, children: [left, Text({ children: ['╶─'], dimColor: true }), below as never] })
