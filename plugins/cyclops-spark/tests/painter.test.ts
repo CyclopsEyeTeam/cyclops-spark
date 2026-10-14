@@ -1,7 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
-import { parsePainting, paintingScene, painterFacts, painterRequest, newTurnFacts, recordTool, shapeFor, MAX_MARKS, parseTalk, talkRequest } from '../hooks/painter.js'
+import { parsePainting, paintingScene, painterFacts, painterRequest, newTurnFacts, recordTool, shapeFor, MAX_MARKS, PAINT_KINDS, parseTalk, talkRequest } from '../hooks/painter.js'
+import { createRaster, toRGBA8 } from '../hooks/render-raster.js'
 import { wrapRows } from '../hooks/layout.js'
 
 const loose = <T>(v: unknown) => v as T
@@ -152,12 +153,12 @@ test('a small terminal loses nothing: Spark and her label keep their size; the p
     const got = await sparkRows(c, r)
     expect(got.spark).toBe(without[i]!.spark) // Spark is never made smaller for the painting
     expect(got.label).toBe(true)
-    const free = r - got.spark! - 2 // her line keeps two rows held, so nothing below it moves when it grows
+    const free = r - got.spark! - 3 // her lines keep three rows held, so nothing below them moves when they grow
     if (free < 1) { expect(got.title).toBe(false); expect(got.art).toBeUndefined() }
     else if (free < 4) { expect(got.title).toBe(true); expect(got.art).toBeUndefined() } // the title alone
     else { expect(got.title).toBe(true); expect(got.art).toBeGreaterThanOrEqual(3) }
     // never more rows than the pane has
-    expect(got.spark! + 2 + (got.art ?? 0) + (got.title ? 1 : 0) + (got.art && free >= 7 ? 1 : 0)).toBeLessThanOrEqual(r)
+    expect(got.spark! + 3 + (got.art ?? 0) + (got.title ? 1 : 0) + (got.art && free >= 7 ? 1 : 0)).toBeLessThanOrEqual(r)
   }
   await cmd($, 'paint off')
 })
@@ -189,11 +190,11 @@ test('a painting is checked and clamped: unknown kinds dropped, numbers held in 
   expect(p.marks.length).toBeLessThanOrEqual(MAX_MARKS)
   expect(p.marks.some((m) => m.k === 'script')).toBe(false)
   const dot = p.marks.find((m) => m.k === 'dot')!
-  expect([dot.x, dot.y, dot.r, dot.a]).toEqual([1.1, -0.1, 0.35, 1])
+  expect([dot.x, dot.y, dot.r, dot.a]).toEqual([1.1, -0.1, 0.7, 1])
   expect(dot.c).toEqual([1, 0.9, 0.84]) // not a colour it can read: Spark's home colour
   const line = p.marks.find((m) => m.k === 'line')!
-  expect(line.pts.length).toBe(12)
-  expect(line.w).toBe(0.08)
+  expect(line.pts.length).toBe(24)
+  expect(line.w).toBe(0.12)
   expect(p.title.length).toBeLessThanOrEqual(42)
   expect(p.title.includes('\n') || p.title.includes(String.fromCharCode(0x202e))).toBe(false)
   expect(parsePainting('no json here')).toBeNull()
@@ -432,12 +433,14 @@ test('steady: a longer state line never moves the painting; the rows her lines n
     const tree = await term.drawn()
     const spark = await term.find({ type: 'Raster', key: 'spark' })
     const label = await term.find({ type: 'Text', text: /^Spark · / })
+    const effort = await term.find({ type: 'Text', text: /^xhigh effort$/ })
+    const voice = await term.find({ type: 'Text', text: /^[·∘○◎◉●] \S+…$/ })
     await term.unmount()
     const boxes: any[] = []
     const walk = (n: any) => { if (!n || typeof n !== 'object') return; if (Array.isArray(n)) { n.forEach(walk); return } if (n.type === 'Box' && n.props?.height && JSON.stringify(n).includes('Spark · ')) boxes.push(n); walk(n.children); walk(n.props?.children) }
     walk(tree)
     const held = boxes.at(-1)?.props?.height
-    return { rows: (spark?.props.rows ?? 0) + held, held, lines: wrapRows(String(label?.text), 30) }
+    return { rows: (spark?.props.rows ?? 0) + held, held, lines: wrapRows(String(label?.text), 30), effort: effort?.props, voice: voice?.props }
   }
   const before = await above()
   await $.turn.start(loose({ text: 'go', turnId: 's1' }))
@@ -445,9 +448,11 @@ test('steady: a longer state line never moves the painting; the rows her lines n
   const during = await above()
   await $.turn.complete(loose({ reason: 'answer', answer: 'ok', durationMs: 1000, isAborted: false, turnId: 's1' }))
   const after = await above()
-  expect(before.held).toBeGreaterThanOrEqual(2)
-  expect(during.lines).toBeGreaterThan(before.lines) // "Spark · thinking · xhigh effort" takes two rows at 30
-  expect(during.held).toBeGreaterThanOrEqual(during.lines)
+  expect(before.held).toBeGreaterThanOrEqual(3)
+  expect(during.effort).toBeDefined() // the effort on a line of its own, at the bottom
+  expect(during.effort?.dimColor).toBe(true)
+  expect(during.voice?.color).toBe('claude') // and Claude's own breath above her line while the turn runs
+  expect(before.voice).toBeUndefined()
   expect(during.rows).toBe(before.rows) // the painting starts on the same row
   expect(after.rows).toBe(during.rows) // and a shorter line does not pull it back up
   await cmd($, 'paint off')
@@ -545,4 +550,61 @@ test('the story stays with the session: painting off keeps it to tell, /clear le
   await $.session.end(loose({ reason: 'clear' }))
   expect(await say($, 'story')).toMatch(/^no paintings yet this session/)
   await cmd($, 'paint off')
+})
+
+// ---------------------------------------------------------------- the whole brush
+test('the painter has every kind of mark: curves, arcs, fills, sprays and mirrors, each clamped, drawn and finite', () => {
+  const p = parsePainting(JSON.stringify({
+    title: 'a fox under three moons', mirror: 'x', spark: 'lean',
+    marks: [
+      { k: 'fill', pts: [[0, 1], [1, 1], [1, 0.6], [0, 0.7]], c: '#2a1a3a', c2: '#0a0a14', grad: 0.25, a: 0.9 },
+      { k: 'spray', x: 0.5, y: 0.2, r: 0.5, n: 999, s: 9, c: '#ffffff', a: 0.8 },
+      { k: 'curve', pts: [[0.1, 0.8], [0.3, 0.5], [0.5, 0.7], [0.9, 0.3]], w: 0.02, c: '#ff8844', c2: '#ffe0b3', a: 1 },
+      { k: 'arc', x: 0.7, y: 0.3, r: 0.15, w: 0.02, a0: 0.5, a1: 1.0, c: '#ffdd88', a: 0.9 },
+      { k: 'arc', x: 0.3, y: 0.3, r: 0.15, w: 0.02, a0: 'north', a1: null, c: '#ffdd88', a: 0.9 },
+      { k: 'fill', pts: [[0.5, 0.5], [0.6, 0.6]], c: '#ff0000' }, // two points are no shape: dropped
+      { k: 'curve', pts: [[0.5, 0.5]], c: '#ff0000' }, // one point is no curve: dropped
+    ],
+  }))!
+  expect(p.mirror).toBe('x')
+  expect(p.marks.map((m) => m.k)).toEqual(['fill', 'spray', 'curve', 'arc', 'arc'])
+  const spray = p.marks[1]!
+  expect([spray.n, spray.s]).toEqual([200, 0.05]) // held in range
+  expect(p.marks[4]!.a0).toBe(0) // an angle it cannot read: the default
+  expect(p.marks[4]!.a1).toBe(0.5)
+  const scene = paintingScene(p, 44, 40)
+  // every mark twice (the mirror), the spray as its specks; every number finite
+  expect(scene.filter((s) => s.k === 'poly')).toHaveLength(2)
+  expect(scene.filter((s) => s.k === 'arc')).toHaveLength(4)
+  expect(scene.filter((s) => s.k === 'path')).toHaveLength(2)
+  expect(scene.filter((s) => s.id.startsWith('paint1:'))).toHaveLength(200)
+  expect(scene.find((s) => s.k === 'path')!.pts.length).toBeGreaterThan(20) // smoothed through its points
+  for (const s of scene) for (const v of Object.values(s)) {
+    if (typeof v === 'number') expect(Number.isFinite(v)).toBe(true)
+    if (Array.isArray(v)) for (const w of v.flat(2)) if (typeof w === 'number') expect(Number.isFinite(w)).toBe(true)
+  }
+  // and the raster draws it all: something lands on the canvas, nothing is NaN
+  const r = createRaster(44, 40)
+  r.draw(scene, 'dark')
+  const px = toRGBA8(r)
+  let lit = 0
+  for (let i = 3; i < px.length; i += 4) if (px[i] > 0) lit++
+  expect(lit).toBeGreaterThan(400)
+  for (const v of r.px) expect(Number.isFinite(v)).toBe(true)
+  // a spray is the same specks every time
+  expect(JSON.stringify(paintingScene(p, 44, 40))).toBe(JSON.stringify(scene))
+  // laid down mark by mark: part way through the spray, only some of its specks are down
+  const part = paintingScene(p, 44, 40, { reveal: 1.5 / 5 })
+  const specks = part.filter((s) => s.id.startsWith('paint1:')).length
+  expect(specks).toBeGreaterThan(0)
+  expect(specks).toBeLessThan(200)
+})
+
+test('the painter is told its whole vocabulary and its freedom', () => {
+  const req = painterRequest({ facts: painterFacts(newTurnFacts(), { reason: 'answer', durationMs: 1000, mood: 'done', turn: 1 }) })
+  for (const k of PAINT_KINDS) expect(req.prompt).toContain(`"k":"${k}"`)
+  expect(req.prompt).toMatch(/mirror/)
+  expect(req.prompt).toMatch(/any colour is yours/)
+  expect(req.system).toMatch(/abstract or figurative/)
+  expect(req.system).toMatch(/never settle into one habit/)
 })

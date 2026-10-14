@@ -1,7 +1,9 @@
 export type TurnFacts = { tools: Record<string, number>; errors: number; denied: number; mends: number; interrupted: number; thinkChars: number; textChars: number; steps: number; effort: string | number | null; agentStreams: number }
-export type Painting = { title: string; marks: Array<Record<string, any>>; react: string | null }
+export type Painting = { title: string; marks: Array<Record<string, any>>; react: string | null; mirror: string | null }
 export const PAINT_KINDS: string[]
 export const MAX_MARKS: number
+export const MAX_PTS: number
+export const MIRRORS: string[]
 export const GIST_CHARS: number
 export const REFLECTION_CHARS: number
 export const SPOKEN_CHARS: number

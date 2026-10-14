@@ -126,6 +126,47 @@ export function createRaster(W, H, { fill = false } = {}) {
           if (c > 0) touch(y * W + x, pid, c * (1 - dy * dy * 0.5))
         }
         flush(K.pupil, a, false)
+      } else if (p.k === 'arc') {
+        // part of a ring, from angle a0 to a1 (radians, clockwise on screen), the ends rounded by the stroke's width
+        const r = p.r * scale, hw = Math.max(0.45, (p.w * scale) / 2), [cx, cy] = P(p.x, p.y)
+        const a0 = p.a0, span = ((p.a1 - p.a0) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) || Math.PI * 2
+        const x0 = Math.max(0, Math.floor(cx - r - hw - 2)), x1 = Math.min(W - 1, Math.ceil(cx + r + hw + 2))
+        const y0 = Math.max(0, Math.floor(cy - r - hw - 2)), y1 = Math.min(H - 1, Math.ceil(cy + r + hw + 2))
+        const ex = [cx + r * Math.cos(a0), cy + r * Math.sin(a0)], ey = [cx + r * Math.cos(a0 + span), cy + r * Math.sin(a0 + span)]
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+          const dx = x + 0.5 - cx, dy = y + 0.5 - cy
+          const at = ((Math.atan2(dy, dx) - a0) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2)
+          let d = at <= span ? Math.abs(Math.hypot(dx, dy) - r) : Math.min(Math.hypot(x + 0.5 - ex[0], y + 0.5 - ex[1]), Math.hypot(x + 0.5 - ey[0], y + 0.5 - ey[1]))
+          const c = Math.max(0, Math.min(1, hw + 0.5 - d))
+          if (c > 0) touch(y * W + x, pid, c)
+        }
+        flush(p.c, p.a, additive)
+      } else if (p.k === 'poly') {
+        // a filled shape: its points in order, closed; the colour runs from c0 to c1 along `grad` (an angle) when they differ
+        const pts = p.pts.map(([x, y]) => P(x, y)), n = pts.length
+        if (n < 3) continue
+        let minx = Infinity, maxx = -Infinity, miny = Infinity, maxy = -Infinity
+        for (const [x, y] of pts) { if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y }
+        const x0 = Math.max(0, Math.floor(minx)), x1 = Math.min(W - 1, Math.ceil(maxx))
+        const y0 = Math.max(0, Math.floor(miny)), y1 = Math.min(H - 1, Math.ceil(maxy))
+        const inside = (qx, qy) => { // even-odd
+          let hit = false
+          for (let i = 0, j = n - 1; i < n; j = i++) {
+            const [xi, yi] = pts[i], [xj, yj] = pts[j]
+            if ((yi > qy) !== (yj > qy) && qx < ((xj - xi) * (qy - yi)) / (yj - yi) + xi) hit = !hit
+          }
+          return hit
+        }
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+          let c = 0 // 2×2 subsamples: a soft edge
+          for (const [sx, sy] of [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]) if (inside(x + sx, y + sy)) c += 0.25
+          if (c > 0) touch(y * W + x, pid, c)
+        }
+        const c0 = p.c0, c1 = p.c1 || p.c0
+        const same = c0[0] === c1[0] && c0[1] === c1[1] && c0[2] === c1[2]
+        const gx = Math.cos(p.grad || 0), gy = Math.sin(p.grad || 0)
+        const lo = Math.min(...pts.map(([x, y]) => x * gx + y * gy)), hi = Math.max(...pts.map(([x, y]) => x * gx + y * gy))
+        flush(c0, p.a, additive, same ? null : (q) => { const u = hi > lo ? (((q % W) + 0.5) * gx + (Math.floor(q / W) + 0.5) * gy - lo) / (hi - lo) : 0; return [c0[0] + (c1[0] - c0[0]) * u, c0[1] + (c1[1] - c0[1]) * u, c0[2] + (c1[2] - c0[2]) * u] })
       } else if (p.k === 'path') {
         const pts = p.pts.map(([x, y]) => P(x, y)), n = pts.length
         const hw = Math.max(0.5, (p.w * scale) / 2)

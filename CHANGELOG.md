@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.6.0
+
+- **Claude's own line.** While a turn runs, a line in Claude's colour sits above Spark's text: Claude's breath, a small
+  ring that fills and empties (slow while thinking, quicker while writing or calling tools), beside the word the chat's
+  spinner shows: `◎ Mulling…`. It is only there while a turn really runs, and never in the replay.
+- **The effort sits at the bottom.** Spark's text is now her state line, then anything you are waiting on (a message,
+  a side question), then the effort asked for (`xhigh effort`, dim), which never changes within a turn. The text keeps
+  at least three rows, so the painting below never moves as lines come and go.
+- **A whole brush for the painter.** Beyond lines, dots, rings and glows, the painter now has smooth curves, arcs,
+  filled shapes with a colour running across them, and sprays of specks (stars, rain, dust); up to 96 marks of up to
+  24 points, widths and radii twice what they were, any colour it likes (Spark's are home, not a rule), and a mirror
+  (x, y or both) that draws every mark again reflected, for faces, creatures and symmetric things. It is asked to paint
+  whatever it wants, abstract or figurative, and to never settle into one habit. The renderer gained filled polygons
+  (with a soft edge and a gradient) and arcs. A spray is seeded, so it is the same specks every time it is drawn.
+- **"Your message is waiting" lets go when it should.** A message you send mid-turn can be taken in as a prompt row of
+  its own, not only as a queued_command; both now count as taking it in, so the waiting bead and line no longer stay
+  after the model has read it. A new turn's own prompt is never mistaken for one.
+
 ## 1.5.9
 
 - The side pane opens roomy again. It is a quarter of the widest terminal width Spark knows (30 to 44 columns), and

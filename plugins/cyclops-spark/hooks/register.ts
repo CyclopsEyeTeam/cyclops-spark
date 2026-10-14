@@ -100,12 +100,12 @@ let paintModel = 'haiku'
 let openPainting = false // the openPainting setting: a bare /spark also turns the painter on. Off by default
 const paintSpent = { paintings: 0, calls: 0, tokens: 0 } // what the painter has used this session, shown under its painting
 let painting: (Painting & { at: number; n: number; shape: string; cost: number }) | null = null // cost: what this one painting used, in tokens
-// STEADY: Spark's lines keep the rows they have needed at a width (at least two), so a longer state line ("thinking ·
+// STEADY: Spark's lines keep the rows they have needed at a width (at least three), so a longer state line ("thinking ·
 // xhigh effort") never shoves the painting down and a shorter one never pulls it back up. Kept per width: a resize
 // starts fresh at the new width.
 const textHeld = new Map<number, number>()
 function heldRows(width: number, need: number): number {
-  const h = Math.max(2, need, textHeld.get(width) ?? 0)
+  const h = Math.max(3, need, textHeld.get(width) ?? 0) // three: Claude's breath, her line, the effort
   if (textHeld.size > 64) textHeld.clear()
   textHeld.set(width, h)
   return h
@@ -219,18 +219,31 @@ function siteFor(requestId: string, surface: string, columns: number, rows: numb
 const sampleOpts = () => ({ ambient: !calm, theme: activeTheme(), palette })
 // the word Claude Code's spinner is showing for this turn (Processing, Swirling…), read as it is drawn, never changed
 let spinnerWord = ''
+let queuedMsgs = 0 // messages you sent while a turn ran that the model has not taken in yet (the beads at her edge)
 
 function liveFrame(): any { return spark.sample(now(), { ...sampleOpts(), word: spinnerWord }) }
 
 // The pane may show the replay instead of the live presence. Everything else (band, status line) is always live.
-function paneFrame(): { f: any; label: string } {
-  if (!replay) { const f = liveFrame(); return { f, label: f.hover } }
+type Said = { head: string; notes: string[]; effort: string }
+function paneFrame(): { f: any; label: string; said: Said } {
+  if (!replay) { const f = liveFrame(); return { f, label: f.hover, said: f.said } }
   const r = replay
   const { t, lapse, loop } = replayAt(now() - r.t0)
   if (loop !== r.loop) { r.presence = createPresence('spark'); r.i = 0; r.loop = loop }
   for (let ev = r.trace[r.i]; ev && ev.t <= t; ev = r.trace[++r.i]) r.presence.apply(ev)
   const f = r.presence.sample(t, sampleOpts())
-  return { f, label: '▶ replay (not live)' + (lapse ? ' · time-lapse ×60, no events' : '') + ' · ' + f.hover }
+  const prefix = '▶ replay (not live)' + (lapse ? ' · time-lapse ×60, no events' : '') + ' · '
+  return { f, label: prefix + f.hover, said: { ...f.said, head: prefix + f.said.head } }
+}
+
+// CLAUDE'S OWN LINE, above Spark's: the builder's breath while a turn really runs, in Claude's colour, beside the word the
+// chat's spinner shows. A ring that fills and empties: slow while thinking, quicker while writing or calling tools.
+// Only while a turn runs; never in the replay
+const BREATH = ['·', '∘', '○', '◎', '◉', '●', '◉', '◎', '○', '∘']
+function voiceLine(f: any): string {
+  if (replay || turnBegan < 0) return ''
+  const rate = f.mode === 'thinking' ? 4 : 8
+  return BREATH[Math.floor(now() * rate) % BREATH.length] + ' ' + (spinnerWord || 'Working') + '…'
 }
 
 const statusText = (f: any) => f.glyph + ' ' + String(f.hover).replace(/^Spark · /, '')
@@ -364,6 +377,7 @@ async function paint($: EngineInterface) {
   if (statusOn && tick % 5 === 0) pushStatus($)
   if (linkOn && linkFactsPath) await sendLinkFacts($)
   if (!paneOpen && !band) return
+  if (paneOpen && !focusMode && !replay && turnBegan >= 0 && tick % 3 === 0) $.ui.invalidate('ui.render') // Claude's breath, above her line
   // a new painting is laid down mark by mark: its own small drawing, repainted only while it is being laid down
   if (storyOn) { const k = storyIndex(); if (k !== storySlide) { storySlide = k; $.ui.invalidate('ui.render') } } // the next page of the story
   const shown = shownPainting()
@@ -477,7 +491,7 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
     }
     const shape = paintRoom ? shapeFor(paintRoom.columns, paintRoom.rows * 2) : 'wide' // a cell is one pixel wide, two tall
     const req = painterRequest({ facts, palette, theme: activeTheme(), gist: live ? '' : turn.answer, reflection: words, live, shape, size: paintRoom ? [paintRoom.columns, paintRoom.rows * 2] : null })
-    const r = await $.model.complete({ model: paintModel, system: req.system, prompt: req.prompt, maxTokens: 1500, effort: 'low', timeoutMs: 30000 })
+    const r = await $.model.complete({ model: paintModel, system: req.system, prompt: req.prompt, maxTokens: 3000, effort: 'low', timeoutMs: 40000 })
     cost += spend((r as { usage?: Record<string, number> }).usage) // every arm carries what the call really cost
     if (!r.isAnswered) {
       paintNote = r.reason === 'api-error' ? `the API answered with an error${'status' in r && r.status ? ` (${r.status})` : ''}` : r.reason === 'aborted' ? 'it took too long' : 'the painter sent nothing back'
@@ -773,6 +787,7 @@ export const register: Register = (on, options) => {
   on('prompt.edit', async ($, e, next) => { emit({ type: 'prompt.edit' }); return next(e) })
   on('prompt.submit', async ($, e, next) => {
     // typed (or delivered) while a turn runs: it waits until the model takes it in, at her edge
+    if (e.turnId) queuedMsgs++
     await quietly(() => emit(e.turnId ? { type: 'prompt.queue' } : { type: 'prompt.submit' }))
     return next(e)
   })
@@ -784,12 +799,17 @@ export const register: Register = (on, options) => {
     if (w && w.length <= 40) spinnerWord = w
     return next(e)
   })
-  // the model takes a waiting message into the running turn: the engine keeps it as a queued_command attachment
-  on('session.append', { door: 'attachment' }, async ($, e, next) => {
-    if (!e.agentId && e.message?.name === 'queued_command') await quietly(() => emit({ type: 'prompt.take' }))
-    return next(e)
-  })
-  on('turn.start', async ($, e, next) => { emit({ type: 'turn.start' }); turnFacts = newTurnFacts(); turnBegan = await hostNow($).catch(() => -1); lastStream = ''; spoken = ''; return next(e) })
+  // the model takes a waiting message into the running turn. The engine keeps it as a queued_command attachment, or as a
+  // prompt (or a delivery) row of its own; any of them, on the main loop while something is waiting, is the take
+  const taken = async (e: { agentId?: string }) => {
+    if (e.agentId || queuedMsgs < 1 || turnBegan < 0) return
+    queuedMsgs--
+    await quietly(() => emit({ type: 'prompt.take' }))
+  }
+  on('session.append', { door: 'attachment' }, async ($, e, next) => { if (e.message?.name === 'queued_command') await taken(e); return next(e) })
+  on('session.append', { door: 'prompt' }, async ($, e, next) => { await taken(e); return next(e) })
+  on('session.append', { door: 'delivery' }, async ($, e, next) => { await taken(e); return next(e) })
+  on('turn.start', async ($, e, next) => { emit({ type: 'turn.start' }); turnFacts = newTurnFacts(); turnBegan = await hostNow($).catch(() => -1); lastStream = ''; spoken = ''; queuedMsgs = 0; return next(e) })
 
   on('turn.step', async function* ($, e, next) {
     const sub = Boolean(e.agentId)
@@ -1003,7 +1023,7 @@ export const register: Register = (on, options) => {
     seeViewport(e as never)
     sayTo = (words: string) => { void quietly(() => talkTo($, words)) } // the Input under her painting talks to her
     const els = $.ui.resolve(e)
-    const { f, label } = paneFrame()
+    const { f, label, said } = paneFrame()
     if (e.surface === 'terminal') {
       paneSeenOnTerminal = true
       const { Box, Text, Raster, Image } = $.ui.resolve(e)
@@ -1033,10 +1053,20 @@ export const register: Register = (on, options) => {
       // The side pane, laid out for the room it really has, on every render (a resize is just the next render). Text is
       // never cut short: the state line, the Link line and the painting's title wrap, and their rows are counted first.
       const linkText = linkOn && linkView && !replay ? linkLine(linkView) : ''
-      const textRows = (width: number) => heldRows(width, wrapRows(label, width) + (linkText ? wrapRows(linkText, width) : 0))
+      // her lines: Claude's own breath above while a turn runs, her state line, what you are waiting on, then the effort
+      // (it never changes within a turn, so it sits at the bottom), then Link
+      const voice = voiceLine(f)
+      const lines: Array<[string, Record<string, unknown>]> = [
+        ...(voice ? [[voice, { color: 'claude' }]] as Array<[string, Record<string, unknown>]> : []),
+        [said.head, {}],
+        ...said.notes.map((n): [string, Record<string, unknown>] => ['· ' + n, {}]),
+        ...(said.effort ? [[said.effort, { dimColor: true }]] as Array<[string, Record<string, unknown>]> : []),
+        ...(linkText ? [[linkText, { dimColor: true }]] as Array<[string, Record<string, unknown>]> : []),
+      ]
+      const textRows = (width: number) => heldRows(width, lines.reduce((n, [t]) => n + wrapRows(t, width), 0))
       // her lines in a box of the rows held for them, so whatever sits below never moves when they change
       const sparkText = (width: number) => [Box({ flexDirection: 'column', width, height: textRows(width),
-        children: [Text({ children: [label], wrap: 'wrap' }), ...(linkText ? [Text({ children: [linkText], dimColor: true, wrap: 'wrap' })] : [])] })]
+        children: lines.map(([t, style]) => Text({ children: [t], wrap: 'wrap', ...style })) })]
       const draw = (cols: number, rws: number) => {
         const site = siteFor(PANE, e.surface, cols, rws, 'panel', kitty)
         const fr = frameFor(site, f, true)

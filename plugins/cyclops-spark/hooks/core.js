@@ -498,12 +498,17 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
     // while she is plainly working, or waiting on the model, she says it in the chat's own word (Processing, Channeling…),
     // as Claude Code draws it
     const said = (mode === 'working' || mode === 'waiting for the model') && typeof opts.word === 'string' && opts.word ? opts.word : mode
-    const hover = 'Spark · ' + said + (laneShown && laneShown.family !== 'peer' && laneShown.family !== 'paint' ? ' · ' + laneShown.label + ' lane' : '') +
-      (mode === 'thinking' && effortLabel ? ' · ' + effortLabel + ' effort' : '') +
+    // what she says, in three parts: her state line (head), anything you are waiting on (notes), and the effort asked for,
+    // which never changes within a turn, so it sits last
+    const head = 'Spark · ' + said + (laneShown && laneShown.family !== 'peer' && laneShown.family !== 'paint' ? ' · ' + laneShown.label + ' lane' : '') +
       (idleish && turnCount > 0 ? ' · ' + turnCount + (turnCount === 1 ? ' turn' : ' turns') : '') +
-      (sideOut ? ' · answering your side question' : '') +
-      (takeOut && takeOut.age < 2.2 ? ' · taking in your message' : queueOut ? ' · ' + (queueOut.n === 1 ? 'your message is waiting' : queueOut.n + ' messages waiting') : '') +
       (offerOut && offerOut.age >= 60 && (mode === 'reply ready' || mode === 'stopped on an error' || mode === 'declined') ? ' · ' + (mode === 'reply ready' ? 'waiting ' : '') + ago(offerOut.age) : '')
+    const notes = [
+      sideOut ? 'answering your side question' : '',
+      takeOut && takeOut.age < 2.2 ? 'taking in your message' : queueOut ? (queueOut.n === 1 ? 'your message is waiting' : queueOut.n + ' messages waiting') : '',
+    ].filter(Boolean)
+    const effortPart = mode === 'thinking' && effortLabel ? effortLabel + ' effort' : ''
+    const hover = [head, ...notes, effortPart].filter(Boolean).join(' · ')
 
     const lanesOut = [...lanes.values()].map((l) => {
       // PATIENCE: the real elapsed time of the oldest call still in flight on this lane, as a slowly filling arc
@@ -524,7 +529,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
       }
     })
     return {
-      t, entity, e, ask, askLane: lanesOut.find((l) => l.asking) || null, compact: compactAmt, awaiting, rest, deep, stir, stirring: stirK, woke, wake, bloom, recoil, halt, shift, echoes, damp, hold, spin, active,
+      t, entity, e, ask, said: { head, notes, effort: effortPart }, askLane: lanesOut.find((l) => l.asking) || null, compact: compactAmt, awaiting, rest, deep, stir, stirring: stirK, woke, wake, bloom, recoil, halt, shift, echoes, damp, hold, spin, active,
       endReason: end && end.reason, since, colours, mode, hover, glyph: glyph(mode), motes, theme: opts.theme || 'dark', lanes: lanesOut,
       offer: offerOut, handoff: handoffOut, side: sideOut, sideDone: sideDoneOut,
       attendAmt: e.attend,

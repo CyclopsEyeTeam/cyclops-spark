@@ -134,3 +134,22 @@ test('the Side pane width setting opens it the size you like, every time', { opt
   await $.command.run(loose({ command: 'spark', args: 'side', origin: { kind: 'person' }, presentation: { columns: 120 } }))
   expect(opens.at(-1)).toMatchObject({ columns: 56 })
 })
+
+test('a waiting message taken in as a prompt row of its own (not only a queued_command) lets go too; a new turn\'s own prompt row is no take', async ($, on) => {
+  mock.store(on)
+  mock.clock(on)
+  on('turn.start', async (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', async () => ({ text: '' }))
+  on('prompt.submit', async (_$, e) => loose({ text: (e as { text: string }).text }))
+  mock.session(on)
+  const state = async () => String((await $.command.run(loose({ command: 'spark', args: 'state', origin: { kind: 'person' }, presentation: {} }))).text ?? '').split('\n')[0]
+  const row = (uuid: string) => $.session.append(loose({ message: { type: 'user', role: 'user', content: [{ type: 'text', text: 'scope clarification' }] }, door: 'prompt', origin: { kind: 'person' }, uuid }))
+  await $.turn.start(loose({ text: 'go', turnId: 'w2' }))
+  await row('u0') // the turn's own prompt: nothing was waiting, nothing is taken
+  expect(await state()).not.toMatch(/message/)
+  await $.prompt.submit(loose({ text: 'scope clarification', turnId: 'w2', wait: false, origin: { kind: 'person' } }))
+  expect(await state()).toMatch(/your message is waiting/)
+  await row('u1') // the engine brings it into the turn as a prompt row
+  expect(await state()).toMatch(/taking in your message/)
+  expect(await state()).not.toMatch(/waiting$/)
+})

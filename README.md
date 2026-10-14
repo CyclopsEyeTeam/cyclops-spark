@@ -132,8 +132,11 @@ the words themselves. The last reflection shows in `/spark state`.
   painting is two small calls, the reflection and the painting: a few thousand tokens in all. Under each painting, in
   small text, is what that painting cost on its own, and under that the session's total (paintings, tokens, model);
   the total is also in `/spark state` and shown when you turn the painter off.
-- **What comes back** is not an image but a small paint program (lines, dots, rings, glows), checked and clamped, then
-  drawn by Spark's own renderer in her palette. An answer that is not a painting is dropped; the last painting stays.
+- **What comes back** is not an image but a small paint program, checked and clamped, then drawn by Spark's own
+  renderer. The brush is a whole vocabulary: lines and smooth curves, dots, rings and arcs, soft glows, filled shapes
+  with a colour running across them, and sprays of specks for stars, rain and dust; up to 96 marks, any colour, and a
+  mirror for faces and symmetric things. The painter is free to paint anything: abstract or figurative, a landscape, a
+  creature, weather, a symbol, a scene. An answer that is not a painting is dropped; the last painting stays.
 - **It is one of Spark's own lanes.** While it paints, a filament reaches from her toward the canvas, ending in a brush
   tip with her inks; her state line reads "Spark · painting". The finished painting runs down the lane to the canvas, and
   she answers it with a move of hers (a bloom, a lean toward it, a ring, a shimmer or a hush), chosen by the painter in
@@ -210,6 +213,10 @@ And the last of the evening, as the build stopped for review with everything it 
   core, toward the prompt, ringed by a slow breath. Its size is how much the turn really wrote. It stays until you send a
   new prompt or copy the reply with `/copy`. A turn that stopped on an error leaves a hollow red-touched ring there
   instead, a refusal a plain one.
+- **Claude's own line.** While a turn runs, a line in Claude's colour sits above Spark's: Claude's breath (a small ring
+  that fills and empties, slow while thinking, quicker while writing or calling tools) beside the word the chat's spinner
+  shows (`◎ Mulling…`). Under it, Spark's state line, then anything you are waiting on, then the effort asked for, which
+  never changes within a turn, so it sits at the bottom.
 - **Your message, waiting.** Write while Spark works and what you sent waits at her lower edge: a small warm bead that
   breathes, one per message, until the model really takes it into the turn. Then it travels in to her core (drunk
   straight up, spiralled in, or caught by a tendril that reaches down for it, rolled each time) and a ring draws
