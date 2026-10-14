@@ -38,7 +38,7 @@ import { KEEPER, PRISM } from './link-marks.js'
 import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
 import { motion, motionFor } from './motion.js'
-import { canvasFor, flattenRGBA, galleryHTML, HD_MARKS, revisitRequest, sceneSVG, SIZES, slug } from './convert.js'
+import { canvasFor, captionLines, flattenRGBA, galleryHTML, HD_MARKS, revisitRequest, sceneSVG, SIZES, slug, withCaption } from './convert.js'
 
 const PANE = 'cyclops-spark'
 const T0 = Date.now()
@@ -503,18 +503,21 @@ async function convertPainting($: EngineInterface, modeWord: string, sizeWord: s
       const scene = paintingScene(p, W, H, { reveal: 1, theme: activeTheme() })
       const n = converted.length + 1
       const name = slug(p.title, n) + '-' + tag
+      const when = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      const caption = convertCaption ? captionLines(p.title, tag, when) : null
       const svgPath = `${folder}/${name}.svg`
-      await $.fs.write(svgPath, sceneSVG(scene, W, H, { theme: activeTheme(), title: p.title }))
+      await $.fs.write(svgPath, sceneSVG(scene, W, H, { theme: activeTheme(), title: p.title, caption }))
       written.push(`${name}.svg`)
       // the PNG: the raster at full size, flattened onto the ground, handed to the python helper as base64 text
       const raster = createRaster(W, H)
       raster.draw(scene, activeTheme(), { over: true }) // as the SVG: each mark over the last
-      const rgb = flattenRGBA(toRGBA8(raster), W, H, ground())
+      const flat = flattenRGBA(toRGBA8(raster), W, H, ground())
+      const { rgb, H: fullH } = caption ? withCaption(flat, W, H, caption, ground(), { light: activeTheme() === 'light' }) : { rgb: flat, H }
       const b64Path = `${folder}/${name}.rgb.b64`
       await $.fs.write(b64Path, base64(rgb))
       let png = false
       try {
-        const run = $.process.spawn({ argv: ['python3', `${$.plugin.root}/link/spark_png.py`, b64Path, `${folder}/${name}.png`, String(W), String(H)] })
+        const run = $.process.spawn({ argv: ['python3', `${$.plugin.root}/link/spark_png.py`, b64Path, `${folder}/${name}.png`, String(W), String(fullH)] })
         for await (const _ of run) { /* its lines are not needed */ }
         const end = await run.result
         png = (end as { code?: number } | null)?.code === 0
@@ -772,6 +775,7 @@ let lastViewport = 0 // the terminal width the surface last drew at (any of Spar
 let convertFolder = 'spark-paintings' // the convertFolder setting: where /spark convert writes, relative to the project
 let converted: Array<{ file: string; title: string; when: string; mode: string }> = [] // this session's conversions, for the gallery page
 let convertBusy = false
+let convertCaption = true // the convertCaption setting: the title and a line (Spark · the date · the way) under the picture
 let sideWidth = 0    // the sideWidth setting: the side pane's width in columns, 0 for automatic
 // automatic: a quarter of the widest terminal width known, 30 to 44 columns; 44 when none is known yet
 const sideColumns = (terminal: number) => {
@@ -842,6 +846,7 @@ export const register: Register = (on, options) => {
   if (typeof o.openPainting === 'boolean') openPainting = o.openPainting
   if (typeof o.sideWidth === 'number' && o.sideWidth >= 0) sideWidth = o.sideWidth
   if (typeof o.convertFolder === 'string' && o.convertFolder.trim()) convertFolder = o.convertFolder.trim()
+  if (typeof o.convertCaption === 'boolean') convertCaption = o.convertCaption
 
   on('session.start', async ($, e, next) => {
     await refreshTheme($)
