@@ -176,7 +176,7 @@ export function parseTalk(text) {
 }
 
 // ---------------------------------------------------------------- the answer, checked and clamped
-export function parsePainting(text, palette = 'spark') {
+export function parsePainting(text, palette = 'spark', limit = MAX_MARKS) {
   const s = String(text || '')
   const a = s.indexOf('{'), b = s.lastIndexOf('}')
   if (a < 0 || b <= a) return null
@@ -188,7 +188,7 @@ export function parsePainting(text, palette = 'spark') {
   const pt = (p) => Array.isArray(p) && p.length >= 2 ? [clamp(p[0], -0.1, 1.1, 0.5), clamp(p[1], -0.1, 1.1, 0.5)] : null
   const marks = []
   const turn = (v, d) => { const n = v === null || v === undefined || v === '' ? NaN : Number(v); return Number.isFinite(n) ? n : d } // an angle in turns, any value (it wraps)
-  for (const m of raw.marks.slice(0, MAX_MARKS)) {
+  for (const m of raw.marks.slice(0, limit)) {
     if (!m || typeof m !== 'object' || !PAINT_KINDS.includes(m.k)) continue
     const a = clamp(m.a, 0, 1, 0.9)
     const c = col(m.c), c2 = fromHex(m.c2) || c

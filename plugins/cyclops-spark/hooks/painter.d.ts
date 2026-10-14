@@ -15,7 +15,7 @@ export function painterFacts(facts: TurnFacts | null, end: { reason: string; dur
 export function painterRequest(o: { facts: Record<string, unknown>; palette?: string; theme?: string; gist?: string; reflection?: string; live?: boolean; shape?: string; size?: [number, number] | null }): { system: string; prompt: string }
 export const SHAPES: Record<string, number>
 export function shapeFor(widthPx: number, heightPx: number): string
-export function parsePainting(text: string, palette?: string): Painting | null
+export function parsePainting(text: string, palette?: string, limit?: number): Painting | null
 export function paintingScene(p: Painting | null, W: number, H: number, o?: { reveal?: number; theme?: string }): any[]
 export const TALK_IN: number
 export const TALK_OUT: number

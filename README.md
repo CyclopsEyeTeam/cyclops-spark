@@ -84,6 +84,7 @@ Then type `/spark` to open the pane.
 | `/spark paint` | The painter: turns it on and paints one now; from then on a small sub-agent paints Spark's expression of each turn below her (below). It uses tokens. |
 | `/spark paint off` | Stops the painter and empties the room below Spark. |
 | `/spark story` | The session's paintings told again, in order, each laid down anew (no tokens). Again to end it. |
+| `/spark convert` | The painting made large, as SVG and PNG, into the convert folder (below): click faithful, refined, interpretive or all. Or say it: `/spark convert refined 4k`. |
 | `/spark help` | This list. |
 
 The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip, Cyclops Link, the
@@ -146,6 +147,19 @@ the words themselves. The last reflection shows in `/spark state`.
   most 250 characters), with a move of hers, from what she already holds: her state, her last painting's title, the
   builder's last reflection and the turn's shape. One small call on the painter's model (about 1k tokens), never a re-read of the session; it counts in the
   session's total.
+- **Made large: `/spark convert`.** A painting is not pixels but a small paint program, so Spark can draw it again at
+  any size. On its own the command asks which way, in Claude Code's own dialog, and you click one (or say it:
+  `/spark convert refined 4k`). Three ways (Keeper's idea): **faithful** (the default) draws the very same marks at full size, geometry and
+  composition intact, asking no model; **refined** gives the painter its own program back and asks for it again with
+  finer curves, smoother gradients and more detailed light, the subject and composition kept; **interpretive** lets the
+  painter revisit it freely, a new work derived from the original. The last two are one call each, counted in the
+  session's total. `all` converts every painting of the session faithfully. `hd` is 1920 wide (the default), `4k` 3840;
+  the canvas keeps the painting's shape. Each one is written as an SVG (every mark a vector, any size without loss) and
+  a PNG (through a small python helper, the only way to write bytes from the plugin; without python3 you get the SVG),
+  plus an `index.html` gallery of the session's conversions, into the **Convert folder** setting (`spark-paintings`
+  inside the project by default, or an absolute path). The caption is on the picture itself: the title, and under it
+  `Spark · the date · the way`, in a small bitmap font sized to the picture (the **Caption** setting turns it off).
+  This is the one time Spark writes files, and only when you ask.
 - **The story of the session.** Every painting of the session is kept (in memory only) in the order it came.
   `/spark story` tells them again in her pane, each laid down mark by mark as it first was and held for a few seconds,
   with where it is in the story and when it was painted (`story · 3 of 9 · 21:01`), round and round until you say
@@ -213,9 +227,10 @@ And the last of the evening, as the build stopped for review with everything it 
   core, toward the prompt, ringed by a slow breath. Its size is how much the turn really wrote. It stays until you send a
   new prompt or copy the reply with `/copy`. A turn that stopped on an error leaves a hollow red-touched ring there
   instead, a refusal a plain one.
-- **Claude's own line.** While a turn runs, a line in Claude's colour sits above Spark's: Claude's breath (a small ring
-  that fills and empties, slow while thinking, quicker while writing or calling tools) beside the word the chat's spinner
-  shows (`◎ Mulling…`). Under it, Spark's state line, then anything you are waiting on, then the effort asked for, which
+- **Claude's own line.** While a turn runs, a line in Claude's colour sits above Spark's: Claude's breath beside the
+  word the chat's spinner shows (`  ●·    Mulling…`). The breath has four motions, one for what the turn is doing: a spark
+  swaying side to side along a short rail while thinking, a wave rolling along a row of beads while writing, a half-lit
+  moon turning while a call is out, and a ring filling and emptying while waiting. All on a steady beat, never random. Under it, Spark's state line, then anything you are waiting on, then the effort asked for, which
   never changes within a turn, so it sits at the bottom.
 - **Your message, waiting.** Write while Spark works and what you sent waits at her lower edge: a small warm bead that
   breathes, one per message, until the model really takes it into the turn. Then it travels in to her core (drunk
@@ -265,7 +280,8 @@ thinks and soft bubbles while it really writes, stopping on its own within a cou
 Spark writes no files and makes no network request of its own. Everything it knows is in memory and gone when Claude Code
 exits. The one exception is Cyclops Link, only while you have it on: then Spark's helper writes her coarse state to one
 small file other presences on this machine can read. The painter, only while you have it on, makes one short model call
-per painting through your own session, with the turn's shape and a short excerpt of the reply. See [docs/PRIVACY.md](docs/PRIVACY.md).
+per painting through your own session, with the turn's shape and a short excerpt of the reply. `/spark convert`, only
+when you run it, writes a painting's SVG and PNG into the convert folder. See [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## Repository layout
 

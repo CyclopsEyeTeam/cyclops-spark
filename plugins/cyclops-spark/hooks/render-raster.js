@@ -50,10 +50,12 @@ export function createRaster(W, H, { fill = false } = {}) {
     nt = 0
   }
 
-  function draw(scene, theme) {
+  // `over`: paint each mark over the last (as paper does) instead of adding its light; /spark convert draws that
+  // way, so a dark mark on a bright one shows, as it does in the SVG
+  function draw(scene, theme, { over = false } = {}) {
     px.fill(0)
     stamp.fill(-1)
-    const additive = theme !== 'light'
+    const additive = theme !== 'light' && !over
     let pid = 0
     for (const p of scene) {
       pid++

@@ -434,7 +434,7 @@ test('steady: a longer state line never moves the painting; the rows her lines n
     const spark = await term.find({ type: 'Raster', key: 'spark' })
     const label = await term.find({ type: 'Text', text: /^Spark · / })
     const effort = await term.find({ type: 'Text', text: /^xhigh effort$/ })
-    const voice = await term.find({ type: 'Text', text: /^[·∘○◎◉●] \S+…$/ })
+    const voice = await term.find({ type: 'Text', text: /^[·∘○◎◉●◐◓◑◒ ]+ \S+…$/ })
     await term.unmount()
     const boxes: any[] = []
     const walk = (n: any) => { if (!n || typeof n !== 'object') return; if (Array.isArray(n)) { n.forEach(walk); return } if (n.type === 'Box' && n.props?.height && JSON.stringify(n).includes('Spark · ')) boxes.push(n); walk(n.children); walk(n.props?.children) }

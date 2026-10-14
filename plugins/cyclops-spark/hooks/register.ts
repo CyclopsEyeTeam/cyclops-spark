@@ -17,6 +17,8 @@
 //                  /spark paint turns it on and paints one now, /spark paint off stops it. It sees the turn's shape and a
 //                  short excerpt of the reply. It uses tokens: what it has used shows under the painting
 //   /spark story   the session's paintings told again, in order, each laid down anew (in memory only; no tokens)
+//   /spark convert [faithful|refined|interpretive|all] [hd|4k]: the painting made large, as SVG and PNG, into the
+//                  convert folder (the one time Spark writes files, and only when you ask)
 //
 // When a turn ends and you have not acted on it yet, Spark holds the reply out to you (reply ready) until you send a new
 // prompt or copy it with /copy.
@@ -35,6 +37,8 @@ import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet
 import { KEEPER, PRISM } from './link-marks.js'
 import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
+import { motion, motionFor } from './motion.js'
+import { canvasFor, captionLines, flattenRGBA, galleryHTML, HD_MARKS, revisitRequest, sceneSVG, SIZES, slug, withCaption } from './convert.js'
 
 const PANE = 'cyclops-spark'
 const T0 = Date.now()
@@ -239,11 +243,10 @@ function paneFrame(): { f: any; label: string; said: Said } {
 // CLAUDE'S OWN LINE, above Spark's: the builder's breath while a turn really runs, in Claude's colour, beside the word the
 // chat's spinner shows. A ring that fills and empties: slow while thinking, quicker while writing or calling tools.
 // Only while a turn runs; never in the replay
-const BREATH = ['·', '∘', '○', '◎', '◉', '●', '◉', '◎', '○', '∘']
+// Claude's breath: four small motions (hooks/motion.js), one for what the turn is doing right now
 function voiceLine(f: any): string {
   if (replay || turnBegan < 0) return ''
-  const rate = f.mode === 'thinking' ? 4 : 8
-  return BREATH[Math.floor(now() * rate) % BREATH.length] + ' ' + (spinnerWord || 'Working') + '…'
+  return motion(motionFor(f), now()) + ' ' + (spinnerWord || 'Working') + '…'
 }
 
 const statusText = (f: any) => f.glyph + ' ' + String(f.hover).replace(/^Spark · /, '')
@@ -453,6 +456,85 @@ async function talkTo($: EngineInterface, words: string): Promise<void> {
     if (talk) talk.busy = false
     $.ui.invalidate('ui.render')
   }
+}
+
+// /spark convert: the painting made large (see hooks/convert.js). The one time Spark writes files, and only when you ask.
+const CONVERT_WAYS: Array<[string, string]> = [
+  ['Faithful', 'the very same marks, drawn large: geometry and composition intact (no tokens)'],
+  ['Refined', 'the painter refines its own painting: finer curves, smoother gradients, more detailed light (one call)'],
+  ['Interpretive', 'the painter revisits it freely: a new work derived from the original (one call)'],
+  ['All, faithful', 'every painting of the session, faithfully (no tokens)'],
+]
+async function convertPainting($: EngineInterface, modeWord: string, sizeWord: string): Promise<string> {
+  const modes = ['faithful', 'refined', 'interpretive', 'all']
+  let mode = modeWord
+  if (!mode) { // a bare /spark convert: pick by clicking, in Claude Code's own dialog
+    if (!shownPainting() && !story.length) return 'no paintings yet this session: /spark paint makes one'
+    let choice = ''
+    try { choice = await $.ui.ask('How shall Spark make the painting large?', { options: CONVERT_WAYS.map(([l]) => l), header: 'Convert' }) } catch { return 'convert: nothing chosen' }
+    mode = choice.toLowerCase().startsWith('all') ? 'all' : choice.toLowerCase().trim()
+    if (!modes.includes(mode)) return 'convert: nothing chosen'
+  }
+  if (!modes.includes(mode)) return 'convert takes: faithful (the same marks, large) | refined | interpretive | all (every painting of the session, faithful), then hd (1920 wide, the default) or 4k. On its own, /spark convert lets you click one'
+  const width = sizeWord === '' ? SIZES.hd! : SIZES[sizeWord] ?? (/^\d{3,4}$/.test(sizeWord) ? Math.max(256, Math.min(4096, Number(sizeWord))) : 0)
+  if (!width) return 'convert size: hd (1920 wide) or 4k (3840)'
+  if (convertBusy) return 'Spark is still converting'
+  const pick = shownPainting()
+  const list: Array<Painting & { shape: string }> = mode === 'all' ? story.slice() : pick ? [pick] : []
+  if (!list.length) return story.length ? 'no painting is showing: /spark story shows them, /spark paint makes one' : 'no paintings yet this session: /spark paint makes one'
+  convertBusy = true
+  const root = await $.session.root().catch(() => '')
+  const folder = convertFolder.startsWith('/') || convertFolder.startsWith('~') ? convertFolder : (root ? root + '/' : '') + convertFolder
+  const written: string[] = []
+  let note = ''
+  try {
+    for (const source of list) {
+      let p: Painting & { shape: string } = source
+      let tag = mode === 'all' ? 'faithful' : mode
+      if (mode === 'refined' || mode === 'interpretive') { // the painter revisits its own work: one call
+        const rq = revisitRequest({ painting: source, mode, palette, theme: activeTheme(), reflection })
+        const r = await $.model.complete({ model: paintModel, system: rq.system, prompt: rq.prompt, maxTokens: 6000, effort: 'low', timeoutMs: 60000 })
+        spend((r as { usage?: Record<string, number> }).usage)
+        const q = r.isAnswered ? parsePainting(r.text, palette, HD_MARKS) : null
+        if (!q) { note = r.isAnswered ? 'the painter answered something that was not a painting; the faithful version was written instead' : 'the painter sent nothing back; the faithful version was written instead'; tag = 'faithful' }
+        else p = { ...q, shape: source.shape }
+      }
+      const [W, H] = canvasFor(p.shape, width)
+      const scene = paintingScene(p, W, H, { reveal: 1, theme: activeTheme() })
+      const n = converted.length + 1
+      const name = slug(p.title, n) + '-' + tag
+      const when = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      const caption = convertCaption ? captionLines(p.title, tag, when) : null
+      const svgPath = `${folder}/${name}.svg`
+      await $.fs.write(svgPath, sceneSVG(scene, W, H, { theme: activeTheme(), title: p.title, caption }))
+      written.push(`${name}.svg`)
+      // the PNG: the raster at full size, flattened onto the ground, handed to the python helper as base64 text
+      const raster = createRaster(W, H)
+      raster.draw(scene, activeTheme(), { over: true }) // as the SVG: each mark over the last
+      const flat = flattenRGBA(toRGBA8(raster), W, H, ground())
+      const { rgb, H: fullH } = caption ? withCaption(flat, W, H, caption, ground(), { light: activeTheme() === 'light' }) : { rgb: flat, H }
+      const b64Path = `${folder}/${name}.rgb.b64`
+      await $.fs.write(b64Path, base64(rgb))
+      let png = false
+      try {
+        const run = $.process.spawn({ argv: ['python3', `${$.plugin.root}/link/spark_png.py`, b64Path, `${folder}/${name}.png`, String(W), String(fullH)] })
+        for await (const _ of run) { /* its lines are not needed */ }
+        const end = await run.result
+        png = (end as { code?: number } | null)?.code === 0
+      } catch { png = false }
+      if (png) written.push(`${name}.png`)
+      else { note = note || 'no PNG: python3 was not found (the SVG opens in any browser, at any size)' }
+      converted.push({ file: png ? `${name}.png` : `${name}.svg`, title: p.title || 'untitled', when: new Date().toTimeString().slice(0, 5), mode: tag })
+      logRecent('convert ' + tag)
+    }
+    await $.fs.write(`${folder}/index.html`, galleryHTML(converted))
+    written.push('index.html')
+  } catch (err) {
+    return 'convert failed: ' + String((err as Error)?.message || err).slice(0, 120)
+  } finally {
+    convertBusy = false
+  }
+  return `converted (${mode === 'all' ? 'all, faithful' : mode}, ${width} wide) into ${folder}: ${written.join(', ')}` + (note ? '. ' + note : '')
 }
 
 // A live painting, if the turn has run long enough since the last one and this is a moment (or she has waited enough)
@@ -675,6 +757,7 @@ const HELP = [
   '/spark link    on | off | status: Keeper and Prism beside Spark (Cyclops Link, off until you turn it on)',
   '/spark paint   a small painter paints each turn below Spark, and one now (it uses tokens); /spark paint off stops it',
   '/spark story   the session\'s paintings told again in order, each laid down anew (no tokens); /spark story again ends it',
+  '/spark convert the painting made large, SVG and PNG, into the convert folder: click faithful, refined, interpretive or all (or say it: /spark convert refined 4k)',
 ].join('\n')
 
 // focus asks for about 60% of the terminal (at least 64 columns, and always 40 left for the conversation), and the full
@@ -689,6 +772,10 @@ const focusOpen = (columns: number, rows: number) => ({ id: PANE, title: 'Spark'
 const SIDE_ROWS = 10
 let lastTerminal = 0 // the terminal width the last /spark command reported (0: not known)
 let lastViewport = 0 // the terminal width the surface last drew at (any of Spark's drawings, the spinner too)
+let convertFolder = 'spark-paintings' // the convertFolder setting: where /spark convert writes, relative to the project
+let converted: Array<{ file: string; title: string; when: string; mode: string }> = [] // this session's conversions, for the gallery page
+let convertBusy = false
+let convertCaption = true // the convertCaption setting: the title and a line (Spark · the date · the way) under the picture
 let sideWidth = 0    // the sideWidth setting: the side pane's width in columns, 0 for automatic
 // automatic: a quarter of the widest terminal width known, 30 to 44 columns; 44 when none is known yet
 const sideColumns = (terminal: number) => {
@@ -758,10 +845,12 @@ export const register: Register = (on, options) => {
   if (typeof o.paintModel === 'string' && MODEL_ID.test(o.paintModel.trim())) paintModel = o.paintModel.trim()
   if (typeof o.openPainting === 'boolean') openPainting = o.openPainting
   if (typeof o.sideWidth === 'number' && o.sideWidth >= 0) sideWidth = o.sideWidth
+  if (typeof o.convertFolder === 'string' && o.convertFolder.trim()) convertFolder = o.convertFolder.trim()
+  if (typeof o.convertCaption === 'boolean') convertCaption = o.convertCaption
 
   on('session.start', async ($, e, next) => {
     await refreshTheme($)
-    await $.command.register({ name: 'spark', description: 'Spark, Claude\'s living presence: /spark [side|top|focus|kitty|state|calm|theme|palette|sound|murmur|status|replay|ask|link|paint|story|help]', immediate: true })
+    await $.command.register({ name: 'spark', description: 'Spark, Claude\'s living presence: /spark [side|top|focus|kitty|state|calm|theme|palette|sound|murmur|status|replay|ask|link|paint|story|convert|help]', immediate: true })
     const wanted = (await $.env.get('SPARK_LINK').catch(() => undefined))?.trim().toLowerCase()
     linkWanted = wanted === '1' || wanted === 'on' ? true : wanted === '0' || wanted === 'off' ? false : null
     if (linkWanted !== null) linkOn = linkWanted
@@ -976,6 +1065,7 @@ export const register: Register = (on, options) => {
         text = 'link ' + (linkOn ? linkStatus : 'off') + (linkOn && linkView ? ' · ' + linkLine(linkView) : '') + (linkWanted !== null ? ' (SPARK_LINK overrides the setting)' : '')
       } else text = 'link takes: on | off | status'
     }
+    else if (word === 'convert') text = await convertPainting($, arg, e.args.trim().toLowerCase().split(/\s+/)[2] ?? '')
     else if (word === 'story') { // the session's paintings, told again in order: nothing is asked of any model
       if (storyOn) { storyOn = null; text = 'story ended: back to the last painting' }
       else if (!story.length) text = 'no paintings yet this session: /spark paint makes one'
