@@ -1,6 +1,6 @@
 {
   "name": "cyclops-spark",
-  "version": "1.5.8",
+  "version": "1.5.9",
   "description": "Spark, Claude's living presence for the terminal: a small procedural creature drawn only from real Claude Code session events, as half-block cells or kitty/Ghostty pixels.",
   "author": {
     "name": "Cyclops Eye Team"
@@ -85,6 +85,12 @@
       "title": "Paint when Spark opens",
       "description": "When on, opening Spark with /spark (or /spark side) also turns the painter on: one command for both. The painter uses tokens. Off by default.",
       "default": false
+    },
+    "sideWidth": {
+      "type": "number",
+      "title": "Side pane width",
+      "description": "How many columns wide the side pane opens (24 to 120), so it opens the size you like every time. 0 is automatic: a quarter of the terminal, 30 to 44 columns. A size you drag still wins for that session.",
+      "default": 0
     }
   },
   "license": "MIT"
