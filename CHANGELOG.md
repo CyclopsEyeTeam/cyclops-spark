@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6.0
+
+- **Claude's own line.** While a turn runs, a line in Claude's colour sits above Spark's text: Claude's breath, a small
+  ring that fills and empties (slow while thinking, quicker while writing or calling tools), beside the word the chat's
+  spinner shows: `◎ Mulling…`. It is only there while a turn really runs, and never in the replay.
+- **The effort sits at the bottom.** Spark's text is now her state line, then anything you are waiting on (a message,
+  a side question), then the effort asked for (`xhigh effort`, dim), which never changes within a turn. The text keeps
+  at least three rows, so the painting below never moves as lines come and go.
+- **"Your message is waiting" lets go when it should.** A message you send mid-turn can be taken in as a prompt row of
+  its own, not only as a queued_command; both now count as taking it in, so the waiting bead and line no longer stay
+  after the model has read it. A new turn's own prompt is never mistaken for one.
+
 ## 1.5.9
 
 - The side pane opens roomy again. It is a quarter of the widest terminal width Spark knows (30 to 44 columns), and

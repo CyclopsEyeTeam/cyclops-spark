@@ -210,6 +210,10 @@ And the last of the evening, as the build stopped for review with everything it 
   core, toward the prompt, ringed by a slow breath. Its size is how much the turn really wrote. It stays until you send a
   new prompt or copy the reply with `/copy`. A turn that stopped on an error leaves a hollow red-touched ring there
   instead, a refusal a plain one.
+- **Claude's own line.** While a turn runs, a line in Claude's colour sits above Spark's: Claude's breath (a small ring
+  that fills and empties, slow while thinking, quicker while writing or calling tools) beside the word the chat's spinner
+  shows (`◎ Mulling…`). Under it, Spark's state line, then anything you are waiting on, then the effort asked for, which
+  never changes within a turn, so it sits at the bottom.
 - **Your message, waiting.** Write while Spark works and what you sent waits at her lower edge: a small warm bead that
   breathes, one per message, until the model really takes it into the turn. Then it travels in to her core (drunk
   straight up, spiralled in, or caught by a tendril that reaches down for it, rolled each time) and a ring draws

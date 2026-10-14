@@ -152,12 +152,12 @@ test('a small terminal loses nothing: Spark and her label keep their size; the p
     const got = await sparkRows(c, r)
     expect(got.spark).toBe(without[i]!.spark) // Spark is never made smaller for the painting
     expect(got.label).toBe(true)
-    const free = r - got.spark! - 2 // her line keeps two rows held, so nothing below it moves when it grows
+    const free = r - got.spark! - 3 // her lines keep three rows held, so nothing below them moves when they grow
     if (free < 1) { expect(got.title).toBe(false); expect(got.art).toBeUndefined() }
     else if (free < 4) { expect(got.title).toBe(true); expect(got.art).toBeUndefined() } // the title alone
     else { expect(got.title).toBe(true); expect(got.art).toBeGreaterThanOrEqual(3) }
     // never more rows than the pane has
-    expect(got.spark! + 2 + (got.art ?? 0) + (got.title ? 1 : 0) + (got.art && free >= 7 ? 1 : 0)).toBeLessThanOrEqual(r)
+    expect(got.spark! + 3 + (got.art ?? 0) + (got.title ? 1 : 0) + (got.art && free >= 7 ? 1 : 0)).toBeLessThanOrEqual(r)
   }
   await cmd($, 'paint off')
 })
@@ -432,12 +432,14 @@ test('steady: a longer state line never moves the painting; the rows her lines n
     const tree = await term.drawn()
     const spark = await term.find({ type: 'Raster', key: 'spark' })
     const label = await term.find({ type: 'Text', text: /^Spark · / })
+    const effort = await term.find({ type: 'Text', text: /^xhigh effort$/ })
+    const voice = await term.find({ type: 'Text', text: /^[·∘○◎◉●] \S+…$/ })
     await term.unmount()
     const boxes: any[] = []
     const walk = (n: any) => { if (!n || typeof n !== 'object') return; if (Array.isArray(n)) { n.forEach(walk); return } if (n.type === 'Box' && n.props?.height && JSON.stringify(n).includes('Spark · ')) boxes.push(n); walk(n.children); walk(n.props?.children) }
     walk(tree)
     const held = boxes.at(-1)?.props?.height
-    return { rows: (spark?.props.rows ?? 0) + held, held, lines: wrapRows(String(label?.text), 30) }
+    return { rows: (spark?.props.rows ?? 0) + held, held, lines: wrapRows(String(label?.text), 30), effort: effort?.props, voice: voice?.props }
   }
   const before = await above()
   await $.turn.start(loose({ text: 'go', turnId: 's1' }))
@@ -445,9 +447,11 @@ test('steady: a longer state line never moves the painting; the rows her lines n
   const during = await above()
   await $.turn.complete(loose({ reason: 'answer', answer: 'ok', durationMs: 1000, isAborted: false, turnId: 's1' }))
   const after = await above()
-  expect(before.held).toBeGreaterThanOrEqual(2)
-  expect(during.lines).toBeGreaterThan(before.lines) // "Spark · thinking · xhigh effort" takes two rows at 30
-  expect(during.held).toBeGreaterThanOrEqual(during.lines)
+  expect(before.held).toBeGreaterThanOrEqual(3)
+  expect(during.effort).toBeDefined() // the effort on a line of its own, at the bottom
+  expect(during.effort?.dimColor).toBe(true)
+  expect(during.voice?.color).toBe('claude') // and Claude's own breath above her line while the turn runs
+  expect(before.voice).toBeUndefined()
   expect(during.rows).toBe(before.rows) // the painting starts on the same row
   expect(after.rows).toBe(during.rows) // and a shorter line does not pull it back up
   await cmd($, 'paint off')
