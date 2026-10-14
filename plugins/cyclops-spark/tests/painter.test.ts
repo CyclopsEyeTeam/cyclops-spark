@@ -493,11 +493,11 @@ test('say something to Spark from her pane: she answers in her own voice from wh
   await term.unmount()
 })
 
-test('her answer is plain words, one line, at most 160 characters; plain text is taken as what she says; a move is only one of hers', async () => {
+test('her answer is plain words, one line, at most 250 characters; plain text is taken as what she says; a move is only one of hers', async () => {
   expect(parseTalk('{"say": "all good", "spark": "ring"}')).toEqual({ say: 'all good', react: 'ring' })
   expect(parseTalk('{"say": "all good", "spark": "explode"}')).toEqual({ say: 'all good', react: null })
   expect(parseTalk('just glowing, thanks')).toEqual({ say: 'just glowing, thanks', react: null })
-  expect(parseTalk('{"say": "' + 'x'.repeat(400) + '"}')!.say).toHaveLength(160)
+  expect(parseTalk('{"say": "' + 'x'.repeat(400) + '"}')!.say).toHaveLength(250)
   expect(parseTalk(JSON.stringify({ say: 'a\nb' + String.fromCharCode(0x202e) + 'c' }))!.say).toBe('a b c')
   expect(parseTalk('')).toBeNull()
   const rq = talkRequest({ said: 'y'.repeat(500) })
