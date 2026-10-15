@@ -108,7 +108,7 @@ This is separate from the plugin: installing Spark any other way does not add it
 | `/spark paint` | The painter: turns it on and paints one now (opening Spark at the side first if she is not up); from then on a small sub-agent paints Spark's expression of each turn below her (below). It uses tokens. |
 | `/spark paint off` | Stops the painter and empties the room below Spark. |
 | `/spark story` | The session's paintings told again, in order, each laid down anew, once through (no tokens). Under the painting: pause, back, next, end; or `/spark story pause \| play \| next \| back \| end`. |
-| `/spark convert` | The painting made large, as SVG and PNG, into the convert folder (below): click faithful, refined, interpretive or all. Or say it: `/spark convert refined 4k`. |
+| `/spark convert` | The painting made large, as SVG and PNG, into the convert folder (below): click faithful, refined, interpretive or all paintings (then which way, each with its token cost). Or say it: `/spark convert refined 4k`, `/spark convert all interpretive`. |
 | `/spark help` | This list. |
 
 The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip, Cyclops Link, the
@@ -177,7 +177,12 @@ the words themselves. The last reflection shows in `/spark state`.
   composition intact, asking no model; **refined** gives the painter its own program back and asks for it again with
   finer curves, smoother gradients and more detailed light, the subject and composition kept; **interpretive** lets the
   painter revisit it freely, a new work derived from the original. The last two are one call each, counted in the
-  session's total. `all` converts every painting of the session faithfully. `hd` is 1920 wide (the default), `4k` 3840;
+  session's total. **All paintings** converts every painting of the session: a second menu asks which way, with what each
+  will cost beside it (faithful: no tokens; refined or interpretive: one painter call a painting, estimated from what
+  such calls have used this session, or from the paintings themselves before there are any). A whole session revisited
+  takes minutes, so it goes on beside your work: `/spark state` shows how far it has got, and Spark says in the
+  conversation when it is done. Typed: `/spark convert all faithful`, `all refined 4k`; `all` alone, or a size alone
+  (`/spark convert 4k`), asks. `hd` is 1920 wide (the default), `4k` 3840;
   the canvas keeps the painting's shape, and the picture is drawn exactly as the terminal draws it: on a dark ground
   every mark adds its light to what is under it (a glow brightens the hill it sits on, two lights make white), on a
   light one each goes over the last; specks and fine lines keep a small floor so they stay visible at full size. Each

@@ -111,7 +111,7 @@ test('all converts every painting of the session faithfully, in order; a size wo
   await cmd($, 'paint'); await say($, 'paint'); await settle()
   expect(await say($, 'convert sideways')).toMatch(/^convert takes: faithful/)
   expect(await say($, 'convert faithful huge')).toMatch(/^convert size: hd/)
-  const out = await say($, 'convert all 256')
+  const out = await say($, 'convert all faithful 256')
   expect(out).toMatch(/^converted \(all, faithful, 256 wide\)/)
   expect(out).toMatch(/01-a-fox-under-three-moons-faithful\.svg, 02-a-fox-under-three-moons-faithful\.svg, index\.html\. no PNG: python3 was not found/)
   expect([...files.keys()].filter((f) => f.endsWith('.svg'))).toHaveLength(2)
@@ -185,7 +185,7 @@ test('a bare /spark convert asks which way, in Claude Code\'s own dialog, and do
   expect(asked).toHaveLength(1)
   const q = (asked[0] as Array<{ question: string; options: Array<{ label: string }> }>)[0]!
   expect(q.question).toBe('How shall Spark make the painting large?')
-  expect(q.options.map((o) => o.label)).toEqual(['Faithful', 'Refined', 'Interpretive', 'All, faithful'])
+  expect(q.options.map((o) => o.label)).toEqual(['Faithful', 'Refined', 'Interpretive', 'All paintings…'])
   expect(out).toMatch(/^converted \(refined, 1920 wide\)/)
   expect(asks.length).toBe(n0 + 1) // the refined way: the painter asked once
   expect([...files.keys()].some((f) => f.endsWith('-refined.svg'))).toBe(true)
@@ -244,5 +244,52 @@ test('a big picture goes to the helper in parts, each under what one write may c
   }
   expect(joined).toBe(total)
   expect(files.has(`${b64Path}.${parts}`)).toBe(false)
+  await cmd($, 'paint off')
+})
+
+test('all paintings: a second menu asks which way, each with what it costs; a revisited set goes on beside the work and Spark says when it is done', async ($, on) => {
+  const { files, asks } = engine(on)
+  const answers: string[] = []
+  const asked: Array<{ question: string; labels: string[] }> = []
+  on('tool.call', { tool: 'AskUserQuestion' }, async (_$, e) => {
+    const q = (e as { questions: Array<{ question: string; options: Array<{ label: string }> }> }).questions
+    asked.push({ question: q[0]!.question, labels: q[0]!.options.map((o) => o.label) })
+    const a = answers.shift()
+    if (a === undefined) return loose({ result: 'dismissed', isError: true })
+    const label = q[0]!.options.map((o) => o.label).find((l) => l.startsWith(a)) ?? a
+    return loose({ result: { questions: q, answers: { [q[0]!.question]: label } } })
+  })
+  const logs: string[] = [], toasts: string[] = []
+  const until = async (done: () => boolean) => { for (let i = 0; i < 400 && !done(); i++) { await settle(); await new Promise((r) => setTimeout(r, 0)) } }
+  on('ui.log', async (_$, e) => { logs.push(String((e as { text: string }).text)); return loose({ value: undefined }) })
+  on('ui.toast', async (_$, e) => { toasts.push(String((e as { text: string }).text)); return loose({ value: undefined }) })
+  await cmd($, 'paint'); await say($, 'paint'); await say($, 'paint'); await settle()
+  // the first menu, then All: the second, with the cost beside each way
+  answers.push('All', 'Faithful')
+  expect(await say($, 'convert 256')).toMatch(/^converted \(all, faithful, 256 wide\)/)
+  expect(asked[1]!.question).toBe('All 3 paintings of this session: which way?')
+  expect(asked[1]!.labels[0]).toBe('Faithful · no tokens')
+  expect(asked[1]!.labels[1]).toMatch(/^Refined · about \d+(\.\d)?k tokens$/)
+  expect(asked[1]!.labels[2]).toMatch(/^Interpretive · about \d+(\.\d)?k tokens$/)
+  // typed: all, then the way, then the size; refined: one painter call each, beside the work
+  const n0 = asks.length
+  const started = await say($, 'convert all refined 256')
+  expect(started).toMatch(/^converting all 3 paintings, refined, 256 wide, into \/home\/t\/zilo\/spark-paintings: one painter call each, about \d+(\.\d)?k tokens/)
+  await until(() => logs.length >= 1)
+  expect(asks.length).toBe(n0 + 3)
+  expect([...files.keys()].filter((f) => f.endsWith('-refined.svg'))).toHaveLength(3)
+  expect(logs.at(-1)).toMatch(/^Spark: converted \(all, refined, 256 wide\)/)
+  expect(toasts.at(-1)).toBe('Spark: all 3 paintings converted (refined)')
+  // now the estimate is from what those calls really used: 900 + 700 tokens each, as the mock answers
+  const tick = asked.length
+  answers.push('All') // and the second menu dismissed: nothing is done
+  expect(await say($, 'convert')).toBe('convert: nothing chosen')
+  expect(asked[tick + 1]!.labels[2]).toBe('Interpretive · about 4.8k tokens') // 3 x 1,600
+  // typed all on its own asks the way too
+  answers.push('Interpretive')
+  expect(await say($, 'convert all 256')).toMatch(/^converting all 3 paintings, interpretive/)
+  expect(await say($, 'state')).toMatch(/converting \d of 3 \(interpretive\)|paint on/)
+  await until(() => logs.length >= 2)
+  expect(logs.at(-1)).toMatch(/^Spark: converted \(all, interpretive, 256 wide\)/)
   await cmd($, 'paint off')
 })
