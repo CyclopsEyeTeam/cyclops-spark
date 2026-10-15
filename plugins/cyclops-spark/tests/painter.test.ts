@@ -67,7 +67,7 @@ test('the painter is off by default: no model call, nothing drawn below Spark', 
 test('/spark paint: on, one painting now, then each turn worth painting, by Haiku, from its shape and the reply; never your prompt, paths or commands', async ($, on) => {
   const { asks, writes } = engine(on)
   await cmd($, 'paint off')
-  expect(await say($, 'paint')).toMatch(/^painting on: .*\(haiku\).*uses tokens.*\/spark paint off stops it\. painted: a long climb, then light/)
+  expect(await say($, 'paint')).toMatch(/^Spark at the side.*; painting on: .*\(haiku\).*uses tokens.*\/spark paint off stops it\. painted: a long climb, then light/) // from a fresh terminal: /spark paint opens Spark herself and the painter together
   expect(asks).toHaveLength(1) // one painting now, of her waking
   await turn($, 't2', 12)
   expect(asks).toHaveLength(2)
@@ -122,7 +122,7 @@ test('an answer that is not a painting, or a failed call, draws nothing new and 
   let answer: unknown = { isAnswered: true, text: 'I would paint a sunset.', usage: {} }
   engine(on, () => answer)
   await cmd($, 'paint off')
-  expect(await say($, 'paint')).toMatch(/^painting on: .*\. no painting: the painter answered something that was not a painting/)
+  expect(await say($, 'paint')).toMatch(/^Spark at the side.*; painting on: .*\. no painting: the painter answered something that was not a painting/)
   answer = { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded', usage: {} }
   expect(await say($, 'paint')).toMatch(/^no painting: the API answered with an error \(529\)/)
   const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
@@ -440,7 +440,8 @@ test('steady: a longer state line never moves the painting; the rows her lines n
     const walk = (n: any) => { if (!n || typeof n !== 'object') return; if (Array.isArray(n)) { n.forEach(walk); return } if (n.type === 'Box' && n.props?.height && JSON.stringify(n).includes('Spark · ')) boxes.push(n); walk(n.children); walk(n.props?.children) }
     walk(tree)
     const held = boxes.at(-1)?.props?.height
-    return { rows: (spark?.props.rows ?? 0) + held, held, lines: wrapRows(String(label?.text), 30), effort: effort?.props, voice: voice?.props }
+    const order = (boxes.at(-1)?.children ?? boxes.at(-1)?.props?.children ?? []).map((c: any) => String(c.text ?? c.props?.children?.[0] ?? c.children?.[0] ?? ''))
+    return { rows: (spark?.props.rows ?? 0) + held, held, lines: wrapRows(String(label?.text), 30), effort: effort?.props, voice: voice?.props, order }
   }
   const before = await above()
   await $.turn.start(loose({ text: 'go', turnId: 's1' }))
@@ -455,6 +456,12 @@ test('steady: a longer state line never moves the painting; the rows her lines n
   expect(before.voice).toBeUndefined()
   expect(during.rows).toBe(before.rows) // the painting starts on the same row
   expect(after.rows).toBe(during.rows) // and a shorter line does not pull it back up
+  // and the rows keep their places: Claude's breath first (blank between turns), her line second, the effort last
+  // (blank between turns), so nothing above the painting changes place as the turn goes
+  for (const o of [before.order, during.order, after.order]) { expect(o).toHaveLength(3); expect(o[1]).toMatch(/^Spark · /) }
+  expect(before.order[0]).toBe(' '); expect(before.order[2]).toBe(' ')
+  expect(during.order[0]).toMatch(/…$/); expect(during.order[2]).toBe('xhigh effort')
+  expect(after.order[0]).toBe(' '); expect(after.order[2]).toBe(' ')
   await cmd($, 'paint off')
 })
 
@@ -533,6 +540,70 @@ test('/spark story tells the session\'s paintings again, in order, each laid dow
   p = await page()
   expect(p.title).toBe('✎ the long quiet') // back to the last painting
   expect(p.where).toBe('undefined')
+  await cmd($, 'paint off')
+})
+
+test('the story is told once through, then held on the last page; its controls (only while it is on) hold, turn and end it, and a held page is the one /spark convert makes large', { timeoutMs: 30000 }, async ($, on) => {
+  let k = 0
+  const titles = ['one', 'two', 'three']
+  const { clock, asks, writes } = engine(on, () => ({ isAnswered: true, text: JSON.stringify({ ...JSON.parse(PAINTING), title: titles[k++ % 3] }), usage: USAGE }))
+  on('session.root', async () => loose({ value: '/home/t/zilo' }))
+  on('process.spawn', async function* () { yield { stream: 'stdout' as const, text: 'ok\n' }; return loose({ value: { code: 0, signal: null } }) })
+  on('command.register', async () => loose({ value: undefined }))
+  on('env.get', async () => loose({ value: undefined }))
+  on('session.start', async () => loose({ cwd: '/' }))
+  on('ui.blit', async () => loose({ value: {} }))
+  await $.session.start(loose({ cwd: '/', surface: 'terminal', isInteractive: true })) // the ticker: the story's pages turn by the clock
+  await cmd($, 'paint off'); await cmd($, 'paint'); await say($, 'paint'); await say($, 'paint')
+  const page = async (press?: string) => {
+    const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+    if (press) await term.press({ key: press })
+    const title = await term.find({ type: 'Text', text: /^✎ / })
+    const where = await term.find({ type: 'Text', text: /^story · / })
+    const play = await term.find({ key: 'story-play' })
+    const buttons = ['story-play', 'story-back', 'story-next', 'story-end']
+    const shown: string[] = []
+    for (const b of buttons) if (await term.find({ key: b })) shown.push(b)
+    await term.unmount()
+    return { title: String(title?.text), where: String(where?.text), play: String(play?.props?.label ?? play?.text ?? ''), shown }
+  }
+  expect((await page()).shown).toEqual([]) // no story: no controls
+  expect(await say($, 'story')).toMatch(/once through, then held on the last/)
+  let p = await page()
+  expect(p.where).toMatch(/^story · 1 of 3 · \d\d:\d\d$/)
+  expect(p.shown).toEqual(['story-play', 'story-back', 'story-next', 'story-end'])
+  expect(p.play).toBe('⏸ pause')
+  await clock.advance(7 * 1000 + 200); p = await page()
+  expect(p.where).toMatch(/^story · 2 of 3/)
+  await clock.advance(14.5 * 1000); p = await page() // past the end: held on the last page, never round again
+  expect(p.where).toMatch(/^story · 3 of 3 · \d\d:\d\d · the end$/)
+  expect(p.title).toBe('✎ three')
+  expect(p.play).toBe('▶ again')
+  await clock.advance(8 * 1000); expect((await page()).where).toMatch(/3 of 3 · .* · the end$/)
+  p = await page('story-play') // again: from the first page
+  expect((await page()).where).toMatch(/^story · 1 of 3 · \d\d:\d\d$/)
+  p = await page('story-play') // hold it
+  expect((await page()).where).toMatch(/^story · 1 of 3 · \d\d:\d\d · held$/)
+  await clock.advance(8 * 1000); p = await page()
+  expect(p.where).toMatch(/1 of 3 · .* · held$/) // held: time passes, the page stays
+  expect(p.play).toBe('▶ play')
+  await page('story-next'); p = await page()
+  expect(p.where).toMatch(/^story · 2 of 3 · .* · held$/); expect(p.title).toBe('✎ two')
+  await page('story-next'); await page('story-next'); expect((await page()).where).toMatch(/3 of 3/) // clamped at the end
+  await page('story-back'); expect((await page()).where).toMatch(/2 of 3/)
+  // the held page is what convert makes large
+  const n0 = asks.length
+  expect(await say($, 'convert faithful 320')).toMatch(/^converted \(faithful, 320 wide\) into .*: 01-two-faithful\.svg/)
+  expect(asks.length).toBe(n0)
+  expect(writes.some((w) => w.endsWith('/01-two-faithful.svg'))).toBe(true)
+  expect(await say($, 'story play')).toMatch(/^story goes on from page 2 of 3/)
+  expect((await page()).where).toMatch(/^story · 2 of 3 · \d\d:\d\d$/)
+  expect(await say($, 'story pause')).toMatch(/^story held on page 2 of 3/)
+  expect(await say($, 'story back')).toMatch(/^story: page 1 of 3 \(held\)/)
+  expect(await say($, 'story dance')).toMatch(/^story takes: pause \| play \| next \| back \| end/)
+  await page('story-end'); p = await page()
+  expect(p.where).toBe('undefined'); expect(p.shown).toEqual([]); expect(p.title).toBe('✎ three') // back to the last painting
+  expect(await say($, 'story pause')).toMatch(/^no story is on/)
   await cmd($, 'paint off')
 })
 
