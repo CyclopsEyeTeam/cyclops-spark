@@ -15,4 +15,8 @@ if claude plugin marketplace list 2>/dev/null | grep -q 'cyclops-spark'; then
   claude plugin marketplace remove cyclops-spark >/dev/null
   printf '  marketplace: removed\n'
 fi
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+if [ -f "$here/extras/launch-banner/banner.sh" ]; then
+  bash "$here/extras/launch-banner/banner.sh" remove
+fi
 printf 'Cyclops Spark is uninstalled. This folder was not touched; delete it yourself if you like.\n'

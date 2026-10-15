@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Optional Cyclops launch banner.** `./install.sh` can add the Cyclops eye, drawn in truecolour half blocks, to the
+  start of every `claude` launch: it asks once (default no), or take `--banner` / `--no-banner`. It lives in one marked
+  block in your shell's rc file, shows only in an interactive terminal wide enough for it, stays quiet for `-p`,
+  `--version` and subcommands, respects `CYCLOPS_BANNER=0`, and keeps working when `claude` is an alias.
+  `./uninstall.sh` removes it and restores the rc file as it was. The plugin itself is unchanged.
+
 ## 1.7.2
 
 - **Spark in HD, in any terminal.** Every cell now holds four pixels instead of two: the raster is drawn at two pixels
