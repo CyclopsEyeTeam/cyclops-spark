@@ -147,6 +147,11 @@ if [ -n "$settings_dir" ] && ! same_dir "$settings_dir"; then
 fi
 
 # Optional: the Cyclops launch banner (off unless asked for; never asked when not run in a terminal).
+# Already on: it is refreshed without asking, so an update brings the banner's newest block (the block in your rc file
+# is a copy made when it was installed). --no-banner leaves it as it is; uninstall.sh or banner.sh remove takes it out.
+if [ -z "$banner" ] && bash "$here/extras/launch-banner/banner.sh" status 2>/dev/null | grep -q ': on'; then
+  banner=yes
+fi
 if [ -z "$banner" ] && [ -t 0 ] && [ -t 1 ]; then
   say ""
   read -r -p "  Also show the Cyclops eye banner each time you start claude? [y/N] " reply || reply=""
