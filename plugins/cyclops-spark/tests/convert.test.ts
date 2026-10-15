@@ -5,6 +5,7 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { parsePainting, paintingScene } from '../hooks/painter.js'
 import { canvasFor, captionHeight, captionLines, captionStrip, flattenRGBA, galleryHTML, revisitRequest, sceneSVG, slug, withCaption } from '../hooks/convert.js'
+import { createRaster, toRGB8 } from '../hooks/render-raster.js'
 
 const loose = <T>(v: unknown) => v as T
 const cmd = ($: Engine, args: string) => $.command.run(loose({ command: 'spark', args, origin: { kind: 'person' }, presentation: {} }))
@@ -76,8 +77,9 @@ test('faithful: the same marks drawn large, SVG written by Spark and PNG by the 
   expect(spawns).toHaveLength(1)
   expect(spawns[0]![0]).toBe('python3')
   expect(spawns[0]![1]).toMatch(/\/link\/spark_png\.py$/)
-  expect(spawns[0]!.slice(2)).toEqual(['/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.rgb.b64', '/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.png', '320', '230'])
-  const b64 = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.rgb.b64')!
+  expect(spawns[0]!.slice(2)).toEqual(['/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.rgb.b64', '/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.png', '320', '230', '1']) // one part: a small picture
+  expect(files.has('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.rgb.b64')).toBe(false) // the bytes go in numbered parts, never one file
+  const b64 = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.rgb.b64.0')!
   expect(b64.length).toBe(Math.ceil((320 * 230 * 3) / 3) * 4) // base64 of exactly W×H×3 bytes, the caption strip included
   const page = files.get('/home/t/zilo/spark-paintings/index.html')!
   expect(page).toContain('<img src="01-a-fox-under-three-moons-faithful.png" alt="a fox under three moons">')
@@ -140,6 +142,18 @@ test('the pieces: slugs, canvases, the flattened bytes, and an SVG that stands o
   expect(svg).toContain('<title>a &lt; b &amp; c</title>')
   expect(svg).not.toContain('mix-blend-mode') // over on a light ground
   expect(svg).toMatch(/<rect width="200" height="100" fill="#f6f2ec"\/>/)
+  // on a dark ground every mark adds its light to what is under it, as the terminal draws: plus-lighter where the
+  // viewer has it, screen elsewhere, each mark on its own (not the group once)
+  const dark = sceneSVG(paintingScene(p, 200, 100), 200, 100, { theme: 'dark', floor: 3 })
+  expect(dark).toContain('<style>.add>*{mix-blend-mode:screen;mix-blend-mode:plus-lighter}</style>')
+  expect(dark).toContain('<g class="add">')
+  expect(dark).toMatch(/<circle [^>]*r="3"/) // a speck is no thinner than the floor
+  // the PNG's bytes are the terminal's own shade: light added to light, clipped at white, then the ground under what is left
+  const r = createRaster(8, 4)
+  r.draw([{ k: 'dot', x: 0, y: 0, r: 1, c: [1, 1, 1], a: 0.7 }, { k: 'dot', x: 0, y: 0, r: 1, c: [1, 1, 1], a: 0.7 }], 'dark')
+  const flat = toRGB8(r, [0.07, 0.07, 0.08])
+  expect(flat[(2 * 8 + 4) * 3]).toBe(255) // the centre: two seven-tenths of white add past white
+  expect(flat[0]).toBe(18) // a corner: the ground alone
   expect(galleryHTML([{ file: 'x.png', title: 'a "quoted" one', when: '21:01', mode: 'faithful' }])).toContain('alt="a &quot;quoted&quot; one"')
   const rq = revisitRequest({ painting: p, mode: 'interpretive' })
   expect(rq.prompt).not.toContain('seed') // the painter sees its marks, not the renderer's bookkeeping
@@ -199,7 +213,28 @@ test('the caption setting off: the picture alone', { options: { convertCaption: 
   const { files, spawns } = engine(on)
   await cmd($, 'paint'); await settle()
   await say($, 'convert faithful 320')
-  expect(spawns[0]!.slice(4)).toEqual(['320', '160'])
+  expect(spawns[0]!.slice(4)).toEqual(['320', '160', '1'])
   expect(files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.svg')!).not.toContain('<text')
+  await cmd($, 'paint off')
+})
+
+test('a big picture goes to the helper in parts, each under what one write may carry, numbered in order', async ($, on) => {
+  const { files, spawns } = engine(on)
+  await cmd($, 'paint'); await settle()
+  expect(await say($, 'convert faithful 1600')).toMatch(/^converted \(faithful, 1600 wide\)/)
+  const [, , b64Path, , w, h, parts] = spawns[0]!
+  expect(b64Path).toBe('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.rgb.b64')
+  const total = Math.ceil((Number(w) * Number(h) * 3) / 3) * 4
+  expect(total).toBeGreaterThan(4 * 1024 * 1024) // the whole would not fit one write
+  expect(Number(parts)).toBe(Math.ceil(total / 3_000_000))
+  let joined = 0
+  for (let k = 0; k < Number(parts); k++) {
+    const part = files.get(`${b64Path}.${k}`)!
+    expect(part.length).toBeLessThanOrEqual(3_000_000)
+    expect(part.length).toBeGreaterThan(0)
+    joined += part.length
+  }
+  expect(joined).toBe(total)
+  expect(files.has(`${b64Path}.${parts}`)).toBe(false)
   await cmd($, 'paint off')
 })
