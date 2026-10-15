@@ -50,9 +50,11 @@ export function createRaster(W, H, { fill = false } = {}) {
     nt = 0
   }
 
-  // `over`: paint each mark over the last (as paper does) instead of adding its light; /spark convert draws that
-  // way, so a dark mark on a bright one shows, as it does in the SVG
-  function draw(scene, theme, { over = false } = {}) {
+  // `over`: paint each mark over the last (as paper does) instead of adding its light, on any ground
+  // `floor`: the thinnest a mark is drawn, in pixels (a speck is a whole cell in the terminal; a large picture keeps
+  // its specks and lines visible with a floor of its own)
+  function draw(scene, theme, { over = false, floor = 0.6 } = {}) {
+    const fl = Math.max(0.6, floor), fw = Math.max(0.45, floor * 0.75)
     px.fill(0)
     stamp.fill(-1)
     const additive = theme !== 'light' && !over
@@ -69,7 +71,7 @@ export function createRaster(W, H, { fill = false } = {}) {
         }
         flush(p.c, p.a * (additive ? 0.9 : 0.5), true)
       } else if (p.k === 'dot') {
-        const r = Math.max(0.6, p.r * scale), [cx, cy] = P(p.x, p.y)
+        const r = Math.max(fl, p.r * scale), [cx, cy] = P(p.x, p.y)
         const x0 = Math.max(0, Math.floor(cx - r - 1)), x1 = Math.min(W - 1, Math.ceil(cx + r + 1))
         const y0 = Math.max(0, Math.floor(cy - r - 1)), y1 = Math.min(H - 1, Math.ceil(cy + r + 1))
         for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
@@ -79,7 +81,7 @@ export function createRaster(W, H, { fill = false } = {}) {
         }
         flush(p.c, p.a, additive)
       } else if (p.k === 'ring') {
-        const r = p.r * scale, hw = Math.max(0.45, (p.w * scale) / 2), [cx, cy] = P(p.x, p.y)
+        const r = p.r * scale, hw = Math.max(fw, (p.w * scale) / 2), [cx, cy] = P(p.x, p.y)
         const x0 = Math.max(0, Math.floor(cx - r - 2)), x1 = Math.min(W - 1, Math.ceil(cx + r + 2))
         const y0 = Math.max(0, Math.floor(cy - r - 2)), y1 = Math.min(H - 1, Math.ceil(cy + r + 2))
         for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
@@ -130,7 +132,7 @@ export function createRaster(W, H, { fill = false } = {}) {
         flush(K.pupil, a, false)
       } else if (p.k === 'arc') {
         // part of a ring, from angle a0 to a1 (radians, clockwise on screen), the ends rounded by the stroke's width
-        const r = p.r * scale, hw = Math.max(0.45, (p.w * scale) / 2), [cx, cy] = P(p.x, p.y)
+        const r = p.r * scale, hw = Math.max(fw, (p.w * scale) / 2), [cx, cy] = P(p.x, p.y)
         const a0 = p.a0, span = ((p.a1 - p.a0) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) || Math.PI * 2
         const x0 = Math.max(0, Math.floor(cx - r - hw - 2)), x1 = Math.min(W - 1, Math.ceil(cx + r + hw + 2))
         const y0 = Math.max(0, Math.floor(cy - r - hw - 2)), y1 = Math.min(H - 1, Math.ceil(cy + r + hw + 2))
@@ -171,7 +173,7 @@ export function createRaster(W, H, { fill = false } = {}) {
         flush(c0, p.a, additive, same ? null : (q) => { const u = hi > lo ? (((q % W) + 0.5) * gx + (Math.floor(q / W) + 0.5) * gy - lo) / (hi - lo) : 0; return [c0[0] + (c1[0] - c0[0]) * u, c0[1] + (c1[1] - c0[1]) * u, c0[2] + (c1[2] - c0[2]) * u] })
       } else if (p.k === 'path') {
         const pts = p.pts.map(([x, y]) => P(x, y)), n = pts.length
-        const hw = Math.max(0.5, (p.w * scale) / 2)
+        const hw = Math.max(fw, (p.w * scale) / 2)
         const segOf = new Map()
         for (let s = 0; s < n - 1; s++) {
           const [ax, ay] = pts[s], [bx, by] = pts[s + 1]
@@ -211,6 +213,18 @@ export function toRGBA8(r) {
     const k = i * 4, a = Math.min(1, px[k + 3])
     const s = a > 1e-4 ? 1 / a : 0
     out[k] = to8(px[k] * s); out[k + 1] = to8(px[k + 1] * s); out[k + 2] = to8(px[k + 2] * s); out[k + 3] = to8(a)
+  }
+  return out
+}
+
+// the picture flattened onto a ground, as the eye sees it in the terminal (the same shade as toHalfBlocks): RGB bytes,
+// for /spark convert's PNG
+export function toRGB8(r, ground) {
+  const { W, H, px } = r
+  const out = new Uint8Array(W * H * 3)
+  for (let i = 0; i < W * H; i++) {
+    const k = i * 4, a = Math.min(1, px[k + 3])
+    out[i * 3] = to8(px[k] + ground[0] * (1 - a)); out[i * 3 + 1] = to8(px[k + 1] + ground[1] * (1 - a)); out[i * 3 + 2] = to8(px[k + 2] + ground[2] * (1 - a))
   }
   return out
 }

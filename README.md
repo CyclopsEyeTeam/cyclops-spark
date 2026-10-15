@@ -81,9 +81,9 @@ Then type `/spark` to open the pane.
 | `/spark replay` | A labelled tour of every state. It runs on its own Spark and never touches the live one. |
 | `/spark ask <question>` | A side question, like `/btw`: answered from a fork of this session (no tools), mid-turn too. Nothing is typed into the terminal. |
 | `/spark link [on\|off\|status]` | Cyclops Link: Keeper and Prism beside Spark when they work in the same folder (below). |
-| `/spark paint` | The painter: turns it on and paints one now; from then on a small sub-agent paints Spark's expression of each turn below her (below). It uses tokens. |
+| `/spark paint` | The painter: turns it on and paints one now (opening Spark at the side first if she is not up); from then on a small sub-agent paints Spark's expression of each turn below her (below). It uses tokens. |
 | `/spark paint off` | Stops the painter and empties the room below Spark. |
-| `/spark story` | The session's paintings told again, in order, each laid down anew (no tokens). Again to end it. |
+| `/spark story` | The session's paintings told again, in order, each laid down anew, once through (no tokens). Under the painting: pause, back, next, end; or `/spark story pause \| play \| next \| back \| end`. |
 | `/spark convert` | The painting made large, as SVG and PNG, into the convert folder (below): click faithful, refined, interpretive or all. Or say it: `/spark convert refined 4k`. |
 | `/spark help` | This list. |
 
@@ -110,7 +110,7 @@ quietly unlinked. The protocol and its privacy contract are in [docs/CYCLOPS-LIN
 
 ## The painter
 
-Two controls: `/spark paint` turns it on and paints one now (again any time you like), `/spark paint off` stops it.
+Two controls: `/spark paint` turns it on and paints one now (again any time you like; from a fresh terminal it opens Spark too), `/spark paint off` stops it.
 With the **Paint when Spark opens** setting on, a plain `/spark` opens Spark with the painter already on. While it is
 on, when a turn of 3 seconds or more lands, a small sub-agent paints Spark's expression of it in the room below her side
 pane, laid down mark by mark, with a few words of hers underneath.
@@ -154,17 +154,24 @@ the words themselves. The last reflection shows in `/spark state`.
   finer curves, smoother gradients and more detailed light, the subject and composition kept; **interpretive** lets the
   painter revisit it freely, a new work derived from the original. The last two are one call each, counted in the
   session's total. `all` converts every painting of the session faithfully. `hd` is 1920 wide (the default), `4k` 3840;
-  the canvas keeps the painting's shape. Each one is written as an SVG (every mark a vector, any size without loss) and
-  a PNG (through a small python helper, the only way to write bytes from the plugin; without python3 you get the SVG),
+  the canvas keeps the painting's shape, and the picture is drawn exactly as the terminal draws it: on a dark ground
+  every mark adds its light to what is under it (a glow brightens the hill it sits on, two lights make white), on a
+  light one each goes over the last; specks and fine lines keep a small floor so they stay visible at full size. Each
+  one is written as an SVG (every mark a vector, any size without loss; its marks add their light the same way, with
+  `plus-lighter` in a browser and `screen` in viewers without it) and a PNG (through a small python helper, the only
+  way to write bytes from the plugin; without python3 you get the SVG),
   plus an `index.html` gallery of the session's conversions, into the **Convert folder** setting (`spark-paintings`
   inside the project by default, or an absolute path). The caption is on the picture itself: the title, and under it
   `Spark · the date · the way`, in a small bitmap font sized to the picture (the **Caption** setting turns it off).
   This is the one time Spark writes files, and only when you ask.
 - **The story of the session.** Every painting of the session is kept (in memory only) in the order it came.
   `/spark story` tells them again in her pane, each laid down mark by mark as it first was and held for a few seconds,
-  with where it is in the story and when it was painted (`story · 3 of 9 · 21:01`), round and round until you say
-  `/spark story` again or a new painting arrives. It asks nothing of any model, works with the painter off, and `/clear`
-  lets it go.
+  with where it is in the story and when it was painted (`story · 3 of 9 · 21:01`), once through, then held on the
+  last. While it is on, a row of small controls sits under its line: **pause** holds the page showing (`· held`), so
+  you can look, or make that one large with `/spark convert`, which takes the page showing; **play** goes on from it
+  (**again** from the start, at the end); **back** and **next** turn the pages; **end** returns to the last painting.
+  The same by word: `/spark story pause | play | next | back | end`. A new painting arriving steps in front of the
+  story. It asks nothing of any model, works with the painter off, and `/clear` lets it go.
 - **It fits the room, on every resize.** In a tall side pane the painting sits under Spark, in the rows she is not using
   (she never gets smaller for it), and takes a tall or square shape to fill them. Above the prompt on a small terminal
   (wide and short) Spark and her painting sit side by side. The painter is told the shape it is painting for; afterwards

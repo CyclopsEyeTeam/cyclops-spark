@@ -169,6 +169,12 @@ test('effort: the harder the model is asked to think, the more orbits form while
   expect(think()).toBe(0)
   expect(think('low')).toBeGreaterThan(0)
   expect(think('max')).toBe(4)
+  // in her pane the effort line stays for the whole turn, whatever she is doing (the hover names it only while thinking)
+  const p = mk({ t: 0, type: 'turn.start' }, { t: 0.2, type: 'step', effort: 'xhigh', model: 'm' }, { t: 0.5, type: 'tool.start', id: 'r', tool: 'Read', input: {} })
+  const f = p.sample(0.8)
+  expect(f.mode).toBe('reading'); expect(f.said.effort).toBe('xhigh effort'); expect(f.hover).not.toMatch(/effort/)
+  p.apply({ t: 1, type: 'tool.end', id: 'r' }); p.apply({ t: 1.2, type: 'turn.end', reason: 'answer', durationMs: 1200 })
+  expect(p.sample(1.5).said.effort).toBe('')
   expect(think('max')).toBeGreaterThan(think('low'))
   // no thinking, no orbits, whatever the effort was
   const idle = mk({ t: 0, type: 'step', effort: 'max', model: 'm' }); walk(idle, 0, 5)

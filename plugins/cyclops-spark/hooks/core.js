@@ -509,6 +509,9 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
     ].filter(Boolean)
     const effortPart = mode === 'thinking' && effortLabel ? effortLabel + ' effort' : ''
     const hover = [head, ...notes, effortPart].filter(Boolean).join(' · ')
+    // in her pane the effort stays on its line for the whole turn (it never changes within one), whatever she is doing,
+    // so the lines above her painting keep their places; the hover says it only while thinking, as before
+    const effortSaid = active && !ask && compactAmt <= 0.05 && effortLabel ? effortLabel + ' effort' : ''
 
     const lanesOut = [...lanes.values()].map((l) => {
       // PATIENCE: the real elapsed time of the oldest call still in flight on this lane, as a slowly filling arc
@@ -529,7 +532,7 @@ export function createPresence(entity = 'spark', seed = 7) { // Spark only
       }
     })
     return {
-      t, entity, e, ask, said: { head, notes, effort: effortPart }, askLane: lanesOut.find((l) => l.asking) || null, compact: compactAmt, awaiting, rest, deep, stir, stirring: stirK, woke, wake, bloom, recoil, halt, shift, echoes, damp, hold, spin, active,
+      t, entity, e, ask, said: { head, notes, effort: effortSaid }, askLane: lanesOut.find((l) => l.asking) || null, compact: compactAmt, awaiting, rest, deep, stir, stirring: stirK, woke, wake, bloom, recoil, halt, shift, echoes, damp, hold, spin, active,
       endReason: end && end.reason, since, colours, mode, hover, glyph: glyph(mode), motes, theme: opts.theme || 'dark', lanes: lanesOut,
       offer: offerOut, handoff: handoffOut, side: sideOut, sideDone: sideDoneOut,
       attendAmt: e.attend,

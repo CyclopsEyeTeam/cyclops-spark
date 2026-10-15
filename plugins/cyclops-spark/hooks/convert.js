@@ -12,7 +12,10 @@ import { REACTIONS } from './core.js'
 import { FONT, FONT_H } from './font.js'
 
 export const SIZES = { hd: 1920, '4k': 3840 }
-export const HD_MARKS = 240 // a refined or interpretive painting may use more marks than one for the pane
+export const HD_MARKS = 240
+// the thinnest a mark is drawn in a large picture, in pixels: a speck is a whole cell in the terminal, so a large
+// picture keeps its specks and fine lines visible (3 px at 1920 wide, 6 at 4k)
+export const markFloor = (W) => Math.max(0.6, W / 640) // a refined or interpretive painting may use more marks than one for the pane
 
 // a short, safe file name from a title
 export function slug(title, n) {
@@ -65,8 +68,9 @@ const hex = (c) => '#' + c.map((v) => Math.round(Math.max(0, Math.min(1, v)) * 2
 // ---------------------------------------------------------------- the scene as SVG
 // The scene is what paintingScene gives the raster: primitives in unit space (0,0 the middle; min(W,H) spans 2.4).
 // The same mapping the raster uses, so the SVG and the PNG are the one picture.
-export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '', caption = null } = {}) {
+export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '', caption = null, floor = 0.6 } = {}) {
   const scale = Math.min(W, H) / 2.4, ox = W / 2, oy = H / 2
+  const fl = Math.max(0.6, floor), fw = Math.max(0.9, floor * 1.5) // the thinnest a dot (radius) or a stroke (width) is drawn
   const X = (x) => +(ox + x * scale).toFixed(2), Y = (y) => +(oy + y * scale).toFixed(2), R = (r) => +(r * scale).toFixed(2)
   const col = (c) => hex(c)
   const dark = theme !== 'light'
@@ -78,20 +82,20 @@ export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '
     const a = num(p.a ?? 1)
     if (p.k === 'glow') {
       const g = 'g' + id++
-      defs.push(`<radialGradient id="${g}"><stop offset="0" stop-color="${col(p.c)}" stop-opacity="${num(a * (dark ? 0.9 : 0.5))}"/><stop offset="0.45" stop-color="${col(p.c)}" stop-opacity="${num(a * (dark ? 0.35 : 0.2))}"/><stop offset="1" stop-color="${col(p.c)}" stop-opacity="0"/></radialGradient>`)
+      defs.push(`<radialGradient id="${g}"><stop offset="0" stop-color="${col(p.c)}" stop-opacity="${num(a * (dark ? 0.9 : 0.5))}"/><stop offset="0.45" stop-color="${col(p.c)}" stop-opacity="${num(a * (dark ? 0.3 : 0.17))}"/><stop offset="0.7" stop-color="${col(p.c)}" stop-opacity="${num(a * (dark ? 0.07 : 0.04))}"/><stop offset="1" stop-color="${col(p.c)}" stop-opacity="0"/></radialGradient>`)
       body.push(`<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${R(p.r * 1.6)}" fill="url(#${g})"/>`)
     } else if (p.k === 'dot') {
-      body.push(`<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${Math.max(0.6, R(p.r))}" fill="${col(p.c)}" fill-opacity="${a}"/>`)
+      body.push(`<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${Math.max(fl, R(p.r))}" fill="${col(p.c)}" fill-opacity="${a}"/>`)
     } else if (p.k === 'ring') {
-      body.push(`<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${R(p.r)}" fill="none" stroke="${col(p.c)}" stroke-opacity="${a}" stroke-width="${Math.max(0.9, R(p.w))}"${p.dash ? ` stroke-dasharray="${R(p.r) * 0.3} ${R(p.r) * 0.15}"` : ''}/>`)
+      body.push(`<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${R(p.r)}" fill="none" stroke="${col(p.c)}" stroke-opacity="${a}" stroke-width="${Math.max(fw, R(p.w))}"${p.dash ? ` stroke-dasharray="${R(p.r) * 0.3} ${R(p.r) * 0.15}"` : ''}/>`)
     } else if (p.k === 'arc') {
       const span = ((p.a1 - p.a0) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2)
       const r = R(p.r), cx = X(p.x), cy = Y(p.y)
-      if (span < 1e-6) body.push(`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col(p.c)}" stroke-opacity="${a}" stroke-width="${Math.max(0.9, R(p.w))}"/>`)
+      if (span < 1e-6) body.push(`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col(p.c)}" stroke-opacity="${a}" stroke-width="${Math.max(fw, R(p.w))}"/>`)
       else {
         const sx = +(cx + r * Math.cos(p.a0)).toFixed(2), sy = +(cy + r * Math.sin(p.a0)).toFixed(2)
         const ex = +(cx + r * Math.cos(p.a0 + span)).toFixed(2), ey = +(cy + r * Math.sin(p.a0 + span)).toFixed(2)
-        body.push(`<path d="M ${sx} ${sy} A ${r} ${r} 0 ${span > Math.PI ? 1 : 0} 1 ${ex} ${ey}" fill="none" stroke="${col(p.c)}" stroke-opacity="${a}" stroke-width="${Math.max(0.9, R(p.w))}" stroke-linecap="round"/>`)
+        body.push(`<path d="M ${sx} ${sy} A ${r} ${r} 0 ${span > Math.PI ? 1 : 0} 1 ${ex} ${ey}" fill="none" stroke="${col(p.c)}" stroke-opacity="${a}" stroke-width="${Math.max(fw, R(p.w))}" stroke-linecap="round"/>`)
       }
     } else if (p.k === 'poly') {
       const pts = p.pts.map(([x, y]) => `${X(x)},${Y(y)}`).join(' ')
@@ -117,7 +121,7 @@ export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '
         defs.push(`<linearGradient id="${g}" gradientUnits="userSpaceOnUse" x1="${X(fx)}" y1="${Y(fy)}" x2="${X(lx)}" y2="${Y(ly)}"><stop offset="0" stop-color="${col(c0)}"/><stop offset="1" stop-color="${col(c1)}"/></linearGradient>`)
         stroke = `url(#${g})`
       }
-      body.push(`<polyline points="${pts}" fill="none" stroke="${stroke}" stroke-opacity="${a}" stroke-width="${Math.max(1, R(p.w))}" stroke-linecap="round" stroke-linejoin="round"/>`)
+      body.push(`<polyline points="${pts}" fill="none" stroke="${stroke}" stroke-opacity="${a}" stroke-width="${Math.max(fw, R(p.w))}" stroke-linecap="round" stroke-linejoin="round"/>`)
     }
   }
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -128,9 +132,13 @@ export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H + strip}" viewBox="0 0 ${W} ${H + strip}">`,
     title ? `<title>${esc(title)}</title>` : '',
+    dark ? '<style>.add>*{mix-blend-mode:screen;mix-blend-mode:plus-lighter}</style>' : '',
     `<rect width="${W}" height="${H + strip}" fill="${bg}"/>`,
     defs.length ? `<defs>${defs.join('')}</defs>` : '',
-    `<g${dark ? ' style="mix-blend-mode:screen"' : ''}>${body.join('')}</g>`,
+    // on a dark ground every mark adds its light to what is already there, as the terminal draws it: plus-lighter where
+    // the viewer has it (browsers), screen (nearly it) elsewhere; each mark on its own, so a glow brightens the hill it
+    // sits on. On a light ground each goes over the last, as paper
+    `<g${dark ? ' class="add"' : ''}>${body.join('')}</g>`,
     text,
     '</svg>',
     '',
