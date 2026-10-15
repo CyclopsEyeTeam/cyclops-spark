@@ -31,14 +31,14 @@
 
 import type { EngineInterface, Register } from 'claude-code'
 import { buildScene, createPresence, laneFor, PAINT_TOWARD, PALETTE_NAMES } from './core.js'
-import { base64, createRaster, toHalfBlocks, toRGBA8 } from './render-raster.js'
+import { base64, createRaster, toHalfBlocks, toRGB8, toRGBA8 } from './render-raster.js'
 import { buildTrace, replayAt } from './trace.js'
 import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
 import { KEEPER, PRISM } from './link-marks.js'
 import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
 import { motion, motionFor } from './motion.js'
-import { canvasFor, captionLines, flattenRGBA, galleryHTML, HD_MARKS, revisitRequest, sceneSVG, SIZES, slug, withCaption } from './convert.js'
+import { canvasFor, captionLines, galleryHTML, HD_MARKS, markFloor, revisitRequest, sceneSVG, SIZES, slug, withCaption } from './convert.js'
 
 const PANE = 'cyclops-spark'
 const T0 = Date.now()
@@ -119,15 +119,36 @@ type StoryEntry = Painting & { shape: string; cost: number; clock: string; live:
 const story: StoryEntry[] = []
 const STORY_MAX = 60
 const STORY_S = 7 // each painting is laid down again, then held, for this long
-let storyOn: { at: number } | null = null
+// Told once through, then held on the last page. `paused`: the moment it was held (the page stays), `done`: it reached
+// the end on its own. Controls under the painting, only while it is on: pause/play, back, next, end
+// Its pages turn by the host's clock ($.clock.now, read each tick into hostT while a story is on); `shownAt` is when
+// the page showing was laid down (Spark's own clock, for the reveal)
+let storyOn: { at: number; paused: number | null; done: boolean; shownAt: number } | null = null
 let storySlide = -1
-const storyIndex = () => storyOn && story.length ? Math.floor(Math.max(0, now() - storyOn.at) / STORY_S) : -1
+let hostT = 0 // the host's clock, in seconds, as of the last tick
+const storyElapsed = () => storyOn ? Math.max(0, (storyOn.paused ?? hostT) - storyOn.at) : 0
+const storyIndex = () => storyOn && story.length ? Math.min(story.length - 1, Math.floor(storyElapsed() / STORY_S)) : -1
+// hold the story on a page, or let it go on from the page it is on
+function storyPause(hold: boolean) {
+  if (!storyOn) return
+  if (hold) { if (storyOn.paused === null) storyOn.paused = hostT }
+  else if (storyOn.paused !== null) { storyOn.at += hostT - storyOn.paused; storyOn.paused = null; storyOn.done = false }
+}
+// turn to a page (clamped), laid down anew; a held story stays held on it
+function storyTurn(k: number) {
+  if (!storyOn || !story.length) return
+  const page = Math.max(0, Math.min(story.length - 1, k))
+  storyOn.at = hostT - page * STORY_S
+  if (storyOn.paused !== null) storyOn.paused = hostT
+  storyOn.done = false
+  if (page !== storySlide) { storySlide = page; storyOn.shownAt = now() }
+}
 // what the painting area shows: in a story, the session's paintings in turn (each laid down again); otherwise the last one
 function shownPainting(): (Painting & { at: number; n: number; shape: string; cost: number }) | null {
   const k = storyIndex()
   if (k < 0) return painting
-  const e = story[k % story.length]!
-  return { ...e, at: storyOn!.at + k * STORY_S, n: 1e6 + k }
+  const e = story[k]!
+  return { ...e, at: storyOn!.shownAt, n: 1e6 + k }
 }
 let paintBeside = false // the pane's last layout put the painting beside Spark (a wide, short room), not below her
 let paintRoom: { columns: number; rows: number } | null = null // the room the last painting area had: the next canvas takes its shape
@@ -382,7 +403,11 @@ async function paint($: EngineInterface) {
   if (!paneOpen && !band) return
   if (paneOpen && !focusMode && !replay && turnBegan >= 0 && tick % 3 === 0) $.ui.invalidate('ui.render') // Claude's breath, above her line
   // a new painting is laid down mark by mark: its own small drawing, repainted only while it is being laid down
-  if (storyOn) { const k = storyIndex(); if (k !== storySlide) { storySlide = k; $.ui.invalidate('ui.render') } } // the next page of the story
+  if (storyOn) { // the next page of the story; past the last one it holds there (told once, not round and round)
+    hostT = (await $.clock.now()) / 1000
+    if (storyOn.paused === null && storyElapsed() >= story.length * STORY_S) { storyOn.paused = hostT; storyOn.done = true; storyOn.at = storyOn.paused - (story.length - 1) * STORY_S; $.ui.invalidate('ui.render') }
+    const k = storyIndex(); if (k !== storySlide) { storySlide = k; storyOn.shownAt = now(); $.ui.invalidate('ui.render') }
+  }
   const shown = shownPainting()
   if ((paintOn || storyOn) && shown && paintSite && paneOpen && !focusMode && now() - shown.at < REVEAL_S + 0.2) {
     const fr = paintFrame(paintSite.columns, paintSite.rows)
@@ -506,18 +531,21 @@ async function convertPainting($: EngineInterface, modeWord: string, sizeWord: s
       const when = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
       const caption = convertCaption ? captionLines(p.title, tag, when) : null
       const svgPath = `${folder}/${name}.svg`
-      await $.fs.write(svgPath, sceneSVG(scene, W, H, { theme: activeTheme(), title: p.title, caption }))
+      const floor = markFloor(W) // specks and fine lines stay visible at full size, as they are in the terminal
+      await $.fs.write(svgPath, sceneSVG(scene, W, H, { theme: activeTheme(), title: p.title, caption, floor }))
       written.push(`${name}.svg`)
       // the PNG: the raster at full size, flattened onto the ground, handed to the python helper as base64 text
       const raster = createRaster(W, H)
-      raster.draw(scene, activeTheme(), { over: true }) // as the SVG: each mark over the last
-      const flat = flattenRGBA(toRGBA8(raster), W, H, ground())
+      raster.draw(scene, activeTheme(), { floor }) // exactly as the terminal draws it: light added to light on a dark ground, over on a light one
+      const flat = toRGB8(raster, ground()) // and flattened onto the ground the same way her cells are
       const { rgb, H: fullH } = caption ? withCaption(flat, W, H, caption, ground(), { light: activeTheme() === 'light' }) : { rgb: flat, H }
+      // in parts of at most 3 MB of text each: one write may carry 4 MiB, and a 4k picture is far more than that
+      const b64 = base64(rgb), PART = 3_000_000, parts = Math.ceil(b64.length / PART)
       const b64Path = `${folder}/${name}.rgb.b64`
-      await $.fs.write(b64Path, base64(rgb))
+      for (let k = 0; k < parts; k++) await $.fs.write(`${b64Path}.${k}`, b64.slice(k * PART, (k + 1) * PART))
       let png = false
       try {
-        const run = $.process.spawn({ argv: ['python3', `${$.plugin.root}/link/spark_png.py`, b64Path, `${folder}/${name}.png`, String(W), String(fullH)] })
+        const run = $.process.spawn({ argv: ['python3', `${$.plugin.root}/link/spark_png.py`, b64Path, `${folder}/${name}.png`, String(W), String(fullH), String(parts)] })
         for await (const _ of run) { /* its lines are not needed */ }
         const end = await run.result
         png = (end as { code?: number } | null)?.code === 0
@@ -634,7 +662,7 @@ const spentText = () => `painter · ${paintSpent.paintings} ${paintSpent.paintin
 function paintBlock(els: any, width: number, room0: number): any[] {
   if (!(paintOn || storyOn) || room0 < 1 || width < 4) return []
   const painting = shownPainting() // in a story, the page it is on
-  const { Box, Text, Raster, Image, Input } = els
+  const { Box, Text, Raster, Image, Input, Button } = els
   // TALK, at the very bottom: what you last said, her answer, and a line to say something to her. It takes its rows
   // first only in a room big enough to hold the painting too; in a small one it waits
   const talkEls: any[] = []
@@ -657,7 +685,7 @@ function paintBlock(els: any, width: number, room0: number): any[] {
   // when there is room for it after the title, and never at the cost of the painting itself (it needs at least 3 rows)
   const k = storyIndex()
   const costs = k >= 0
-    ? [`story · ${(k % story.length) + 1} of ${story.length} · ${story[k % story.length]!.clock}${story[k % story.length]!.live ? ' · while it worked' : ''}`] // which page of the session's story
+    ? [`story · ${k + 1} of ${story.length} · ${story[k]!.clock}${story[k]!.live ? ' · while it worked' : ''}${storyOn!.done ? ' · the end' : storyOn!.paused !== null ? ' · held' : ''}`] // which page of the session's story
     : painting.cost > 0 ? [`this painting · ${kilo(painting.cost)} tokens`, `session · ${spentText().replace(/^painter · /, '')}`] : []
   let spendRows = 0
   const spent: any[] = []
@@ -666,6 +694,19 @@ function paintBlock(els: any, width: number, room0: number): any[] {
     if (!(room - lines - after >= 3 || (room - lines < 3 && room >= lines + after))) break
     spendRows = after
     spent.push(Text({ children: [c], dimColor: true, wrap: 'wrap' }))
+  }
+  // the story's controls, on one row under its line, only while a story is on: hold it on this page (to convert it:
+  // /spark convert takes the page showing), let it go on, turn back or forward, or end it
+  if (k >= 0 && Button && spendRows && room - lines - spendRows - 1 >= 3) {
+    const held = storyOn!.paused !== null
+    const ctl = (key: string, label: string, press: () => void) => Button({ key, label, plain: true, dimColor: true, onPress: press })
+    spent.push(Box({ flexDirection: 'row', columnGap: 2, children: [
+      ctl('story-play', held ? (storyOn!.done ? '▶ again' : '▶ play') : '⏸ pause', () => { if (!storyOn) return; if (held && storyOn.done) { storyTurn(0); storyPause(false) } else storyPause(!held) }),
+      ctl('story-back', '‹ back', () => storyTurn(k - 1)),
+      ctl('story-next', 'next ›', () => storyTurn(k + 1)),
+      ctl('story-end', '■ end', () => { storyOn = null }),
+    ] }))
+    spendRows += 1
   }
   const gap = room >= lines + spendRows + 7 ? 1 : 0
   const free = Math.min(60, room - lines - spendRows - gap)
@@ -1066,17 +1107,23 @@ export const register: Register = (on, options) => {
       } else text = 'link takes: on | off | status'
     }
     else if (word === 'convert') text = await convertPainting($, arg, e.args.trim().toLowerCase().split(/\s+/)[2] ?? '')
-    else if (word === 'story') { // the session's paintings, told again in order: nothing is asked of any model
-      if (storyOn) { storyOn = null; text = 'story ended: back to the last painting' }
+    else if (word === 'story') { // the session's paintings, told again in order, once through: nothing is asked of any model
+      const page = () => storyOn ? `page ${storyIndex() + 1} of ${story.length}` : ''
+      if (storyOn && (arg === 'pause' || arg === 'hold')) { storyPause(true); text = `story held on ${page()}: /spark convert makes this one large; /spark story play goes on` }
+      else if (storyOn && (arg === 'play' || arg === 'go')) { if (storyOn.done) storyTurn(0); storyPause(false); text = `story goes on from ${page()}` }
+      else if (storyOn && (arg === 'next' || arg === 'back')) { storyTurn(storyIndex() + (arg === 'next' ? 1 : -1)); text = `story: ${page()}${storyOn.paused !== null ? ' (held)' : ''}` }
+      else if (storyOn && arg !== '' && arg !== 'end' && arg !== 'off') text = 'story takes: pause | play | next | back | end'
+      else if (storyOn) { storyOn = null; text = 'story ended: back to the last painting' }
+      else if (arg !== '' && arg !== 'on') text = story.length ? 'no story is on: /spark story starts one' : 'no paintings yet this session: /spark paint makes one'
       else if (!story.length) text = 'no paintings yet this session: /spark paint makes one'
       else {
         if (!paneOpen) { band = false; text = (await openPane($)) + '; ' } else text = ''
-        storyOn = { at: now() }; storySlide = -1
-        text += `story: ${story.length} ${story.length === 1 ? 'painting' : 'paintings'} from this session, each laid down again in order, ${STORY_S} s apiece, round and round. /spark story ends it`
+        hostT = (await $.clock.now()) / 1000
+        storyOn = { at: hostT, paused: null, done: false, shownAt: now() }; storySlide = 0
+        text += `story: ${story.length} ${story.length === 1 ? 'painting' : 'paintings'} from this session, each laid down again in order, ${STORY_S} s apiece, once through, then held on the last. Under the painting: pause (to convert that one), back, next, end; or /spark story pause | play | next | back | end`
       }
     }
-    else if (word === 'paint') { // two controls: /spark paint (on, and one now) and /spark paint off
-      const where = paneOpen && !focusMode ? '' : ' (it shows below Spark at the side: /spark)'
+    else if (word === 'paint') { // two controls: /spark paint (on, and one now; opens Spark herself if she is not up) and /spark paint off
       if (arg === 'off') {
         const was = paintOn
         paintOn = false; painting = null; paintSite = null; talk = null
@@ -1084,8 +1131,10 @@ export const register: Register = (on, options) => {
       } else if (arg === '' || arg === 'on' || arg === 'now') { // on and now are the old words for the same thing
         const turning = !paintOn
         paintOn = true
+        let opened = ''
+        if (!paneOpen && !focusMode) { band = false; opened = (await openPane($)) + '; ' } // she is not there yet: the painting needs her pane, so open it
         const made = await paintNow($, 'asked')
-        text = turning ? paintOnText() + '. ' + made.replace(/ \(it shows below Spark at the side: \/spark\)$/, '') + where : made
+        text = opened + (turning ? paintOnText() + '. ' + made.replace(/ \(it shows below Spark at the side: \/spark\)$/, '') : made)
       } else text = '/spark paint turns the painter on and paints one now (it uses tokens); /spark paint off stops it'
     }
     else if (word === 'help' || (word !== '' && word !== 'pane')) text = HELP
@@ -1143,14 +1192,15 @@ export const register: Register = (on, options) => {
       // The side pane, laid out for the room it really has, on every render (a resize is just the next render). Text is
       // never cut short: the state line, the Link line and the painting's title wrap, and their rows are counted first.
       const linkText = linkOn && linkView && !replay ? linkLine(linkView) : ''
-      // her lines: Claude's own breath above while a turn runs, her state line, what you are waiting on, then the effort
-      // (it never changes within a turn, so it sits at the bottom), then Link
+      // her lines, each on a row of its own that is always there, so nothing above the painting ever changes place:
+      // Claude's own breath (blank between turns), her state line, what you are waiting on, then the effort (blank
+      // between turns; it never changes within one, so it sits at the bottom), then Link
       const voice = voiceLine(f)
       const lines: Array<[string, Record<string, unknown>]> = [
-        ...(voice ? [[voice, { color: 'claude' }]] as Array<[string, Record<string, unknown>]> : []),
+        [voice || ' ', { color: 'claude' }],
         [said.head, {}],
         ...said.notes.map((n): [string, Record<string, unknown>] => ['· ' + n, {}]),
-        ...(said.effort ? [[said.effort, { dimColor: true }]] as Array<[string, Record<string, unknown>]> : []),
+        [said.effort || ' ', { dimColor: true }],
         ...(linkText ? [[linkText, { dimColor: true }]] as Array<[string, Record<string, unknown>]> : []),
       ]
       const textRows = (width: number) => heldRows(width, lines.reduce((n, [t]) => n + wrapRows(t, width), 0))
