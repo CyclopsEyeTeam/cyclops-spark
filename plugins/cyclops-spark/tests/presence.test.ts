@@ -158,6 +158,81 @@ test('the HD option off: the half blocks from the start', { options: { hd: false
   expect(await settings($)).toMatch(/ · hd off · /)
 })
 
+// ---------------------------------------------------------------- the welcome eye
+const sessionHooks = (on: On) => {
+  on('command.register', async () => loose({ value: undefined }))
+  on('session.start', async () => loose({ cwd: '/' }))
+  on('session.end', async () => ({ sessionId: 's' }))
+  on('ui.blit', async () => loose({ value: {} }))
+}
+const startSession = ($: Engine) => $.session.start(loose({ cwd: '/', surface: 'terminal', isInteractive: true }))
+const band = async ($: Engine, props: Record<string, unknown> = {}) => {
+  const ui = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...BAND, props: { ...BAND.props, ...props } } as never)
+  const eye = await ui.find({ type: 'Raster', key: 'cyclops-eye' })
+  const title = await ui.find({ type: 'Text', text: 'C Y C L O P S   E Y E' })
+  const theirs = await ui.find({ type: 'Text', text: 'engine band' })
+  await ui.unmount()
+  return { eye: eye?.props as { columns: number; rows: number; cells: string } | undefined, title: Boolean(title), theirs: Boolean(theirs) }
+}
+
+test('a session starts with the Cyclops eye above the prompt, in its own drawing, until the first turn; /clear brings it back', async ($, on) => {
+  engine(on)
+  sessionHooks(on)
+  expect((await band($)).eye).toBeUndefined() // before the session starts, nothing of it
+  await startSession($)
+  let b = await band($)
+  expect(b.eye).toBeDefined()
+  expect(b.eye!.rows).toBe(9) // as large as the room allows, at most 9 rows
+  expect(b.eye!.columns).toBe(38) // its own shape
+  expect(b.title).toBe(true)
+  expect(b.theirs).toBe(true) // what others draw there stays, under it
+  const w = words(b.eye!.cells)
+  expect(w.length).toBe(38 * 9 * 3)
+  const QUADS = new Set([0x20, 0x2580, 0x2584, 0x2588, 0x258c, 0x2590, 0x2596, 0x2597, 0x2598, 0x2599, 0x259a, 0x259b, 0x259c, 0x259d, 0x259e, 0x259f])
+  for (let i = 0; i < w.length; i += 3) expect(QUADS.has(w[i]!)).toBe(true)
+  const has = (rgb: number) => w.some((v, i) => i % 3 !== 0 && v === rgb)
+  expect(has(0x46beff)).toBe(true) // the lids, glowing blue
+  expect(w.some((v, i) => i % 3 !== 0 && v !== 0x01000000 && ((v >> 16) & 255) === 255 && ((v >> 8) & 255) > 60 && ((v >> 8) & 255) < 200 && (v & 255) < 80)).toBe(true) // the iris, amber to red
+  expect(w.filter((v, i) => i % 3 === 0 && v === 0x20).length).toBeGreaterThan(20) // the terminal's own ground around it
+  await $.turn.start(loose({ text: 'go', turnId: 'w1' }))
+  b = await band($)
+  expect(b.eye).toBeUndefined() // the first turn: the room is given back
+  expect(b.theirs).toBe(true)
+  await $.turn.complete(answer('w1', 1))
+  expect((await band($)).eye).toBeUndefined() // and it stays gone for the session
+  await $.session.end(loose({ reason: 'clear', sessionId: 's', resume: {} }))
+  expect((await band($)).eye).toBeDefined() // a new conversation: welcome again
+})
+
+test('the welcome fits the room: smaller in a short band, the eye alone when narrow, nothing when there is no room or a survey holds the band', async ($, on) => {
+  engine(on)
+  sessionHooks(on)
+  await startSession($)
+  let b = await band($, { maxRows: 8 })
+  expect(b.eye!.rows).toBe(6) // two rows kept for what others draw there
+  expect(b.title).toBe(true)
+  const line = async (props: Record<string, unknown>) => { const ui = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...BAND, props: { ...BAND.props, ...props } } as never); const t = await ui.find({ type: 'Text', text: /the eye is open/ }); await ui.unmount(); return Boolean(t) }
+  expect(await line({ bodyColumns: 69 })).toBe(true) // 38 for the eye, 2 between, 29 for the line
+  b = await band($, { bodyColumns: 62 })
+  expect(b.title).toBe(true); expect(await line({ bodyColumns: 62 })).toBe(false) // room for its name only
+  b = await band($, { bodyColumns: 34 })
+  expect(b.eye!.columns).toBeLessThanOrEqual(34)
+  expect(b.title).toBe(false) // no room for the words: the eye alone
+  expect((await band($, { maxRows: 5 })).eye).toBeUndefined() // under 4 rows for it: nothing
+  expect((await band($, { hasSurvey: true })).eye).toBeUndefined() // a survey: left to it
+  expect(await say($, 'hd off')).toMatch(/^hd off/)
+  const half = await band($)
+  for (let i = 0, w = words(half.eye!.cells); i < w.length; i += 3) expect([0x20, 0x2580, 0x2584].includes(w[i]!)).toBe(true)
+  await say($, 'hd on')
+})
+
+test('the welcome setting off: no eye', { options: { welcome: false } }, async ($, on) => {
+  engine(on)
+  sessionHooks(on)
+  await startSession($)
+  expect((await band($)).eye).toBeUndefined()
+})
+
 test('talking with Keeper (GPT) is a peer lane, drawn in the terminal', async ($, on) => {
   engine(on)
   let release = () => {}
