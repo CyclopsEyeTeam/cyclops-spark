@@ -69,7 +69,9 @@ asks once (the answer defaults to no), or say it up front with `./install.sh --b
 
 It adds one marked block to `~/.bashrc` or `~/.zshrc` (a backup is kept beside it) that prints the banner and then runs
 your usual `claude`. It only shows in an interactive terminal at least 64 columns wide, never for `claude -p`,
-`--version` or subcommands such as `claude plugin`, and `CYCLOPS_BANNER=0` hides it for a session. `./uninstall.sh`
+`--version` or subcommands such as `claude plugin`, and `CYCLOPS_BANNER=0` hides it for a session. Claude Code draws
+over the whole screen as it starts, so the eye is held for 2 seconds first (any key goes on at once;
+`CYCLOPS_BANNER_HOLD` sets the seconds, `0` for none). `./uninstall.sh`
 takes the block out again, or run `extras/launch-banner/banner.sh remove` to drop only the banner. To change the art,
 edit `~/.cyclops/banner.txt`, or regenerate it with `extras/launch-banner/make_banner.py`.
 

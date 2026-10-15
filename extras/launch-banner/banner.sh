@@ -7,7 +7,9 @@
 #
 # The block wraps the `claude` command in a small shell function that prints the banner and then runs the real
 # `claude`. It only prints in an interactive terminal at least as wide as the banner, never for `claude -p`,
-# `--version`, `--help` or subcommands such as `claude plugin ...`, and `CYCLOPS_BANNER=0` silences it.
+# `--version`, `--help` or subcommands such as `claude plugin ...`, and `CYCLOPS_BANNER=0` silences it. Claude Code
+# draws over the whole screen as it starts, so the eye is held for a moment first (`CYCLOPS_BANNER_HOLD` seconds, 2 by
+# default, 0 for none); any key goes on at once.
 set -euo pipefail
 
 here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -62,7 +64,15 @@ function claude {
     local a show=1
     case "\${1:-}" in plugin|plugins|mcp|config|update|doctor|install|setup-token|migrate-installer) show=0 ;; esac
     for a in "\$@"; do case "\$a" in -p|--print|-v|--version|-h|--help) show=0 ;; esac; done
-    [ "\$show" = 1 ] && cat -- "$dest"
+    if [ "\$show" = 1 ]; then
+      cat -- "$dest"
+      # Claude Code draws over the whole screen as it starts, which would cover the eye at once: hold it a moment
+      # (CYCLOPS_BANNER_HOLD seconds, 2 by default, 0 for none); any key goes on straight away
+      local REPLY hold="\${CYCLOPS_BANNER_HOLD:-2}"
+      if [ "\$hold" != 0 ] && [ -t 0 ]; then
+        if [ -n "\${ZSH_VERSION:-}" ]; then read -s -t "\$hold" -k 1 2>/dev/null; else read -rs -n 1 -t "\$hold" 2>/dev/null; fi
+      fi
+    fi
   fi
   if [ -n "\$__cyclops_claude_cmd" ]; then eval "\$__cyclops_claude_cmd"' "\$@"'; else command claude "\$@"; fi
 }
