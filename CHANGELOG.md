@@ -2,13 +2,16 @@
 
 ## 1.7.4
 
-- **Convert all paintings, any way.** In `/spark convert`'s menu, **All paintings…** opens a second menu: faithful,
-  refined or interpretive, each with what it will cost beside it (`Refined · about 48k tokens`): faithful is free, the
-  other two are one painter call a painting, estimated from what such calls have used this session, or before any from
-  the paintings' own length. A revisited set runs beside the work (a session's worth takes minutes): `/spark state` shows
-  `converting 4 of 19 (refined)`, and when it is done Spark says so in the conversation and in a toast, with the files
-  and the gallery page. Typed: `/spark convert all faithful | refined | interpretive [hd | 4k]`; `all` alone, or a size
-  alone (`/spark convert 4k`), asks.
+- **Every convert choice shows what it costs, and All… does more.** The menu reads `Faithful · no tokens`,
+  `Refined · about 3.1k tokens`, `Interpretive · about 3.1k tokens`, `All…`; the estimates come from what painter
+  revisits have used this session, or before any from the painting's own length. **All…** opens a second menu:
+  **all three ways of this painting**, or **every painting of the session** faithful, refined or interpretive, each with
+  its cost. Two painter calls or more run beside the work (a session's worth takes minutes): `/spark state` shows
+  `converting 4 of 19 (all, refined)`, and when it is done Spark says so in the conversation and in a toast, with the
+  files and the gallery page. Typed: `/spark convert three`, `/spark convert all faithful | refined | interpretive
+  [hd | 4k]`; `all` alone, or a size alone (`/spark convert 4k`), asks.
+
+## 1.7.3
 
 - **The welcome eye.** When a session starts (and when `/clear` begins a new conversation), Spark draws the Cyclops eye
   above the prompt, with `C Y C L O P S   E Y E` and `the eye is open` beside it, until the first turn; then the room

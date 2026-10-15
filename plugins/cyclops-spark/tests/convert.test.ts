@@ -175,7 +175,8 @@ test('a bare /spark convert asks which way, in Claude Code\'s own dialog, and do
     const q = (e as { questions: Array<{ question: string; options: Array<{ label: string }> }> }).questions
     asked.push(q)
     if (answer === null) return loose({ result: 'dismissed', isError: true })
-    return loose({ result: { questions: q, answers: { [q[0]!.question]: answer } } })
+    const label = q[0]!.options.map((o) => o.label).find((l) => l.startsWith(answer!)) ?? answer
+    return loose({ result: { questions: q, answers: { [q[0]!.question]: label } } })
   })
   expect(await say($, 'convert')).toMatch(/^no paintings yet this session/) // nothing to ask about yet
   expect(asked).toHaveLength(0)
@@ -185,7 +186,11 @@ test('a bare /spark convert asks which way, in Claude Code\'s own dialog, and do
   expect(asked).toHaveLength(1)
   const q = (asked[0] as Array<{ question: string; options: Array<{ label: string }> }>)[0]!
   expect(q.question).toBe('How shall Spark make the painting large?')
-  expect(q.options.map((o) => o.label)).toEqual(['Faithful', 'Refined', 'Interpretive', 'All paintings…'])
+  const labels = q.options.map((o) => o.label)
+  expect(labels[0]).toBe('Faithful · no tokens') // every choice with what it costs beside it
+  expect(labels[1]).toMatch(/^Refined · about \d+(\.\d)?k tokens$/)
+  expect(labels[2]).toMatch(/^Interpretive · about \d+(\.\d)?k tokens$/)
+  expect(labels[3]).toBe('All…')
   expect(out).toMatch(/^converted \(refined, 1920 wide\)/)
   expect(asks.length).toBe(n0 + 1) // the refined way: the painter asked once
   expect([...files.keys()].some((f) => f.endsWith('-refined.svg'))).toBe(true)
@@ -247,7 +252,7 @@ test('a big picture goes to the helper in parts, each under what one write may c
   await cmd($, 'paint off')
 })
 
-test('all paintings: a second menu asks which way, each with what it costs; a revisited set goes on beside the work and Spark says when it is done', async ($, on) => {
+test('All… opens a second menu: this painting all three ways, or every painting one way, each with its cost; two painter calls or more go on beside the work and Spark says when done', async ($, on) => {
   const { files, asks } = engine(on)
   const answers: string[] = []
   const asked: Array<{ question: string; labels: string[] }> = []
@@ -264,32 +269,47 @@ test('all paintings: a second menu asks which way, each with what it costs; a re
   on('ui.log', async (_$, e) => { logs.push(String((e as { text: string }).text)); return loose({ value: undefined }) })
   on('ui.toast', async (_$, e) => { toasts.push(String((e as { text: string }).text)); return loose({ value: undefined }) })
   await cmd($, 'paint'); await say($, 'paint'); await say($, 'paint'); await settle()
-  // the first menu, then All: the second, with the cost beside each way
-  answers.push('All', 'Faithful')
+  // All…, then every painting faithfully (no painter calls: done at once)
+  answers.push('All…', 'All 3 paintings, faithful')
   expect(await say($, 'convert 256')).toMatch(/^converted \(all, faithful, 256 wide\)/)
-  expect(asked[1]!.question).toBe('All 3 paintings of this session: which way?')
-  expect(asked[1]!.labels[0]).toBe('Faithful · no tokens')
-  expect(asked[1]!.labels[1]).toMatch(/^Refined · about \d+(\.\d)?k tokens$/)
-  expect(asked[1]!.labels[2]).toMatch(/^Interpretive · about \d+(\.\d)?k tokens$/)
-  // typed: all, then the way, then the size; refined: one painter call each, beside the work
-  const n0 = asks.length
-  const started = await say($, 'convert all refined 256')
-  expect(started).toMatch(/^converting all 3 paintings, refined, 256 wide, into \/home\/t\/zilo\/spark-paintings: one painter call each, about \d+(\.\d)?k tokens/)
+  expect(asked[1]!.question).toBe('All… of this painting, or of all 3 paintings of this session?')
+  expect(asked[1]!.labels).toHaveLength(4)
+  expect(asked[1]!.labels[0]).toMatch(/^All three ways, this painting · about \d+(\.\d)?k tokens$/)
+  expect(asked[1]!.labels[1]).toBe('All 3 paintings, faithful · no tokens')
+  expect(asked[1]!.labels[2]).toMatch(/^All 3 paintings, refined · about \d+(\.\d)?k tokens$/)
+  expect(asked[1]!.labels[3]).toMatch(/^All 3 paintings, interpretive · about \d+(\.\d)?k tokens$/)
+  // All…, then this painting all three ways: two painter calls, beside the work
+  let n0 = asks.length
+  answers.push('All…', 'All three ways')
+  expect(await say($, 'convert 256')).toMatch(/^converting this painting all three ways, 256 wide, into \/home\/t\/zilo\/spark-paintings: 2 painter calls, about \d+(\.\d)?k tokens/)
   await until(() => logs.length >= 1)
-  expect(asks.length).toBe(n0 + 3)
-  expect([...files.keys()].filter((f) => f.endsWith('-refined.svg'))).toHaveLength(3)
-  expect(logs.at(-1)).toMatch(/^Spark: converted \(all, refined, 256 wide\)/)
-  expect(toasts.at(-1)).toBe('Spark: all 3 paintings converted (refined)')
-  // now the estimate is from what those calls really used: 900 + 700 tokens each, as the mock answers
-  const tick = asked.length
-  answers.push('All') // and the second menu dismissed: nothing is done
+  expect(asks.length).toBe(n0 + 2)
+  for (const w of ['faithful', 'refined', 'interpretive']) expect([...files.keys()].some((f) => f.endsWith(`-${w}.svg`))).toBe(true)
+  expect(logs.at(-1)).toMatch(/^Spark: converted \(all three ways, 256 wide\)/)
+  expect(toasts.at(-1)).toBe('Spark: converted this painting all three ways')
+  // now the costs are from what those calls really used: 900 + 700 tokens each, as the mock answers
+  answers.push('Refined')
+  expect(await say($, 'convert 256')).toMatch(/^converted \(refined, 256 wide\)/)
+  expect(asked.at(-1)!.labels[1]).toBe('Refined · about 1.6k tokens')
+  answers.push('All…') // and the second menu dismissed: nothing is done
   expect(await say($, 'convert')).toBe('convert: nothing chosen')
-  expect(asked[tick + 1]!.labels[2]).toBe('Interpretive · about 4.8k tokens') // 3 x 1,600
-  // typed all on its own asks the way too
-  answers.push('Interpretive')
-  expect(await say($, 'convert all 256')).toMatch(/^converting all 3 paintings, interpretive/)
-  expect(await say($, 'state')).toMatch(/converting \d of 3 \(interpretive\)|paint on/)
+  expect(asked.at(-1)!.labels[0]).toBe('All three ways, this painting · about 3.2k tokens')
+  expect(asked.at(-1)!.labels[2]).toBe('All 3 paintings, refined · about 4.8k tokens')
+  // typed: all with its way and size, beside the work
+  n0 = asks.length
+  expect(await say($, 'convert all refined 256')).toMatch(/^converting all 3 paintings, refined, 256 wide, into .*: 3 painter calls, about 4\.8k tokens/)
   await until(() => logs.length >= 2)
-  expect(logs.at(-1)).toMatch(/^Spark: converted \(all, interpretive, 256 wide\)/)
+  expect(asks.length).toBe(n0 + 3)
+  expect(logs.at(-1)).toMatch(/^Spark: converted \(all, refined, 256 wide\)/)
+  expect(toasts.at(-1)).toBe('Spark: converted all 3 paintings, refined')
+  // typed all alone asks which way, for every painting
+  answers.push('All 3 paintings, interpretive')
+  expect(await say($, 'convert all 256')).toMatch(/^converting all 3 paintings, interpretive/)
+  expect(asked.at(-1)!.labels).toHaveLength(3) // typed all: every painting, so no 'this painting' choice
+  await until(() => logs.length >= 3)
+  // typed three
+  expect(await say($, 'convert three 256')).toMatch(/^converting this painting all three ways/)
+  await until(() => logs.length >= 4)
+  expect(logs.at(-1)).toMatch(/^Spark: converted \(all three ways/)
   await cmd($, 'paint off')
 })
