@@ -571,6 +571,7 @@ async function convertPainting($: EngineInterface, words: string[]): Promise<str
   const run = async (): Promise<string> => {
     try {
       for (const { source, way: revisit } of jobs) {
+        await $.clock.now() // between pictures: let everything else run
         let p: Painting & { shape: string } = source
         let tag: string = revisit
         if (revisit !== 'faithful') { // the painter revisits its own work: one call
@@ -594,7 +595,7 @@ async function convertPainting($: EngineInterface, words: string[]): Promise<str
         written.push(`${name}.svg`)
         // the PNG: the raster at full size, flattened onto the ground, handed to the python helper as base64 text
         const raster = createRaster(W, H)
-        raster.draw(scene, activeTheme(), { floor }) // exactly as the terminal draws it: light added to light on a dark ground, over on a light one
+        await raster.drawAsync(scene, activeTheme(), { floor }, () => $.clock.now()) // exactly as the terminal draws it: light added to light on a dark ground, over on a light one; handing over now and then, so Spark keeps moving
         const flat = toRGB8(raster, ground()) // and flattened onto the ground the same way her cells are
         const { rgb, H: fullH } = caption ? withCaption(flat, W, H, caption, ground(), { light: activeTheme() === 'light' }) : { rgb: flat, H }
         // in parts of at most 3 MB of text each: one write may carry 4 MiB, and a 4k picture is far more than that
@@ -624,19 +625,20 @@ async function convertPainting($: EngineInterface, words: string[]): Promise<str
     }
     return `converted (${said}, ${width} wide) into ${folder}: ${written.join(', ')}` + (note ? '. ' + note : '')
   }
-  // two painter calls or more (this painting all three ways, or a session revisited) take minutes: it goes on beside the
-  // work, and Spark says in the conversation when it is done (/spark state shows how far it has got)
+  // more than one picture, or one larger than HD, or two painter calls or more: it goes on beside the work (a command
+  // has ten seconds of its own time, and a session's worth takes far longer), and Spark says in the conversation when it
+  // is done (/spark state shows how far it has got). One HD picture is quick and comes back at once
   const calls = jobs.filter((j) => j.way !== 'faithful').length
-  if (calls >= 2) {
+  if (calls >= 2 || jobs.length >= 2 || width > SIZES.hd!) {
     const est = jobsEstimate(jobs)
     convertProgress = { done: 0, total: jobs.length, what: said }
-    const what = mode === 'three' ? 'this painting all three ways' : `all ${jobs.length} ${jobs.length === 1 ? 'painting' : 'paintings'}, ${way}`
+    const what = mode === 'three' ? 'this painting all three ways' : mode === 'all' ? `all ${jobs.length} ${jobs.length === 1 ? 'painting' : 'paintings'}, ${way}` : `this painting, ${mode}`
     void quietly(async () => {
       const text = await run()
       await quietly(() => $.ui.log('Spark: ' + text))
       await quietly(() => $.ui.toast(text.startsWith('converted') ? `Spark: converted ${what}` : 'Spark: ' + text))
     })
-    return `converting ${what}, ${width} wide, into ${folder}: ${calls} painter calls, about ${kilo(est)} tokens. It goes on beside the work; Spark says when it is done (/spark state shows how far)`
+    return `converting ${what}, ${width} wide, into ${folder}: ${calls ? `${calls} painter ${calls === 1 ? 'call' : 'calls'}, about ${kilo(est)} tokens` : 'no tokens'}. It goes on beside the work; Spark says when it is done (/spark state shows how far)`
   }
   return run()
 }
