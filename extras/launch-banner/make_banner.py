@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+"""Cyclops launch banner: draws banner.txt (the eye in a starfield, truecolour half blocks) beside this script.
+Run it again after changing the drawing; ./install.sh --banner (or banner.sh install) copies it to ~/.cyclops/."""
+import os
 import math, random
 random.seed(7)
 W, H = 64, 30                  # pixel grid (H must be even: 2 pixels per text row)
@@ -64,4 +68,4 @@ out.append("")
 out.append(" "*pad + E+"1;38;2;255;170;40m" + title + E+"0m")
 out.append(" "*((W-27)//2) + E+"38;2;110;140;200m· · ·  the eye is open  · · ·" + E+"0m")
 out.append("")
-open("banner.txt","w").write("\n".join(out)+"\n")
+open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "banner.txt"), "w").write("\n".join(out)+"\n")

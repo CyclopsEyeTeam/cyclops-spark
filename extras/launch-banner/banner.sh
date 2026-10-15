@@ -32,7 +32,8 @@ strip_block() {
   # Remove our block from one file, if present. Writes a .bak beside it first.
   local f="$1"
   [ -f "$f" ] && grep -qF "$begin" "$f" || return 0
-  cp -p -- "$f" "$f.cyclops-banner.bak"
+  local work="$f.cyclops-banner.tmp"
+  cp -p -- "$f" "$work"
   # Blank lines are held back one step so the blank line the installer put before the block goes with it.
   awk -v b="$begin" -v e="$end" '
     $0 == b { skip = 1; held = 0; next }
@@ -41,7 +42,8 @@ strip_block() {
     $0 == "" { held++; next }
     { while (held > 0) { print ""; held-- } print }
     END { while (held > 0) { print ""; held-- } }
-  ' "$f.cyclops-banner.bak" > "$f"
+  ' "$work" > "$f"
+  rm -f -- "$work"
 }
 
 block() {
@@ -73,6 +75,8 @@ case "${1:-status}" in
     mkdir -p -- "$dest_dir"
     cp -- "$here/banner.txt" "$dest"
     while read -r f; do
+      # the file as it was before the banner, kept beside it (once: a refresh keeps the first copy)
+      if [ -f "$f" ] && ! grep -qF "$begin" "$f" && [ ! -e "$f.cyclops-banner.bak" ]; then cp -p -- "$f" "$f.cyclops-banner.bak"; fi
       strip_block "$f"            # refresh rather than stack a second copy
       { [ -s "$f" ] && printf '\n'; block; } >> "$f"
       printf '  launch banner: added to %s\n' "$f"
