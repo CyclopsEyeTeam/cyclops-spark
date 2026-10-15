@@ -30,7 +30,7 @@ Link is off until you turn it on, separately for each.
 
 - Claude Code **2.1.288 or later**. Spark is built on Claude Code's function-hooks plugin API, which is early access and
   may change between Claude Code versions.
-- Any terminal with true colour. kitty and Ghostty can also show real pixels (`/spark kitty`).
+- Any terminal with true colour. Spark is drawn in HD cells by default: four pixels to a cell from the quadrant blocks (`/spark hd off` for the half blocks). kitty and Ghostty can also show real pixels (`/spark kitty`).
 - Sound (optional, off by default): macOS, or Linux with `pw-play`, `paplay` or `aplay`.
 
 This is the terminal edition. On other surfaces (the desktop app, for example) Spark shows only its glyph and its state
@@ -69,7 +69,8 @@ Then type `/spark` to open the pane.
 | `/spark` | Open or close Spark at the side (the same as `/spark side`). With sound on, Spark says its name as it opens. |
 | `/spark side` | A slim pane at the side: about a quarter of the terminal (30 to 44 columns) beside the conversation, or 10 rows above the prompt on a narrow terminal. |
 | `/spark top` | A short strip above the prompt instead, at most 5 rows, beside whatever else draws there. No pane, so nothing is covered. |
-| `/spark kitty` | Pane as real pixels (kitty / Ghostty) instead of half-block cells. |
+| `/spark kitty` | Pane as real pixels (kitty / Ghostty) instead of cells. |
+| `/spark hd` | `on` (the default) or `off`: Spark and her paintings four pixels to a cell (quadrant blocks), or two (half blocks). |
 | `/spark state` | The truthful state line, your settings, and the last events received. |
 | `/spark calm [on\|off]` | No ambient motion anywhere. Real events still draw. |
 | `/spark theme [auto\|dark\|light]` | `auto` follows your Claude Code theme. |
