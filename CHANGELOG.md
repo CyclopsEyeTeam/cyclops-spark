@@ -20,6 +20,8 @@
 - The banner is held for 2 seconds before Claude Code starts (any key goes on at once): Claude Code draws over the
   whole screen as it opens, which covered the eye before it could be seen. `CYCLOPS_BANNER_HOLD` sets the seconds
   (`0` for none).
+- `./install.sh` refreshes the launch banner when it is already on, without asking: the block in your rc file is a copy
+  made when it was installed, so before this an update (such as the 2-second hold) only reached it with `--banner`.
 
 ## 1.7.2
 
