@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.3
+
+- **The welcome eye.** When a session starts (and when `/clear` begins a new conversation), Spark draws the Cyclops eye
+  above the prompt, with `C Y C L O P S   E Y E` and `the eye is open` beside it, until the first turn; then the room
+  is given back. The eye is the launch banner's, drawn as a picture of its own (`hooks/eye.js`: the same lids, iris,
+  glints and starfield, each pixel the average of 3 x 3 samples, the stars on whole pixels), so it is sharp at any size
+  and in HD cells. It takes up to 9 rows, keeps two for anything else in the band, shows the eye alone when narrow, and
+  leaves the band to a survey. The **Welcome eye** setting turns it off. The launch banner a shell prints is covered
+  when Claude Code takes the whole screen; this one is Claude Code's own drawing, so it stays.
+
 ## Unreleased
 
 - **Optional Cyclops launch banner.** `./install.sh` can add the Cyclops eye, drawn in truecolour half blocks, to the
@@ -7,9 +17,6 @@
   block in your shell's rc file, shows only in an interactive terminal wide enough for it, stays quiet for `-p`,
   `--version` and subcommands, respects `CYCLOPS_BANNER=0`, and keeps working when `claude` is an alias.
   `./uninstall.sh` removes it and restores the rc file as it was. The plugin itself is unchanged.
-- The banner is held for 2 seconds before Claude Code starts (any key goes on at once): Claude Code draws over the
-  whole screen as it opens, which covered the eye before it could be seen. `CYCLOPS_BANNER_HOLD` sets the seconds
-  (`0` for none).
 
 ## 1.7.2
 

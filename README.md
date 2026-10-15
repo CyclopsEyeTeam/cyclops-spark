@@ -62,6 +62,14 @@ claude --plugin-dir ./plugins/cyclops-spark
 
 Then type `/spark` to open the pane.
 
+### The welcome eye
+
+When a session starts, Spark draws the Cyclops eye above the prompt, in HD cells, with its name beside it. It stays
+until your first message, then gives the room back; `/clear` brings it back for the new conversation. It fits the room
+it has (up to 9 rows), shows the eye alone when the terminal is narrow, and steps aside for a survey. The **Welcome
+eye** setting turns it off. This is Claude Code's own drawing, so unlike the launch banner below it is not covered
+when Claude Code takes the screen.
+
 ### Optional: the Cyclops launch banner
 
 `./install.sh` can also greet you with the Cyclops eye, a pixel eye in a starfield, each time you start `claude`. It
@@ -69,9 +77,7 @@ asks once (the answer defaults to no), or say it up front with `./install.sh --b
 
 It adds one marked block to `~/.bashrc` or `~/.zshrc` (a backup is kept beside it) that prints the banner and then runs
 your usual `claude`. It only shows in an interactive terminal at least 64 columns wide, never for `claude -p`,
-`--version` or subcommands such as `claude plugin`, and `CYCLOPS_BANNER=0` hides it for a session. Claude Code draws
-over the whole screen as it starts, so the eye is held for 2 seconds first (any key goes on at once;
-`CYCLOPS_BANNER_HOLD` sets the seconds, `0` for none). `./uninstall.sh`
+`--version` or subcommands such as `claude plugin`, and `CYCLOPS_BANNER=0` hides it for a session. `./uninstall.sh`
 takes the block out again, or run `extras/launch-banner/banner.sh remove` to drop only the banner. To change the art,
 edit `~/.cyclops/banner.txt`, or regenerate it with `extras/launch-banner/make_banner.py`.
 
