@@ -32,6 +32,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 import { buildScene, createPresence, laneFor, PAINT_TOWARD, PALETTE_NAMES } from './core.js'
 import { base64, createRaster, toHalfBlocks, toQuadrants, toRGB8, toRGBA8 } from './render-raster.js'
+import { eyeColumns, eyeRaster } from './eye.js'
 import { buildTrace, replayAt } from './trace.js'
 import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
 import { KEEPER, PRISM } from './link-marks.js'
@@ -54,6 +55,12 @@ const recent: string[] = []
 let paneOpen = false
 let band = false
 let kitty = false
+// WELCOME: the Cyclops eye above the prompt when a session starts (or /clear begins a new one), until the first turn,
+// then the room is given back. The launch banner a shell prints before Claude Code is covered when Claude Code takes the
+// screen; this one is Claude Code's own drawing, so it stays. The welcome setting turns it off
+let welcomeOn = true
+let welcome = false
+let welcomeArt: { key: string; cells: string } | null = null
 let hd = true // HD cells: four pixels to a cell (quadrant blocks) instead of two, in any terminal; /spark hd off returns to half blocks
 // /spark focus. Presentation only: it never touches the presence (no event, no restart). Spark gets a large pane beside the
 // conversation, which is never hidden or changed: the work keeps rolling, readable, and the prompt keeps the keyboard.
@@ -785,6 +792,30 @@ async function stopLink() {
   if (loop) void loop.return(undefined).catch(() => undefined) // ends the helper; it says Spark has ended
 }
 
+// The welcome's tree for a band of maxRows by columns (leaving `keep` rows for what others draw there): the eye as large
+// as the room allows, up to 9 rows, and beside it its name and a line, as the launch banner has them. Too little room
+// (fewer than 4 rows, or too narrow for the eye): nothing, the band is left as it was
+const WELCOME_TITLE = 'C Y C L O P S   E Y E', WELCOME_LINE = '· · ·  the eye is open  · · ·'
+function welcomeTree(els: any, maxRows: number, columns: number, keep: number): any {
+  let rows = Math.min(9, maxRows - keep)
+  while (rows >= 4 && eyeColumns(rows) > columns) rows--
+  if (rows < 4) return null
+  const cols = eyeColumns(rows), room = columns - cols - 2 // beside it: its name, and the line when there is room for it too
+  const fine = hd, light = activeTheme() === 'light'
+  const key = `${rows}|${fine}|${light}`
+  if (welcomeArt?.key !== key) {
+    const r = eyeRaster(fine ? cols * 2 : cols, fine ? rows * 4 : rows * 2, { light })
+    welcomeArt = { key, cells: base64(new Uint8Array((fine ? toQuadrants : toHalfBlocks)(r, ground()).buffer)) }
+  }
+  const { Box, Text, Raster } = els
+  const eye = Raster({ key: 'cyclops-eye', columns: cols, rows, cells: welcomeArt.cells })
+  if (room < WELCOME_TITLE.length) return eye
+  return Box({ flexDirection: 'row', columnGap: 2, alignItems: 'center', children: [eye, Box({ flexDirection: 'column', children: [
+    Text({ children: [WELCOME_TITLE], bold: true, color: light ? '#c2700e' : '#ffaa28' }),
+    ...(room >= WELCOME_LINE.length ? [Text({ children: [WELCOME_LINE], color: light ? '#4a6aa8' : '#6e8cc8' })] : []),
+  ] })] })
+}
+
 const HELP = [
   '/spark         open or close Spark at the side',
   '/spark side    a slim pane at the side (about a quarter of the width)',
@@ -884,6 +915,7 @@ export const register: Register = (on, options) => {
   if (SOUNDS.includes(o.sound as Sound)) sound = o.sound as Sound
   if (typeof o.calm === 'boolean') calm = o.calm
   if (typeof o.hd === 'boolean') hd = o.hd
+  if (typeof o.welcome === 'boolean') welcomeOn = o.welcome
   if (typeof o.statusLine === 'boolean') statusOn = o.statusLine
   if (typeof o.murmur === 'boolean') murmurOn = o.murmur
   if (typeof o.band === 'boolean') band = o.band // the band from the start (a band needs no seat, so it shows at any width)
@@ -904,6 +936,7 @@ export const register: Register = (on, options) => {
     if (linkWanted !== null) linkOn = linkWanted
     if (linkOn) await startLink($)
     $.clock.every(50, () => void paint($))
+    welcome = welcomeOn
     emit({ type: 'session.wake' })
     await cue($, 'wake', 'full')
     return next(e)
@@ -914,7 +947,7 @@ export const register: Register = (on, options) => {
 
   // a /clear ends the conversation without a new session.start: the stars are gone and Spark wakes again
   on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full'); painting = null; paintSite = null; lastTurn = null; turnsSeen = 0; reflection = ''; spoken = ''; talk = null; story.length = 0; storyOn = null }
+    if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full'); painting = null; paintSite = null; lastTurn = null; turnsSeen = 0; reflection = ''; spoken = ''; talk = null; story.length = 0; storyOn = null; welcome = welcomeOn; $.ui.invalidate('ui.render') }
     const res = await next(e)
     if (e.reason === 'clear' && linkOn) { await stopLink(); await startLink($) } // a new conversation is a new instance
     return res
@@ -946,7 +979,7 @@ export const register: Register = (on, options) => {
   on('session.append', { door: 'attachment' }, async ($, e, next) => { if (e.message?.name === 'queued_command') await taken(e); return next(e) })
   on('session.append', { door: 'prompt' }, async ($, e, next) => { await taken(e); return next(e) })
   on('session.append', { door: 'delivery' }, async ($, e, next) => { await taken(e); return next(e) })
-  on('turn.start', async ($, e, next) => { emit({ type: 'turn.start' }); turnFacts = newTurnFacts(); turnBegan = await hostNow($).catch(() => -1); lastStream = ''; spoken = ''; queuedMsgs = 0; return next(e) })
+  on('turn.start', async ($, e, next) => { if (welcome) { welcome = false; $.ui.invalidate('ui.render') } emit({ type: 'turn.start' }); turnFacts = newTurnFacts(); turnBegan = await hostNow($).catch(() => -1); lastStream = ''; spoken = ''; queuedMsgs = 0; return next(e) })
 
   on('turn.step', async function* ($, e, next) {
     const sub = Boolean(e.agentId)
@@ -1263,6 +1296,10 @@ export const register: Register = (on, options) => {
     seeViewport(e as never)
     const below = await next(e)
     const els = $.ui.resolve(e)
+    if (welcome && !focusMode && e.surface === 'terminal' && !e.props.hasSurvey) { // the welcome, until the first turn
+      const w = welcomeTree(els, e.props.maxRows ?? 0, e.props.bodyColumns ?? 0, below ? 2 : 0)
+      if (w) return below ? els.Box({ flexDirection: 'column', children: [w, below as never] }) : w
+    }
     if (focusMode || !band) return below // in focus, what draws above the prompt is left exactly as it is
     const f = liveFrame()
     let art
