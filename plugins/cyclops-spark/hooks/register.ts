@@ -499,38 +499,79 @@ const CONVERT_WAYS: Array<[string, string]> = [
   ['Faithful', 'the very same marks, drawn large: geometry and composition intact (no tokens)'],
   ['Refined', 'the painter refines its own painting: finer curves, smoother gradients, more detailed light (one call)'],
   ['Interpretive', 'the painter revisits it freely: a new work derived from the original (one call)'],
-  ['All, faithful', 'every painting of the session, faithfully (no tokens)'],
+  ['All paintings…', 'every painting of the session, then which way, each with what it costs'],
 ]
-async function convertPainting($: EngineInterface, modeWord: string, sizeWord: string): Promise<string> {
-  const modes = ['faithful', 'refined', 'interpretive', 'all']
-  let mode = modeWord
-  if (!mode) { // a bare /spark convert: pick by clicking, in Claude Code's own dialog
-    if (!shownPainting() && !story.length) return 'no paintings yet this session: /spark paint makes one'
-    let choice = ''
-    try { choice = await $.ui.ask('How shall Spark make the painting large?', { options: CONVERT_WAYS.map(([l]) => l), header: 'Convert' }) } catch { return 'convert: nothing chosen' }
-    mode = choice.toLowerCase().startsWith('all') ? 'all' : choice.toLowerCase().trim()
-    if (!modes.includes(mode)) return 'convert: nothing chosen'
+type Way = 'faithful' | 'refined' | 'interpretive'
+const WAYS: Way[] = ['faithful', 'refined', 'interpretive']
+// What the painter revisiting a painting has used this session, so the next estimate is from real calls
+const revisitSeen = { calls: 0, tokens: 0 }
+// About what revisiting these paintings will use (refined or interpretive: one call each): what such calls have used
+// this session when there have been some; otherwise the request's own length (about 3.5 characters a token) and an
+// answer of about 17 tokens a mark, for a little more than the painting's own marks
+function revisitEstimate(list: Array<Painting & { shape: string }>, way: Way): number {
+  if (way === 'faithful') return 0
+  if (revisitSeen.calls) return Math.round((revisitSeen.tokens / revisitSeen.calls) * list.length)
+  let n = 0
+  for (const p of list) {
+    const rq = revisitRequest({ painting: p, mode: way as 'refined' | 'interpretive', palette, theme: activeTheme(), reflection })
+    n += Math.ceil((rq.system.length + rq.prompt.length) / 3.5) + Math.ceil(Math.min(HD_MARKS, Math.max(40, p.marks.length * 1.6)) * 17) + 60
   }
-  if (!modes.includes(mode)) return 'convert takes: faithful (the same marks, large) | refined | interpretive | all (every painting of the session, faithful), then hd (1920 wide, the default) or 4k. On its own, /spark convert lets you click one'
+  return n
+}
+let convertProgress: { done: number; total: number; way: Way } | null = null // all, revisited: how far it has got
+// /spark convert [faithful | refined | interpretive | all [faithful | refined | interpretive]] [hd | 4k | width]
+async function convertPainting($: EngineInterface, words: string[]): Promise<string> {
+  const modes = ['faithful', 'refined', 'interpretive', 'all']
+  let [mode = '', next = '', after = ''] = words
+  let way: Way | '' = ''
+  let sizeWord = next
+  if (mode && !modes.includes(mode) && (mode in SIZES || /^\d{3,4}$/.test(mode))) { sizeWord = mode; mode = '' } // /spark convert 4k: pick the way, at that size
+  if (mode === 'all') { if ((WAYS as string[]).includes(next)) { way = next as Way; sizeWord = after } } // all refined 4k
+  if (!mode || (mode === 'all' && !way)) { // pick by clicking, in Claude Code's own dialog
+    if (!shownPainting() && !story.length) return 'no paintings yet this session: /spark paint makes one'
+    if (!mode) {
+      let choice = ''
+      try { choice = await $.ui.ask('How shall Spark make the painting large?', { options: CONVERT_WAYS.map(([l]) => l), header: 'Convert' }) } catch { return 'convert: nothing chosen' }
+      mode = choice.toLowerCase().startsWith('all') ? 'all' : choice.toLowerCase().trim()
+      if (!modes.includes(mode)) return 'convert: nothing chosen'
+    }
+    if (mode === 'all') { // all of them: then which way, each with what it costs
+      if (!story.length) return 'no paintings yet this session: /spark paint makes one'
+      const all = story.slice(), n = all.length
+      const label = (w: Way) => { const t = revisitEstimate(all, w); return `${w[0]!.toUpperCase()}${w.slice(1)} · ${t ? 'about ' + kilo(t) + ' tokens' : 'no tokens'}` }
+      const labels = WAYS.map(label)
+      let choice = ''
+      try { choice = await $.ui.ask(`All ${n} ${n === 1 ? 'painting' : 'paintings'} of this session: which way?`, { options: labels, header: 'Convert all' }) } catch { return 'convert: nothing chosen' }
+      const k = labels.indexOf(choice)
+      if (k < 0) return 'convert: nothing chosen'
+      way = WAYS[k]!
+    }
+  }
+  if (!modes.includes(mode)) return 'convert takes: faithful (the same marks, large) | refined | interpretive | all (every painting of the session; then faithful, refined or interpretive, or pick one), then hd (1920 wide, the default) or 4k. On its own, /spark convert lets you click one'
   const width = sizeWord === '' ? SIZES.hd! : SIZES[sizeWord] ?? (/^\d{3,4}$/.test(sizeWord) ? Math.max(256, Math.min(4096, Number(sizeWord))) : 0)
   if (!width) return 'convert size: hd (1920 wide) or 4k (3840)'
-  if (convertBusy) return 'Spark is still converting'
+  if (convertBusy) return convertProgress ? `Spark is still converting: ${convertProgress.done} of ${convertProgress.total} (${convertProgress.way})` : 'Spark is still converting'
   const pick = shownPainting()
   const list: Array<Painting & { shape: string }> = mode === 'all' ? story.slice() : pick ? [pick] : []
   if (!list.length) return story.length ? 'no painting is showing: /spark story shows them, /spark paint makes one' : 'no paintings yet this session: /spark paint makes one'
+  const revisit = (mode === 'all' ? (way === 'faithful' ? '' : way) : mode === 'faithful' ? '' : mode) as 'refined' | 'interpretive' | ''
+  const tagOf = revisit || 'faithful'
+  const said = mode === 'all' ? `all, ${tagOf}` : mode
   convertBusy = true
   const root = await $.session.root().catch(() => '')
   const folder = convertFolder.startsWith('/') || convertFolder.startsWith('~') ? convertFolder : (root ? root + '/' : '') + convertFolder
   const written: string[] = []
   let note = ''
+  const run = async (): Promise<string> => {
   try {
     for (const source of list) {
       let p: Painting & { shape: string } = source
-      let tag = mode === 'all' ? 'faithful' : mode
-      if (mode === 'refined' || mode === 'interpretive') { // the painter revisits its own work: one call
-        const rq = revisitRequest({ painting: source, mode, palette, theme: activeTheme(), reflection })
+      let tag: string = tagOf
+      if (revisit) { // the painter revisits its own work: one call
+        const rq = revisitRequest({ painting: source, mode: revisit, palette, theme: activeTheme(), reflection })
         const r = await $.model.complete({ model: paintModel, system: rq.system, prompt: rq.prompt, maxTokens: 6000, effort: 'low', timeoutMs: 60000 })
-        spend((r as { usage?: Record<string, number> }).usage)
+        const used = spend((r as { usage?: Record<string, number> }).usage)
+        if (used) { revisitSeen.calls++; revisitSeen.tokens += used }
         const q = r.isAnswered ? parsePainting(r.text, palette, HD_MARKS) : null
         if (!q) { note = r.isAnswered ? 'the painter answered something that was not a painting; the faithful version was written instead' : 'the painter sent nothing back; the faithful version was written instead'; tag = 'faithful' }
         else p = { ...q, shape: source.shape }
@@ -565,6 +606,7 @@ async function convertPainting($: EngineInterface, modeWord: string, sizeWord: s
       else { note = note || 'no PNG: python3 was not found (the SVG opens in any browser, at any size)' }
       converted.push({ file: png ? `${name}.png` : `${name}.svg`, title: p.title || 'untitled', when: new Date().toTimeString().slice(0, 5), mode: tag })
       logRecent('convert ' + tag)
+      if (convertProgress) convertProgress.done++
     }
     await $.fs.write(`${folder}/index.html`, galleryHTML(converted))
     written.push('index.html')
@@ -572,8 +614,23 @@ async function convertPainting($: EngineInterface, modeWord: string, sizeWord: s
     return 'convert failed: ' + String((err as Error)?.message || err).slice(0, 120)
   } finally {
     convertBusy = false
+    convertProgress = null
   }
-  return `converted (${mode === 'all' ? 'all, faithful' : mode}, ${width} wide) into ${folder}: ${written.join(', ')}` + (note ? '. ' + note : '')
+  return `converted (${said}, ${width} wide) into ${folder}: ${written.join(', ')}` + (note ? '. ' + note : '')
+  }
+  // every painting revisited is one painter call each, minutes for a whole session: it goes on beside the work, and Spark
+  // says in the conversation when it is done (/spark state shows how far it has got)
+  if (mode === 'all' && revisit) {
+    const est = revisitEstimate(list, revisit)
+    convertProgress = { done: 0, total: list.length, way: revisit }
+    void quietly(async () => {
+      const text = await run()
+      await quietly(() => $.ui.log('Spark: ' + text))
+      await quietly(() => $.ui.toast(text.startsWith('converted') ? `Spark: all ${list.length} paintings converted (${revisit})` : 'Spark: ' + text))
+    })
+    return `converting all ${list.length} ${list.length === 1 ? 'painting' : 'paintings'}, ${revisit}, ${width} wide, into ${folder}: one painter call each, about ${kilo(est)} tokens. It goes on beside the work; Spark says when it is done (/spark state shows how far)`
+  }
+  return run()
 }
 
 // A live painting, if the turn has run long enough since the last one and this is a moment (or she has waited enough)
@@ -835,7 +892,7 @@ const HELP = [
   '/spark link    on | off | status: Keeper and Prism beside Spark (Cyclops Link, off until you turn it on)',
   '/spark paint   a small painter paints each turn below Spark, and one now (it uses tokens); /spark paint off stops it',
   '/spark story   the session\'s paintings told again in order, each laid down anew (no tokens); /spark story again ends it',
-  '/spark convert the painting made large, SVG and PNG, into the convert folder: click faithful, refined, interpretive or all (or say it: /spark convert refined 4k)',
+  '/spark convert the painting made large, SVG and PNG, into the convert folder: click faithful, refined, interpretive or all paintings (then which way, with what it costs), or say it: /spark convert refined 4k, /spark convert all interpretive',
 ].join('\n')
 
 // focus asks for about 60% of the terminal (at least 64 columns, and always 40 left for the conversation), and the full
@@ -1137,7 +1194,7 @@ export const register: Register = (on, options) => {
       }
     }
     else if (word === 'state') {
-      text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · hd ${hd ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${paintOn ? ' · paint on' + (paintSpent.calls ? ` (${spentText()})` : '') : ''}\n` + (reflection ? `last reflection (sent to the painter): ${reflection}\n` : '') + recent.join('\n')
+      text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · hd ${hd ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${paintOn ? ' · paint on' + (paintSpent.calls ? ` (${spentText()})` : '') : ''}${convertProgress ? ` · converting ${convertProgress.done} of ${convertProgress.total} (${convertProgress.way})` : ''}\n` + (reflection ? `last reflection (sent to the painter): ${reflection}\n` : '') + recent.join('\n')
     }
     else if (word === 'link') {
       if (arg === 'on' || arg === 'off') {
@@ -1150,7 +1207,7 @@ export const register: Register = (on, options) => {
         text = 'link ' + (linkOn ? linkStatus : 'off') + (linkOn && linkView ? ' · ' + linkLine(linkView) : '') + (linkWanted !== null ? ' (SPARK_LINK overrides the setting)' : '')
       } else text = 'link takes: on | off | status'
     }
-    else if (word === 'convert') text = await convertPainting($, arg, e.args.trim().toLowerCase().split(/\s+/)[2] ?? '')
+    else if (word === 'convert') text = await convertPainting($, e.args.trim().toLowerCase().split(/\s+/).slice(1))
     else if (word === 'story') { // the session's paintings, told again in order, once through: nothing is asked of any model
       const page = () => storyOn ? `page ${storyIndex() + 1} of ${story.length}` : ''
       if (storyOn && (arg === 'pause' || arg === 'hold')) { storyPause(true); text = `story held on ${page()}: /spark convert makes this one large; /spark story play goes on` }
