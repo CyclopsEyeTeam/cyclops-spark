@@ -17,6 +17,9 @@
   block in your shell's rc file, shows only in an interactive terminal wide enough for it, stays quiet for `-p`,
   `--version` and subcommands, respects `CYCLOPS_BANNER=0`, and keeps working when `claude` is an alias.
   `./uninstall.sh` removes it and restores the rc file as it was. The plugin itself is unchanged.
+- The banner is held for 2 seconds before Claude Code starts (any key goes on at once): Claude Code draws over the
+  whole screen as it opens, which covered the eye before it could be seen. `CYCLOPS_BANNER_HOLD` sets the seconds
+  (`0` for none).
 
 ## 1.7.2
 
