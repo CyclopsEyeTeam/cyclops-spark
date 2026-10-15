@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.2
+
+- **Spark in HD, in any terminal.** Every cell now holds four pixels instead of two: the raster is drawn at two pixels
+  across and four down per cell, each quarter of a cell is the average of its two pixels, and of the ways to split the
+  four quarters into the cell's two colours the closest is chosen, shown with the quadrant blocks (U+2596 to U+259F,
+  with the half and full blocks), which terminals draw as they draw the half blocks. The half block is one of those
+  splits, so no cell is ever worse than before. Her paintings are drawn the same way. Her thinnest marks keep the weight
+  they had (the stroke and speck floors scale with the finer grid), so she is sharper without being dimmer: the same
+  light, measured, within a few percent. `/spark hd off` (or the **HD cells** setting) returns to the half blocks.
+- Her light is back where 1.7.0 had it: 1.7.1 thinned the floor of her tendrils (paths) from half a pixel to 0.45,
+  which took about 7% of her light at rest. Restored.
+
 ## 1.7.1
 
 - **`/spark convert` works at full size.** The plugin runtime takes at most 4 MiB in one write, and an HD or 4k picture's

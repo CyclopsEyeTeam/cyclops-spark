@@ -118,6 +118,46 @@ test('kitty mode draws real pixels as an Image', async ($, on) => {
   await cmd($, 'kitty')
 })
 
+test('HD by default: four pixels to a cell from the quadrant blocks, with the same light as the half blocks; /spark hd off returns to them', async ($, on) => {
+  engine(on)
+  const QUADS = new Set([0x20, 0x2580, 0x2584, 0x2588, 0x258c, 0x2590, 0x2596, 0x2597, 0x2598, 0x2599, 0x259a, 0x259b, 0x259c, 0x259d, 0x259e, 0x259f])
+  const look = async () => {
+    const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...PANE })
+    const r = await term.find({ type: 'Raster', key: 'spark' })
+    await term.unmount()
+    const w = words(r?.props.cells)
+    const glyphs = new Set<number>(), lum = (v: number) => v === 0x01000000 ? 0 : (((v >> 16) & 255) + ((v >> 8) & 255) + (v & 255)) / 765
+    const share: Record<number, number> = { 0x20: 0, 0x2580: 2, 0x2584: 2, 0x2588: 4, 0x258c: 2, 0x2590: 2, 0x2596: 1, 0x2597: 1, 0x2598: 1, 0x259d: 1, 0x259a: 2, 0x259e: 2, 0x2599: 3, 0x259b: 3, 0x259c: 3, 0x259f: 3 }
+    let light = 0
+    for (let i = 0; i < w.length; i += 3) { glyphs.add(w[i]!); const n = share[w[i]!] ?? 0; light += (n * lum(w[i + 1]!) + (4 - n) * lum(w[i + 2]!)) / 4 }
+    return { glyphs, light, cells: w.length / 3, cols: r?.props.columns, rows: r?.props.rows }
+  }
+  on('tool.call', async () => loose({ result: 'ok' }))
+  await $.turn.start(loose({ text: 'go', turnId: 'h' }))
+  await $.tool.call(loose({ tool: 'Read', file_path: '/x', tool_use_id: 'h1' }))
+  const fine = await look()
+  expect(fine.cells).toBe(fine.cols * fine.rows) // the same cells as ever: only what each one holds is finer
+  for (const g of fine.glyphs) expect(QUADS.has(g)).toBe(true)
+  expect([...fine.glyphs].some((g) => g >= 0x2596 && g <= 0x259f)).toBe(true) // quarters really used
+  expect(await say($, 'hd off')).toMatch(/^hd off: two pixels to a cell/)
+  const half = await look()
+  for (const g of half.glyphs) expect([0x20, 0x2580, 0x2584].includes(g)).toBe(true)
+  expect(fine.light).toBeGreaterThan(half.light * 0.9) // the finer drawing keeps her light (never dimmer for being sharper)
+  expect(fine.light).toBeLessThan(half.light * 1.15)
+  expect(await say($, 'hd')).toMatch(/^hd on:/)
+  expect(await say($, 'hd maybe')).toBe('hd takes: on | off')
+  await $.turn.complete(loose({ reason: 'answer', answer: 'ok', durationMs: 1000, isAborted: false, turnId: 'h' }))
+})
+
+test('the HD option off: the half blocks from the start', { options: { hd: false } }, async ($, on) => {
+  engine(on)
+  const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...PANE })
+  const w = words((await term.find({ type: 'Raster', key: 'spark' }))?.props.cells)
+  await term.unmount()
+  for (let i = 0; i < w.length; i += 3) expect([0x20, 0x2580, 0x2584].includes(w[i]!)).toBe(true)
+  expect(await settings($)).toMatch(/ · hd off · /)
+})
+
 test('talking with Keeper (GPT) is a peer lane, drawn in the terminal', async ($, on) => {
   engine(on)
   let release = () => {}
@@ -150,7 +190,7 @@ test('commands: each setting changes, reports itself, rejects what it cannot tak
   expect((await cmd($, 'theme loud')).text).toMatch(/theme takes: auto \| dark \| light/)
   expect((await cmd($, 'calm on')).text).toMatch(/^calm: no ambient/)
   expect((await cmd($, 'sound loud')).text).toMatch(/sound takes: off \| soft \| full/)
-  expect(await settings($)).toBe('palette ember · theme light · calm on · sound off · status off · murmur off · link off')
+  expect(await settings($)).toBe('palette ember · theme light · calm on · hd on · sound off · status off · murmur off · link off')
   // a bare word cycles through the choices
   expect((await cmd($, 'palette')).text).toMatch(/^palette: moon/)
   expect((await cmd($, 'theme')).text).toMatch(/^theme: auto/)
@@ -158,7 +198,7 @@ test('commands: each setting changes, reports itself, rejects what it cannot tak
   for (const w of ['side', 'top', 'kitty', 'state', 'calm', 'theme', 'palette', 'sound', 'murmur', 'status', 'replay', 'focus']) expect(help).toContain('/spark ' + w)
   expect((await cmd($, 'nonsense')).text).toBe(help) // an unknown word shows help instead of toggling the pane
   await cmd($, 'palette spark'); await cmd($, 'calm off')
-  expect(await settings($)).toBe('palette spark · theme auto→dark · calm off · sound off · status off · murmur off · link off')
+  expect(await settings($)).toBe('palette spark · theme auto→dark · calm off · hd on · sound off · status off · murmur off · link off')
 })
 
 test('calm removes the ambient motion from the drawing, and palette and theme really change what is drawn', async ($, on) => {

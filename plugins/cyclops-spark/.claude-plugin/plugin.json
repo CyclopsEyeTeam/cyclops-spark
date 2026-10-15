@@ -1,6 +1,6 @@
 {
   "name": "cyclops-spark",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "Spark, Claude's living presence for the terminal: a small procedural creature drawn only from real Claude Code session events, as half-block cells or kitty/Ghostty pixels.",
   "author": {
     "name": "Cyclops Eye Team"
@@ -25,6 +25,12 @@
       "title": "Theme",
       "description": "The ground Spark is drawn for. 'auto' follows your Claude Code theme (and a plain 'auto' theme there counts as dark). One of: auto, dark, light.",
       "default": "auto"
+    },
+    "hd": {
+      "type": "boolean",
+      "title": "HD cells",
+      "description": "Draw Spark and her paintings four pixels to a cell (quadrant blocks) instead of two (half blocks), in any terminal: finer lines, the same light. Off is the look before 1.7.2.",
+      "default": true
     },
     "calm": {
       "type": "boolean",

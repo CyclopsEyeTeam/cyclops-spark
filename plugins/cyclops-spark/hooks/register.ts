@@ -31,7 +31,7 @@
 
 import type { EngineInterface, Register } from 'claude-code'
 import { buildScene, createPresence, laneFor, PAINT_TOWARD, PALETTE_NAMES } from './core.js'
-import { base64, createRaster, toHalfBlocks, toRGB8, toRGBA8 } from './render-raster.js'
+import { base64, createRaster, toHalfBlocks, toQuadrants, toRGB8, toRGBA8 } from './render-raster.js'
 import { buildTrace, replayAt } from './trace.js'
 import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
 import { KEEPER, PRISM } from './link-marks.js'
@@ -54,6 +54,7 @@ const recent: string[] = []
 let paneOpen = false
 let band = false
 let kitty = false
+let hd = true // HD cells: four pixels to a cell (quadrant blocks) instead of two, in any terminal; /spark hd off returns to half blocks
 // /spark focus. Presentation only: it never touches the presence (no event, no restart). Spark gets a large pane beside the
 // conversation, which is never hidden or changed: the work keeps rolling, readable, and the prompt keeps the keyboard.
 // `before` is the view to return to, exactly.
@@ -160,7 +161,7 @@ let turnsSeen = 0
 let turnFacts: TurnFacts | null = null
 type TurnEnd = { reason: string; durationMs: number }
 let lastTurn: { facts: TurnFacts | null; end: TurnEnd; answer: string } | null = null
-type PaintSite = { columns: number; rows: number; image: boolean; raster: ReturnType<typeof createRaster>; key: string; frame: { cells?: string; rgba?: string; width?: number; height?: number } }
+type PaintSite = { columns: number; rows: number; image: boolean; hd: boolean; raster: ReturnType<typeof createRaster>; key: string; frame: { cells?: string; rgba?: string; width?: number; height?: number } }
 let paintSite: PaintSite | null = null
 const REVEAL_S = 2.4          // a new painting is laid down mark by mark over this long
 const AUTO_MIN_MS = 3000      // turns shorter than this are not painted on their own (/spark paint still paints them)
@@ -187,7 +188,7 @@ const MODEL_ID = /^[\w.:\-\[\]\/@]{1,80}$/
 type Replay = { t0: number; presence: ReturnType<typeof createPresence>; trace: ReturnType<typeof buildTrace>; i: number; loop: number }
 let replay: Replay | null = null
 
-type Site = { surface: string; columns: number; rows: number; lod: 'tiny' | 'panel'; image: boolean; fill: boolean; raster: ReturnType<typeof createRaster> }
+type Site = { surface: string; columns: number; rows: number; lod: 'tiny' | 'panel'; image: boolean; fill: boolean; hd: boolean; raster: ReturnType<typeof createRaster> }
 const sites = new Map<string, Site>() // requestId → a terminal site we blit into
 
 function emit(ev: Record<string, unknown>, quiet = false) {
@@ -219,22 +220,25 @@ async function refreshTheme($: EngineInterface) {
 const ground = (): number[] => activeTheme() === 'light' ? [0.96, 0.95, 0.94] : [0.07, 0.07, 0.08] // assumed terminal ground for half-transparent pixels
 
 function frameFor(site: Site, f: any, peers = false): { cells?: string; rgba?: string; width?: number; height?: number } {
-  site.raster.draw(buildScene(f, site.lod), activeTheme())
+  site.raster.draw(buildScene(f, site.lod), activeTheme(), { res: site.hd ? 2 : 1 })
   if (site.image) return { rgba: base64(toRGBA8(site.raster)), width: site.raster.W, height: site.raster.H }
-  const words = toHalfBlocks(site.raster, ground())
+  const words = site.hd ? toQuadrants(site.raster, ground()) : toHalfBlocks(site.raster, ground())
   // Keeper and Prism at their seats, in their own looks, only beside the live Spark (never over the replay)
-  if (peers && linkOn && linkView && !replay) overlay(words, site.raster.W, Math.floor(site.raster.H / 2), linkView, linkSheets, { now: now(), reduced: calm })
+  if (peers && linkOn && linkView && !replay) overlay(words, site.columns, site.rows, linkView, linkSheets, { now: now(), reduced: calm })
   return { cells: base64(new Uint8Array(words.buffer)) }
 }
 
 function siteFor(requestId: string, surface: string, columns: number, rows: number, lod: 'tiny' | 'panel', image: boolean, fill = false): Site {
   const was = sites.get(requestId)
-  if (was && was.columns === columns && was.rows === rows && was.image === image && was.lod === lod && was.fill === fill) return was
+  const fine = hd && !image
+  if (was && was.columns === columns && was.rows === rows && was.image === image && was.lod === lod && was.fill === fill && was.hd === fine) return was
   // an Image keeps the cells' own shape (a cell is twice as tall as wide), at most 640 pixels on its longer side
   const k = image ? Math.min(1, 640 / Math.max(columns * 8, rows * 16)) : 1
-  const W = image ? Math.max(8, Math.round(columns * 8 * k)) : columns
-  const H = image ? Math.max(8, Math.round(rows * 16 * k)) : rows * 2
-  const site = { surface, columns, rows, lod, image, fill, raster: createRaster(W, H, { fill }) }
+  // cells: two pixels to a cell (half blocks), or in HD two across and four down (shown as four quarters, each the
+  // average of two)
+  const W = image ? Math.max(8, Math.round(columns * 8 * k)) : fine ? columns * 2 : columns
+  const H = image ? Math.max(8, Math.round(rows * 16 * k)) : fine ? rows * 4 : rows * 2
+  const site = { surface, columns, rows, lod, image, fill, hd: fine, raster: createRaster(W, H, { fill }) }
   sites.set(requestId, site)
   healTries = 0 // drawn again: the next loss asks quickly
   return site
@@ -633,19 +637,20 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
 // The painting as cells (or kitty pixels) for a canvas of columns × rows, drawn again only when something changed
 function paintFrame(columns: number, rows: number): PaintSite['frame'] {
   const image = kitty
-  if (!paintSite || paintSite.columns !== columns || paintSite.rows !== rows || paintSite.image !== image) {
+  const fine = hd && !image
+  if (!paintSite || paintSite.columns !== columns || paintSite.rows !== rows || paintSite.image !== image || paintSite.hd !== fine) {
     const k = image ? Math.min(1, 640 / Math.max(columns * 8, rows * 16)) : 1
-    const W = image ? Math.max(8, Math.round(columns * 8 * k)) : columns
-    const H = image ? Math.max(8, Math.round(rows * 16 * k)) : rows * 2
-    paintSite = { columns, rows, image, raster: createRaster(W, H), key: '', frame: {} }
+    const W = image ? Math.max(8, Math.round(columns * 8 * k)) : fine ? columns * 2 : columns
+    const H = image ? Math.max(8, Math.round(rows * 16 * k)) : fine ? rows * 4 : rows * 2
+    paintSite = { columns, rows, image, hd: fine, raster: createRaster(W, H), key: '', frame: {} }
   }
   const site = paintSite
   const P = shownPainting()
   const reveal = P ? Math.min(1, (now() - P.at) / REVEAL_S) : 1
   const key = `${P?.n ?? 0}|${reveal >= 1 ? 1 : reveal.toFixed(2)}|${activeTheme()}`
   if (site.key !== key) {
-    site.raster.draw(paintingScene(P, site.raster.W, site.raster.H, { reveal, theme: activeTheme() }), activeTheme())
-    site.frame = image ? { rgba: base64(toRGBA8(site.raster)), width: site.raster.W, height: site.raster.H } : { cells: base64(new Uint8Array(toHalfBlocks(site.raster, ground()).buffer)) }
+    site.raster.draw(paintingScene(P, site.raster.W, site.raster.H, { reveal, theme: activeTheme() }), activeTheme(), { res: site.hd ? 2 : 1 })
+    site.frame = image ? { rgba: base64(toRGBA8(site.raster)), width: site.raster.W, height: site.raster.H } : { cells: base64(new Uint8Array((site.hd ? toQuadrants : toHalfBlocks)(site.raster, ground()).buffer)) }
     site.key = key
   }
   return site.frame
@@ -785,6 +790,7 @@ const HELP = [
   '/spark side    a slim pane at the side (about a quarter of the width)',
   '/spark top     a short strip above the prompt instead (no pane)',
   '/spark kitty   pane as real pixels (kitty / Ghostty)',
+  '/spark hd      on | off: four pixels to a cell in any terminal (on by default; off is the half blocks)',
   '/spark state   the state line, settings and recent events',
   '/spark calm    no ambient motion (events still draw)',
   '/spark theme   auto | dark | light   (auto follows the host theme)',
@@ -877,6 +883,7 @@ export const register: Register = (on, options) => {
   if (PALETTE_NAMES.includes(String(o.palette))) palette = String(o.palette)
   if (SOUNDS.includes(o.sound as Sound)) sound = o.sound as Sound
   if (typeof o.calm === 'boolean') calm = o.calm
+  if (typeof o.hd === 'boolean') hd = o.hd
   if (typeof o.statusLine === 'boolean') statusOn = o.statusLine
   if (typeof o.murmur === 'boolean') murmurOn = o.murmur
   if (typeof o.band === 'boolean') band = o.band // the band from the start (a band needs no seat, so it shows at any width)
@@ -891,7 +898,7 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await refreshTheme($)
-    await $.command.register({ name: 'spark', description: 'Spark, Claude\'s living presence: /spark [side|top|focus|kitty|state|calm|theme|palette|sound|murmur|status|replay|ask|link|paint|story|convert|help]', immediate: true })
+    await $.command.register({ name: 'spark', description: 'Spark, Claude\'s living presence: /spark [side|top|focus|kitty|hd|state|calm|theme|palette|sound|murmur|status|replay|ask|link|paint|story|convert|help]', immediate: true })
     const wanted = (await $.env.get('SPARK_LINK').catch(() => undefined))?.trim().toLowerCase()
     linkWanted = wanted === '1' || wanted === 'on' ? true : wanted === '0' || wanted === 'off' ? false : null
     if (linkWanted !== null) linkOn = linkWanted
@@ -1045,7 +1052,11 @@ export const register: Register = (on, options) => {
         if (!named && sound !== 'off') { named = true; await cue($, 'name', 'soft') }
       }
     }
-    else if (word === 'kitty') { kitty = !kitty; text = kitty ? 'pane: real pixels (kitty / Ghostty)' : 'pane: half-block cells' }
+    else if (word === 'kitty') { kitty = !kitty; text = kitty ? 'pane: real pixels (kitty / Ghostty)' : hd ? 'pane: HD cells (four pixels to a cell)' : 'pane: half-block cells' }
+    else if (word === 'hd') {
+      if (arg !== '' && arg !== 'on' && arg !== 'off') text = 'hd takes: on | off'
+      else { hd = arg === 'on' ? true : arg === 'off' ? false : !hd; sites.clear(); paintSite = null; $.ui.invalidate('ui.render'); text = hd ? 'hd on: Spark and her paintings in four pixels to a cell (quadrant blocks), finer lines, the same light' : 'hd off: two pixels to a cell (half blocks), as before 1.7.2' }
+    }
     else if (word === 'calm') { calm = arg === 'on' ? true : arg === 'off' ? false : !calm; text = calm ? 'calm: no ambient motion (events still draw)' : 'calm off: ambient breathing and drift are back' }
     else if (word === 'theme') {
       const next = pick(THEMES, arg, theme)
@@ -1093,7 +1104,7 @@ export const register: Register = (on, options) => {
       }
     }
     else if (word === 'state') {
-      text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${paintOn ? ' · paint on' + (paintSpent.calls ? ` (${spentText()})` : '') : ''}\n` + (reflection ? `last reflection (sent to the painter): ${reflection}\n` : '') + recent.join('\n')
+      text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · hd ${hd ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${paintOn ? ' · paint on' + (paintSpent.calls ? ` (${spentText()})` : '') : ''}\n` + (reflection ? `last reflection (sent to the painter): ${reflection}\n` : '') + recent.join('\n')
     }
     else if (word === 'link') {
       if (arg === 'on' || arg === 'off') {

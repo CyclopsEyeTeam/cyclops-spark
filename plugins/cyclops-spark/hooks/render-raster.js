@@ -53,8 +53,10 @@ export function createRaster(W, H, { fill = false } = {}) {
   // `over`: paint each mark over the last (as paper does) instead of adding its light, on any ground
   // `floor`: the thinnest a mark is drawn, in pixels (a speck is a whole cell in the terminal; a large picture keeps
   // its specks and lines visible with a floor of its own)
-  function draw(scene, theme, { over = false, floor = 0.6 } = {}) {
-    const fl = Math.max(0.6, floor), fw = Math.max(0.45, floor * 0.75)
+  // `res`: how many of this raster's pixels make one of the terminal's half-block pixels (2 for HD): the thinnest marks
+  // keep the weight they have in the terminal, drawn at the finer grid
+  function draw(scene, theme, { over = false, floor = 0.6, res = 1 } = {}) {
+    const fl = Math.max(0.6 * res, floor), fw = Math.max(0.45 * res, floor * 0.75), fp = Math.max(0.5 * res, floor * 0.75) // dots, rings and arcs, paths
     px.fill(0)
     stamp.fill(-1)
     const additive = theme !== 'light' && !over
@@ -173,7 +175,7 @@ export function createRaster(W, H, { fill = false } = {}) {
         flush(c0, p.a, additive, same ? null : (q) => { const u = hi > lo ? (((q % W) + 0.5) * gx + (Math.floor(q / W) + 0.5) * gy - lo) / (hi - lo) : 0; return [c0[0] + (c1[0] - c0[0]) * u, c0[1] + (c1[1] - c0[1]) * u, c0[2] + (c1[2] - c0[2]) * u] })
       } else if (p.k === 'path') {
         const pts = p.pts.map(([x, y]) => P(x, y)), n = pts.length
-        const hw = Math.max(fw, (p.w * scale) / 2)
+        const hw = Math.max(fp, (p.w * scale) / 2)
         const segOf = new Map()
         for (let s = 0; s < n - 1; s++) {
           const [ax, ay] = pts[s], [bx, by] = pts[s + 1]
@@ -275,4 +277,63 @@ export function base64(bytes) {
   let s = ''
   for (let k = 0; k < out.length; k += 0x8000) s += String.fromCharCode.apply(null, out.subarray(k, k + 0x8000))
   return s
+}
+
+// HD, for any terminal: four pixels to a cell instead of two, from the quadrant blocks (U+2596..U+259F, with the half
+// and full blocks), which every terminal font draws as it draws the half blocks. The raster is drawn at two pixels
+// across and four down per cell (square pixels, as the scene is composed); each quarter of a cell is the average of
+// its 1 x 2 pixels (smoothing the edges), and of the ways to split the four quarters into two colours (a cell has
+// one foreground and one background), the one that keeps closest to what was drawn is chosen. The half block is one of
+// those ways, so a cell is never worse than before: a fine line can now be half a cell wide and keep its full light.
+// Empty quarters stay the terminal's own background, as in toHalfBlocks.
+const QUAD = [0x20, 0x2598, 0x259d, 0x2580, 0x2596, 0x258c, 0x259e, 0x259b, 0x2597, 0x259a, 0x2590, 0x259c, 0x2584, 0x2599, 0x259f, 0x2588] // by mask: 1 top-left, 2 top-right, 4 bottom-left, 8 bottom-right
+export function toQuadrants(r, ground) {
+  const { W, H, px } = r
+  const cols = Math.floor(W / 2), rows = Math.floor(H / 4)
+  const words = new Uint32Array(cols * rows * 3)
+  const qr = new Float64Array(4), qg = new Float64Array(4), qb = new Float64Array(4), empty = [false, false, false, false]
+  const g0 = ground[0], g1 = ground[1], g2 = ground[2]
+  let w = 0
+  for (let cy = 0; cy < rows; cy++) {
+    for (let cx = 0; cx < cols; cx++) {
+      let lit = 0
+      for (let q = 0; q < 4; q++) {
+        const x = cx * 2 + (q & 1), y = cy * 4 + (q >> 1) * 2
+        const k0 = (y * W + x) * 4, k1 = ((y + 1) * W + x) * 4
+        const a = Math.min(1, (Math.min(1, px[k0 + 3]) + Math.min(1, px[k1 + 3])) / 2)
+        const pr = (px[k0] + px[k1]) / 2, pg = (px[k0 + 1] + px[k1 + 1]) / 2, pb = (px[k0 + 2] + px[k1 + 2]) / 2
+        empty[q] = a < 0.05
+        // premultiplied colour over the assumed ground (what the eye sees)
+        qr[q] = Math.min(1, pr + g0 * (1 - a)); qg[q] = Math.min(1, pg + g1 * (1 - a)); qb[q] = Math.min(1, pb + g2 * (1 - a))
+        if (!empty[q]) lit++
+      }
+      if (!lit) { words[w++] = 0x20; words[w++] = DEFAULT; words[w++] = DEFAULT; continue }
+      // the best split: the mask of quarters in the first colour (bottom-right always in the second: the rest are mirrors)
+      let best = 0, bestErr = Infinity
+      for (let m = 0; m < 8; m++) {
+        let err = 0
+        for (const side of [m, 15 ^ m]) {
+          let n = 0, sr = 0, sg = 0, sb = 0
+          for (let q = 0; q < 4; q++) if (side & (1 << q)) { n++; sr += qr[q]; sg += qg[q]; sb += qb[q] }
+          if (!n) continue
+          sr /= n; sg /= n; sb /= n
+          for (let q = 0; q < 4; q++) if (side & (1 << q)) err += (qr[q] - sr) ** 2 * 0.3 + (qg[q] - sg) ** 2 * 0.59 + (qb[q] - sb) ** 2 * 0.11
+        }
+        if (err < bestErr - 1e-9) { bestErr = err; best = m }
+      }
+      // each side's colour, or the terminal's own background where a side holds only empty quarters
+      const colour = (side) => {
+        let n = 0, sr = 0, sg = 0, sb = 0, anyLit = false
+        for (let q = 0; q < 4; q++) if (side & (1 << q)) { n++; sr += qr[q]; sg += qg[q]; sb += qb[q]; if (!empty[q]) anyLit = true }
+        if (!n || !anyLit) return DEFAULT
+        return (to8(sr / n) << 16) | (to8(sg / n) << 8) | to8(sb / n)
+      }
+      let fgMask = best, fg = colour(best), bg = colour(15 ^ best)
+      if (fgMask === 0) { fgMask = 15; fg = bg; bg = DEFAULT } // one colour across the cell
+      else if (fg === DEFAULT) { fgMask = 15 ^ fgMask; fg = bg; bg = DEFAULT } // the lit side is drawn, the empty side is the terminal's
+      if (fgMask === 15) { words[w++] = 0x2580; words[w++] = fg; words[w++] = bg === DEFAULT ? fg : bg } // a whole cell: as the half blocks draw it
+      else { words[w++] = QUAD[fgMask]; words[w++] = fg; words[w++] = bg }
+    }
+  }
+  return words
 }

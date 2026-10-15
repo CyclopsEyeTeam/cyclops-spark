@@ -5,7 +5,7 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { parsePainting, paintingScene } from '../hooks/painter.js'
 import { canvasFor, captionHeight, captionLines, captionStrip, flattenRGBA, galleryHTML, revisitRequest, sceneSVG, slug, withCaption } from '../hooks/convert.js'
-import { createRaster, toRGB8 } from '../hooks/render-raster.js'
+import { createRaster, toQuadrants, toRGB8 } from '../hooks/render-raster.js'
 
 const loose = <T>(v: unknown) => v as T
 const cmd = ($: Engine, args: string) => $.command.run(loose({ command: 'spark', args, origin: { kind: 'person' }, presentation: {} }))
@@ -154,6 +154,14 @@ test('the pieces: slugs, canvases, the flattened bytes, and an SVG that stands o
   const flat = toRGB8(r, [0.07, 0.07, 0.08])
   expect(flat[(2 * 8 + 4) * 3]).toBe(255) // the centre: two seven-tenths of white add past white
   expect(flat[0]).toBe(18) // a corner: the ground alone
+  // HD cells: a cell is 2 x 4 pixels; one lit quarter is that quarter's glyph, lit in full, over the terminal's background
+  const q = createRaster(2, 4)
+  q.px.fill(0); q.px.set([1, 1, 1, 1], (0 * 2 + 1) * 4); q.px.set([1, 1, 1, 1], (1 * 2 + 1) * 4) // the top-right quarter
+  expect([...toQuadrants(q, [0, 0, 0])]).toEqual([0x259d, 0xffffff, 0x01000000])
+  q.px.fill(0); for (let y = 0; y < 4; y++) q.px.set([1, 0, 0, 1], (y * 2) * 4) // the left half
+  expect([...toQuadrants(q, [0, 0, 0])]).toEqual([0x258c, 0xff0000, 0x01000000])
+  q.px.fill(0)
+  expect([...toQuadrants(q, [0, 0, 0])]).toEqual([0x20, 0x01000000, 0x01000000]) // nothing: the terminal's own
   expect(galleryHTML([{ file: 'x.png', title: 'a "quoted" one', when: '21:01', mode: 'faithful' }])).toContain('alt="a &quot;quoted&quot; one"')
   const rq = revisitRequest({ painting: p, mode: 'interpretive' })
   expect(rq.prompt).not.toContain('seed') // the painter sees its marks, not the renderer's bookkeeping
