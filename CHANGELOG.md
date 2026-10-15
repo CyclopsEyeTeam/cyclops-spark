@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.7.1
+
+- **`/spark convert` works at full size.** The plugin runtime takes at most 4 MiB in one write, and an HD or 4k picture's
+  bytes are far more than that as text, so the conversion failed on the first write. Spark now hands the helper the
+  bytes in numbered parts of at most 3 MB (`<name>.rgb.b64.0`, `.1`, ...), and `spark_png.py` reads them in order and
+  removes them once the PNG is written.
+- **`/spark paint` from a fresh terminal opens Spark and the painter together.** It no longer needs `/spark` first: when
+  her pane is not up, the command opens it at the side, turns the painter on and paints one, and says all of that.
+- **Converted paintings keep the terminal's colour and light.** The PNG was drawn with each mark over the last and the
+  SVG blended once as a group, so a converted painting came out flat and dim beside the one in the pane. Both are now
+  drawn exactly as the terminal draws: on a dark ground every mark adds its light to what is under it (two lights make
+  white, a glow brightens the hill it sits on), flattened onto the ground the same way her cells are; the SVG gives
+  every mark `plus-lighter` (browsers) with `screen` as the fallback, and the glow's falloff matches the raster's.
+  Specks and fine lines keep a small floor (3 px at HD, 6 at 4k), as a speck is a whole cell in the terminal.
+- **Nothing above the painting changes place.** Claude's breath line and the effort line each keep their row (blank
+  between turns), so her state line is always the second row and the painting never has text reordered above it; the
+  effort stays on its line for the whole turn, whatever she is doing, not only while thinking.
+- **`/spark story` is told once through, then held on the last page**, not round and round. While it is on, small
+  controls sit under its line: pause (holds the page: `· held`, so you can convert that one, since `/spark convert`
+  takes the page showing), play (again, at the end), back, next and end; or `/spark story pause | play | next | back |
+  end`. The pages turn by the host's clock.
+
 ## 1.7.0
 
 - **`/spark convert`: a painting made large.** On its own it asks which way in Claude Code's own dialog, and you
