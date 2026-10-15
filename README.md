@@ -62,6 +62,14 @@ claude --plugin-dir ./plugins/cyclops-spark
 
 Then type `/spark` to open the pane.
 
+### The welcome eye
+
+When a session starts, Spark draws the Cyclops eye above the prompt, in HD cells, with its name beside it. It stays
+until your first message, then gives the room back; `/clear` brings it back for the new conversation. It fits the room
+it has (up to 9 rows), shows the eye alone when the terminal is narrow, and steps aside for a survey. The **Welcome
+eye** setting turns it off. This is Claude Code's own drawing, so unlike the launch banner below it is not covered
+when Claude Code takes the screen.
+
 ### Optional: the Cyclops launch banner
 
 `./install.sh` can also greet you with the Cyclops eye, a pixel eye in a starfield, each time you start `claude`. It
