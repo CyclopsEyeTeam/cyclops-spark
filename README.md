@@ -62,6 +62,19 @@ claude --plugin-dir ./plugins/cyclops-spark
 
 Then type `/spark` to open the pane.
 
+### Optional: the Cyclops launch banner
+
+`./install.sh` can also greet you with the Cyclops eye, a pixel eye in a starfield, each time you start `claude`. It
+asks once (the answer defaults to no), or say it up front with `./install.sh --banner` or `./install.sh --no-banner`.
+
+It adds one marked block to `~/.bashrc` or `~/.zshrc` (a backup is kept beside it) that prints the banner and then runs
+your usual `claude`. It only shows in an interactive terminal at least 64 columns wide, never for `claude -p`,
+`--version` or subcommands such as `claude plugin`, and `CYCLOPS_BANNER=0` hides it for a session. `./uninstall.sh`
+takes the block out again, or run `extras/launch-banner/banner.sh remove` to drop only the banner. To change the art,
+edit `~/.cyclops/banner.txt`, or regenerate it with `extras/launch-banner/make_banner.py`.
+
+This is separate from the plugin: installing Spark any other way does not add it.
+
 ## Commands
 
 | Command | What it does |
@@ -304,6 +317,7 @@ when you run it, writes a painting's SVG and PNG into the convert folder. See [d
 | `tests/` | Cyclops Link V1 conformance for Spark's helper, from the vendored fixtures. |
 | `media/` | Preview images, drawn by the plugin's own terminal renderer. |
 | `docs/` | Privacy and the truthfulness contract. |
+| `extras/launch-banner/` | The optional Cyclops launch banner: the art, its generator, and `banner.sh` (install, remove, status). |
 
 ## Development
 

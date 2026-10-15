@@ -6,6 +6,17 @@
 # it is uninstalled first, so the copy in this folder is the one Claude Code loads.
 set -euo pipefail
 
+# Optional extra: --banner adds the Cyclops launch banner, --no-banner skips the question.
+banner=""
+for arg in "$@"; do
+  case "$arg" in
+    --banner) banner=yes ;;
+    --no-banner) banner=no ;;
+    -h|--help) printf 'usage: ./install.sh [--banner | --no-banner]\n'; exit 0 ;;
+    *) printf 'Cyclops Spark: unknown option %s (try --help)\n' "$arg" >&2; exit 2 ;;
+  esac
+done
+
 here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 plugin="cyclops-spark@cyclops-spark"
 market="cyclops-spark"
@@ -133,6 +144,16 @@ if [ -n "$settings_dir" ] && ! same_dir "$settings_dir"; then
   say "  Note: $config/settings.json still lists the cyclops-spark marketplace at"
   say "  $settings_dir"
   say "  Change that path to $here so an older copy does not come back."
+fi
+
+# Optional: the Cyclops launch banner (off unless asked for; never asked when not run in a terminal).
+if [ -z "$banner" ] && [ -t 0 ] && [ -t 1 ]; then
+  say ""
+  read -r -p "  Also show the Cyclops eye banner each time you start claude? [y/N] " reply || reply=""
+  case "$reply" in [yY]*) banner=yes ;; *) banner=no ;; esac
+fi
+if [ "$banner" = yes ]; then
+  bash "$here/extras/launch-banner/banner.sh" install
 fi
 
 say ""
