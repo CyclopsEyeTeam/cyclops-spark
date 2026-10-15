@@ -10,6 +10,14 @@
   `converting 4 of 19 (all, refined)`, and when it is done Spark says so in the conversation and in a toast, with the
   files and the gallery page. Typed: `/spark convert three`, `/spark convert all faithful | refined | interpretive
   [hd | 4k]`; `all` alone, or a size alone (`/spark convert 4k`), asks.
+- **Converting no longer stalls Spark.** A filled shape was drawn by testing every pixel against every edge, which for
+  a busy painting at full size took tens of seconds (37 s for one at HD, minutes at 4k), past the ten seconds a command
+  has of its own time, so `/spark` could stop answering. Shapes are now filled by scanlines, the same pixels exactly
+  and about sixty times faster; the picture is drawn handing over to everything else every few milliseconds; and more
+  than one picture, or one larger than HD, goes on beside the work, with a note when done.
+- **No dark marks around her in HD.** A quarter-cell side that was mostly empty was drawn as its faint light mixed over
+  an assumed near-black ground, which shows as black specks pulsing at her edges on a grey terminal. Below a third of
+  cover such a side is now left to the terminal's own background.
 
 ## 1.7.3
 
