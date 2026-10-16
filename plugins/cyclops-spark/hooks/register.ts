@@ -38,7 +38,7 @@ import { rollScore, sessionColour } from './music.js'
 import { buildTrace, replayAt } from './trace.js'
 import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
 import { KEEPER, PRISM } from './link-marks.js'
-import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
+import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, openingRequest, OPENING_WORDS, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
 import { motion, motionFor, WIDTH as MOTION_W } from './motion.js'
 import { canvasFor, captionLines, captionStrip, galleryHTML, titleCardAsync, HD_MARKS, markFloor, revisitRequest, rollLayout, rollSize, sceneSVG, SIZES, slug, withCaption } from './convert.js'
@@ -128,7 +128,7 @@ function heldRows(width: number, need: number): number {
   return h
 }
 // STORY: every painting of this session, in order, kept in memory (never written), to be told again with /spark story
-type StoryEntry = Painting & { shape: string; cost: number; clock: string; live: boolean }
+type StoryEntry = Painting & { shape: string; cost: number; clock: string; live: boolean; opening?: boolean }
 const story: StoryEntry[] = []
 const STORY_MAX = 60
 const STORY_S = 7 // each painting is laid down again, then held, for this long
@@ -166,6 +166,7 @@ function shownPainting(): (Painting & { at: number; n: number; shape: string; co
 let paintBeside = false // the pane's last layout put the painting beside Spark (a wide, short room), not below her
 let paintRoom: { columns: number; rows: number } | null = null // the room the last painting area had: the next canvas takes its shape
 let paintCount = 0
+let openingMade = false // this conversation's first painting, her opening, has been made (it is of nothing in the conversation)
 let paintBusy = false
 let paintNote = ''      // why the last painting did not come
 let lastAutoPaint = -1e9
@@ -865,6 +866,8 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
   const turn = live
     ? { facts: turnFacts, end: { reason: 'still going', durationMs: (lastPaintAt - turnBegan) * 1000 }, answer: '' }
     : lastTurn ?? { facts: null, end: { reason: 'answer', durationMs: 0 }, answer: '' }
+  // the conversation's first painting is her opening: of nothing in it, only the hour, the month and a word to start from
+  const opening = !live && !openingMade
   try {
     const facts = painterFacts(turn.facts, { ...turn.end, mood: String(liveFrame().hover).replace(/^Spark · /, ''), turn: live ? turnsSeen + 1 : turnsSeen })
     let words = ''
@@ -876,7 +879,11 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
       if (words) reflection = words
     }
     const shape = paintRoom ? shapeFor(paintRoom.columns, paintRoom.rows * 2) : 'wide' // a cell is one pixel wide, two tall
-    const req = painterRequest({ facts, palette, theme: activeTheme(), gist: live ? '' : turn.answer, reflection: words, live, shape, size: paintRoom ? [paintRoom.columns, paintRoom.rows * 2] : null })
+    const size: [number, number] | null = paintRoom ? [paintRoom.columns, paintRoom.rows * 2] : null
+    const today = new Date()
+    const req = opening
+      ? openingRequest({ palette, theme: activeTheme(), shape, size, hour: today.getHours(), month: today.getMonth(), word: OPENING_WORDS[Math.floor(Math.random() * OPENING_WORDS.length)] })
+      : painterRequest({ facts, palette, theme: activeTheme(), gist: live ? '' : turn.answer, reflection: words, live, shape, size: paintRoom ? [paintRoom.columns, paintRoom.rows * 2] : null })
     const r = await $.model.complete({ model: paintModel, system: req.system, prompt: req.prompt, maxTokens: 3000, effort: 'low', timeoutMs: 40000 })
     cost += spend((r as { usage?: Record<string, number> }).usage) // every arm carries what the call really cost
     if (!r.isAnswered) {
@@ -887,14 +894,15 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
     const p = parsePainting(r.text, palette)
     if (!p) { paintNote = 'the painter answered something that was not a painting'; logRecent('paint ✕'); return 'no painting: ' + paintNote }
     painting = { ...p, at: now(), n: ++paintCount, shape, cost }
-    story.push({ ...p, shape, cost, clock: new Date().toTimeString().slice(0, 5), live: why === 'live' })
+    story.push({ ...p, shape, cost, clock: new Date().toTimeString().slice(0, 5), live: why === 'live', ...(opening ? { opening: true } : {}) })
+    if (opening) openingMade = true
     if (story.length > STORY_MAX) story.shift()
     storyOn = null // a new painting is shown as it arrives: the story steps aside
     ok = true; react = p.react
     paintSpent.paintings++
     paintNote = ''
-    logRecent('paint ' + why)
-    return 'painted' + (p.title ? ': ' + p.title : '') + (paneOpen && !focusMode ? '' : ' (it shows below Spark at the side: /spark)')
+    logRecent('paint ' + (opening ? 'opening' : why))
+    return 'painted' + (opening ? ' her opening' : '') + (p.title ? ': ' + p.title : '') + (paneOpen && !focusMode ? '' : ' (it shows below Spark at the side: /spark)')
   } catch (err) {
     paintNote = String((err as Error)?.message || err) // a model the session may not use, for example
     logRecent('paint ✕')
@@ -930,7 +938,7 @@ function paintFrame(columns: number, rows: number): PaintSite['frame'] {
 
 // What the painter has used this session, said plainly: shown small (dim) under the painting, in /spark state and when the painter is turned off
 const kilo = (n: number) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n)
-const paintOnText = () => `painting on: after each turn a small painter (${paintModel}) paints Spark's expression of it below her, from the turn's shape and a short excerpt of the reply. Each painting is one short ${paintModel} call through your session and uses tokens; what it has used shows under the painting. /spark paint paints one any time, /spark paint off stops it`
+const paintOnText = () => `painting on: the first painting is her opening, of nothing in the conversation (only the hour, the month and a word to start from); after it, after each turn a small painter (${paintModel}) paints Spark's expression of it below her, from the turn's shape and a short excerpt of the reply. Each painting is one short ${paintModel} call through your session and uses tokens; what it has used shows under the painting. /spark paint paints one any time, /spark paint off stops it`
 const spentText = () => `painter · ${paintSpent.paintings} ${paintSpent.paintings === 1 ? 'painting' : 'paintings'} · ${kilo(paintSpent.tokens)} tokens (${paintModel})`
 
 // What goes in the room it is given, `width` columns by `room` rows: the painting at its own shape (wide, square or tall,
@@ -962,7 +970,7 @@ function paintBlock(els: any, width: number, room0: number): any[] {
   // when there is room for it after the title, and never at the cost of the painting itself (it needs at least 3 rows)
   const k = storyIndex()
   const costs = k >= 0
-    ? [`story · ${k + 1} of ${story.length} · ${story[k]!.clock}${story[k]!.live ? ' · while it worked' : ''}${storyOn!.done ? ' · the end' : storyOn!.paused !== null ? ' · held' : ''}`] // which page of the session's story
+    ? [`story · ${k + 1} of ${story.length} · ${story[k]!.clock}${story[k]!.opening ? ' · her opening' : story[k]!.live ? ' · while it worked' : ''}${storyOn!.done ? ' · the end' : storyOn!.paused !== null ? ' · held' : ''}`] // which page of the session's story
     : painting.cost > 0 ? [`this painting · ${kilo(painting.cost)} tokens`, `session · ${spentText().replace(/^painter · /, '')}`] : []
   let spendRows = 0
   const spent: any[] = []
@@ -1215,7 +1223,7 @@ export const register: Register = (on, options) => {
 
   // a /clear ends the conversation without a new session.start: the stars are gone and Spark wakes again
   on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full'); painting = null; paintSite = null; lastTurn = null; turnsSeen = 0; reflection = ''; spoken = ''; talk = null; story.length = 0; storyOn = null; welcome = welcomeOn; $.ui.invalidate('ui.render') }
+    if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full'); painting = null; paintSite = null; lastTurn = null; turnsSeen = 0; reflection = ''; spoken = ''; talk = null; story.length = 0; storyOn = null; openingMade = false; welcome = welcomeOn; $.ui.invalidate('ui.render') }
     const res = await next(e)
     if (e.reason === 'clear' && linkOn) { await stopLink(); await startLink($) } // a new conversation is a new instance
     return res

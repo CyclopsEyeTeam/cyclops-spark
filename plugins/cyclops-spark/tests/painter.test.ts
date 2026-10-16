@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
-import { parsePainting, paintingScene, painterFacts, painterRequest, newTurnFacts, recordTool, shapeFor, MAX_MARKS, PAINT_KINDS, parseTalk, talkRequest } from '../hooks/painter.js'
+import { parsePainting, paintingScene, painterFacts, painterRequest, newTurnFacts, recordTool, shapeFor, MAX_MARKS, PAINT_KINDS, parseTalk, talkRequest, openingRequest, hourWords, OPENING_WORDS } from '../hooks/painter.js'
 import { createRaster, toRGBA8 } from '../hooks/render-raster.js'
 import { wrapRows } from '../hooks/layout.js'
 
@@ -67,8 +67,10 @@ test('the painter is off by default: no model call, nothing drawn below Spark', 
 test('/spark paint: on, one painting now, then each turn worth painting, by Haiku, from its shape and the reply; never your prompt, paths or commands', async ($, on) => {
   const { asks, writes } = engine(on)
   await cmd($, 'paint off')
-  expect(await say($, 'paint')).toMatch(/^Spark at the side.*; painting on: .*\(haiku\).*uses tokens.*\/spark paint off stops it\. painted: a long climb, then light/) // from a fresh terminal: /spark paint opens Spark herself and the painter together
-  expect(asks).toHaveLength(1) // one painting now, of her waking
+  expect(await say($, 'paint')).toMatch(/^Spark at the side.*; painting on: .*\(haiku\).*uses tokens.*\/spark paint off stops it\. painted her opening: a long climb, then light/) // from a fresh terminal: /spark paint opens Spark herself and the painter together
+  expect(asks).toHaveLength(1) // one painting now: her opening, of nothing in the conversation
+  expect(asks[0]!.system).toMatch(/Spark's opening/)
+  expect(asks[0]!.prompt).not.toMatch(/toolCalls|The turn/)
   await turn($, 't2', 12)
   expect(asks).toHaveLength(2)
   expect(asks[1]!.model).toBe('haiku')
@@ -172,6 +174,44 @@ test('/clear empties the painting along with the stars', async ($, on) => {
   await $.session.end(loose({ reason: 'clear' }))
   expect(await drawn()).toBe(false)
   await cmd($, 'paint off')
+})
+
+test('the first painting of a conversation is her opening: of nothing in it, only the hour, the month and a word drawn at random; every painting after is of the work, and /clear brings a new opening', async ($, on) => {
+  const { asks } = engine(on)
+  on('session.end', async () => loose({ sessionId: 's' }))
+  await cmd($, 'paint off')
+  await turn($, 'c1', 9, 'The tempo map now lines up with the beat grid.') // a turn before the painter is on
+  expect(await say($, 'paint')).toMatch(/painted her opening: /)
+  const first = asks[0]!
+  expect(first.system).toMatch(/Spark's opening, the first painting of a new conversation/)
+  expect(first.prompt).not.toContain('tempo map') // nothing of the conversation: not the reply,
+  expect(first.prompt).not.toMatch(/toolCalls|"seconds"/) // nor the turn's shape
+  expect(first.prompt).toMatch(/it is (the small hours|dawn|morning|afternoon|evening|night), in (January|February|March|April|May|June|July|August|September|October|November|December)\./)
+  const word = /drawn at random: "([^"]+)"/.exec(first.prompt)?.[1]
+  expect(OPENING_WORDS).toContain(word!)
+  expect(await say($, 'paint')).toMatch(/^painted: /) // the second is of the work
+  expect(asks[1]!.system).not.toMatch(/opening/)
+  expect(asks[1]!.prompt).toContain('tempo map')
+  expect(await say($, 'story')).toMatch(/story: 2 paintings/)
+  const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  expect(await term.find({ type: 'Text', text: /· her opening/ })).toBeDefined() // the story names it
+  await term.unmount()
+  await cmd($, 'story end')
+  await $.session.end(loose({ reason: 'clear' })) // a new conversation: a new opening
+  expect(await say($, 'paint')).toMatch(/painted her opening: /)
+  expect(asks[2]!.system).toMatch(/Spark's opening/)
+  await cmd($, 'paint off')
+})
+
+test('the opening request: the hour in words, the month, the word, and the same canvas and JSON as every painting', () => {
+  expect([0, 4, 5, 7, 8, 11, 12, 16, 17, 20, 21, 23].map(hourWords)).toEqual(['the small hours', 'the small hours', 'dawn', 'dawn', 'morning', 'morning', 'afternoon', 'afternoon', 'evening', 'evening', 'night', 'night'])
+  const r = openingRequest({ hour: 22, month: 9, word: 'a lantern', shape: 'square' })
+  expect(r.prompt).toMatch(/it is night, in October\./)
+  expect(r.prompt).toContain('"a lantern"')
+  expect(r.prompt).toContain('It is square; compose for that shape.') // the canvas lines, shared with every painting
+  expect(r.prompt).toContain('"marks": [')
+  expect(r.system).toMatch(/Answer with one JSON object and nothing else/)
+  expect(OPENING_WORDS.length).toBeGreaterThanOrEqual(24)
 })
 
 // ---------------------------------------------------------------- the paint program itself
@@ -322,6 +362,9 @@ test('openPainting on: a bare /spark opens Spark with the painter on, and says i
   expect(await say($, 'state')).toMatch(/· paint on/)
   expect(asks).toHaveLength(0) // it paints after turns from here; opening Spark spends nothing
   await turn($, 'o1', 9, 'Done.')
+  expect(asks.at(-1)!.system).toMatch(/Spark's opening/) // the first painting is her opening: of nothing in the conversation
+  expect(asks.at(-1)!.prompt).not.toContain('Done.')
+  expect(await say($, 'paint')).toMatch(/^painted: /) // every one after it is of the work
   expect(asks.at(-1)!.prompt).toContain('Done.')
   await cmd($, ''); await cmd($, 'paint off')
 })
@@ -536,7 +579,7 @@ test('/spark story tells the session\'s paintings again, in order, each laid dow
   }
   let p = await page()
   expect(p.title).toBe('✎ first light on the rope')
-  expect(p.where).toMatch(/^story · 1 of 3 · \d\d:\d\d$/)
+  expect(p.where).toMatch(/^story · 1 of 3 · \d\d:\d\d · her opening$/)
   expect(p.art).toBe(true)
   expect(asks.length).toBe(before) // telling the story asks nothing of any model
   expect(await say($, 'story')).toMatch(/^story ended/)
@@ -573,7 +616,7 @@ test('the story is told once through, then held on the last page; its controls (
   expect((await page()).shown).toEqual([]) // no story: no controls
   expect(await say($, 'story')).toMatch(/once through, then held on the last/)
   let p = await page()
-  expect(p.where).toMatch(/^story · 1 of 3 · \d\d:\d\d$/)
+  expect(p.where).toMatch(/^story · 1 of 3 · \d\d:\d\d · her opening$/)
   expect(p.shown).toEqual(['story-play', 'story-back', 'story-next', 'story-end'])
   expect(p.play).toBe('⏸ pause')
   await clock.advance(7 * 1000 + 200); p = await page()
@@ -584,9 +627,9 @@ test('the story is told once through, then held on the last page; its controls (
   expect(p.play).toBe('▶ again')
   await clock.advance(8 * 1000); expect((await page()).where).toMatch(/3 of 3 · .* · the end$/)
   p = await page('story-play') // again: from the first page
-  expect((await page()).where).toMatch(/^story · 1 of 3 · \d\d:\d\d$/)
+  expect((await page()).where).toMatch(/^story · 1 of 3 · \d\d:\d\d · her opening$/)
   p = await page('story-play') // hold it
-  expect((await page()).where).toMatch(/^story · 1 of 3 · \d\d:\d\d · held$/)
+  expect((await page()).where).toMatch(/^story · 1 of 3 · \d\d:\d\d · her opening · held$/)
   await clock.advance(8 * 1000); p = await page()
   expect(p.where).toMatch(/1 of 3 · .* · held$/) // held: time passes, the page stays
   expect(p.play).toBe('▶ play')
