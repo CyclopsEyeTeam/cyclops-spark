@@ -263,6 +263,34 @@ const KEEPER_LIGHT = { glass: hex('#1a1f2a'), rim: hex('#7d5fa6'), ring: hex('#a
 
 const to8 = (v) => Math.max(0, Math.min(255, Math.round(v * 255)))
 
+// LIGHT PAST FULL. Marks add their light, so where they meet (a glow on a glow, a pink line over a violet ground) a
+// colour can pass full strength. Cut off channel by channel, as it was, every such place goes towards white or yellow
+// and its colour is lost: the halo melts into the core, the pink trail turns white. Instead the colour is kept at full
+// strength, its hue whole, and only the light beyond full spills toward white, the more the further past it is: a hot
+// core still goes white, a halo only a little past full stays amber, a pink line over violet stays pink. Anything at
+// or under full is untouched, so most of a picture is exactly as before.
+export const SPILL = 1.5 // how far past full a colour is all white
+export function spill(r, g, b, out) {
+  const m = Math.max(r, g, b)
+  if (m <= 1) { out[0] = r > 0 ? r : 0; out[1] = g > 0 ? g : 0; out[2] = b > 0 ? b : 0; return out }
+  const t = Math.min(1, (m - 1) / SPILL), u = 1 / m
+  out[0] = r * u + (1 - r * u) * t; out[1] = g * u + (1 - g * u) * t; out[2] = b * u + (1 - b * u) * t
+  return out
+}
+const SP = [0, 0, 0]
+// a pixel over the ground, as the eye sees it, light past full spilled: RGB 0..1 in `out`
+function seen(px, k, ground, out) {
+  const a = Math.min(1, px[k + 3])
+  return spill(px[k] + ground[0] * (1 - a), px[k + 1] + ground[1] * (1 - a), px[k + 2] + ground[2] * (1 - a), out)
+}
+// to and from linear light (a 2.2 curve), by table: what a cell's quarters are averaged in, so a fine bright line
+// mixed into its cell keeps its light instead of going muddy
+const LIN = new Float32Array(1025), ENC = new Float32Array(4097)
+for (let i = 0; i <= 1024; i++) LIN[i] = Math.pow(i / 1024, 2.2)
+for (let i = 0; i <= 4096; i++) ENC[i] = Math.pow(i / 4096, 1 / 2.2)
+const lin = (v) => LIN[Math.round((v < 0 ? 0 : v > 1 ? 1 : v) * 1024)]
+const unlin = (v) => ENC[Math.round((v < 0 ? 0 : v > 1 ? 1 : v) * 4096)]
+
 // kitty / Ghostty: straight (un-premultiplied) RGBA bytes
 export function toRGBA8(r) {
   const { W, H, px } = r
@@ -270,7 +298,8 @@ export function toRGBA8(r) {
   for (let i = 0; i < W * H; i++) {
     const k = i * 4, a = Math.min(1, px[k + 3])
     const s = a > 1e-4 ? 1 / a : 0
-    out[k] = to8(px[k] * s); out[k + 1] = to8(px[k + 1] * s); out[k + 2] = to8(px[k + 2] * s); out[k + 3] = to8(a)
+    spill(px[k] * s, px[k + 1] * s, px[k + 2] * s, SP)
+    out[k] = to8(SP[0]); out[k + 1] = to8(SP[1]); out[k + 2] = to8(SP[2]); out[k + 3] = to8(a)
   }
   return out
 }
@@ -281,8 +310,8 @@ export function toRGB8(r, ground) {
   const { W, H, px } = r
   const out = new Uint8Array(W * H * 3)
   for (let i = 0; i < W * H; i++) {
-    const k = i * 4, a = Math.min(1, px[k + 3])
-    out[i * 3] = to8(px[k] + ground[0] * (1 - a)); out[i * 3 + 1] = to8(px[k + 1] + ground[1] * (1 - a)); out[i * 3 + 2] = to8(px[k + 2] + ground[2] * (1 - a))
+    seen(px, i * 4, ground, SP)
+    out[i * 3] = to8(SP[0]); out[i * 3 + 1] = to8(SP[1]); out[i * 3 + 2] = to8(SP[2])
   }
   return out
 }
@@ -295,8 +324,8 @@ export async function toRGB8Async(r, ground, pause, rows = 64) {
   for (let y0 = 0; y0 < H; y0 += rows) {
     const end = Math.min(H, y0 + rows) * W
     for (let i = y0 * W; i < end; i++) {
-      const k = i * 4, a = Math.min(1, px[k + 3])
-      out[i * 3] = to8(px[k] + ground[0] * (1 - a)); out[i * 3 + 1] = to8(px[k + 1] + ground[1] * (1 - a)); out[i * 3 + 2] = to8(px[k + 2] + ground[2] * (1 - a))
+      seen(px, i * 4, ground, SP)
+      out[i * 3] = to8(SP[0]); out[i * 3 + 1] = to8(SP[1]); out[i * 3 + 2] = to8(SP[2])
     }
     await pause()
   }
@@ -314,8 +343,8 @@ export function toHalfBlocks(r, ground) {
     const k = i * 4, a = Math.min(1, px[k + 3])
     if (a < 0.05) return -1
     // premultiplied colour over the assumed ground (what the eye sees)
-    const rr = Math.min(1, px[k] + ground[0] * (1 - a)), gg = Math.min(1, px[k + 1] + ground[1] * (1 - a)), bb = Math.min(1, px[k + 2] + ground[2] * (1 - a))
-    return (to8(rr) << 16) | (to8(gg) << 8) | to8(bb)
+    seen(px, k, ground, SP)
+    return (to8(SP[0]) << 16) | (to8(SP[1]) << 8) | to8(SP[2])
   }
   let w = 0
   for (let cy = 0; cy < rows; cy++) {
@@ -368,7 +397,9 @@ export async function base64Async(bytes, pause, slice = 3 * 262144) {
 // Empty quarters stay the terminal's own background, as in toHalfBlocks.
 const QUAD = [0x20, 0x2598, 0x259d, 0x2580, 0x2596, 0x258c, 0x259e, 0x259b, 0x2597, 0x259a, 0x2590, 0x259c, 0x2584, 0x2599, 0x259f, 0x2588] // by mask: 1 top-left, 2 top-right, 4 bottom-left, 8 bottom-right
 const FAINT = 1 / 3
-export function toQuadrants(r, ground) {
+// The first HD encoder, kept as the reference the one below is measured against: each quarter averaged as stored and cut
+// off at full, the split chosen by a weighted RGB distance
+export function toQuadrantsClassic(r, ground) {
   const { W, H, px } = r
   const cols = Math.floor(W / 2), rows = Math.floor(H / 4)
   const words = new Uint32Array(cols * rows * 3)
@@ -416,6 +447,78 @@ export function toQuadrants(r, ground) {
       else if (fg === DEFAULT) { fgMask = 15 ^ fgMask; fg = bg; bg = DEFAULT } // the lit side is drawn, the empty side is the terminal's
       // a glyph is never drawn in the terminal's default foreground (its text colour): a cell with nothing lit enough
       // to keep is the terminal's own background, a space
+      if (fg === DEFAULT || fgMask === 0) { words[w++] = 0x20; words[w++] = DEFAULT; words[w++] = DEFAULT }
+      else if (fgMask === 15) { words[w++] = 0x2580; words[w++] = fg; words[w++] = bg === DEFAULT ? fg : bg } // a whole cell: as the half blocks draw it
+      else { words[w++] = QUAD[fgMask]; words[w++] = fg; words[w++] = bg }
+    }
+  }
+  return words
+}
+
+// HD as it is drawn now. Three things keep a painting's colours as it shrinks into cells: light past full keeps its hue
+// (spill, above), a cell's quarters are averaged in linear light (so a bright line mixed into its cell keeps its light,
+// rather than going muddy), and the split of the four quarters into a cell's two colours is chosen by how different
+// they look (in Oklab, lightness counting a little more), not by how different their numbers are: the split that keeps
+// the colours that stand out (a mint trail beside a pink one, a speck on the dark) apart is the one taken.
+function oklab(r, g, b, o) { // r, g, b in linear light
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  o[0] = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s
+  o[1] = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s
+  o[2] = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s
+}
+export function toQuadrants(r, ground) {
+  const { W, H, px } = r
+  const cols = Math.floor(W / 2), rows = Math.floor(H / 4)
+  const words = new Uint32Array(cols * rows * 3)
+  const lr = new Float64Array(4), lg = new Float64Array(4), lb = new Float64Array(4), qa = new Float64Array(4), empty = [false, false, false, false]
+  const lab = [new Float64Array(3), new Float64Array(3), new Float64Array(3), new Float64Array(3)]
+  let w = 0
+  for (let cy = 0; cy < rows; cy++) {
+    for (let cx = 0; cx < cols; cx++) {
+      let lit = 0
+      for (let q = 0; q < 4; q++) {
+        const x = cx * 2 + (q & 1), y = cy * 4 + (q >> 1) * 2
+        const k0 = (y * W + x) * 4, k1 = ((y + 1) * W + x) * 4
+        const a = Math.min(1, (Math.min(1, px[k0 + 3]) + Math.min(1, px[k1 + 3])) / 2)
+        empty[q] = a < 0.05; qa[q] = a
+        seen(px, k0, ground, SP); let sr = lin(SP[0]), sg = lin(SP[1]), sb = lin(SP[2])
+        seen(px, k1, ground, SP); sr += lin(SP[0]); sg += lin(SP[1]); sb += lin(SP[2])
+        lr[q] = sr / 2; lg[q] = sg / 2; lb[q] = sb / 2
+        if (!empty[q]) lit++
+      }
+      if (!lit) { words[w++] = 0x20; words[w++] = DEFAULT; words[w++] = DEFAULT; continue }
+      // four quarters alike (most of a picture): one colour, nothing to choose
+      let spread = 0
+      for (let q = 1; q < 4; q++) spread = Math.max(spread, Math.abs(lr[q] - lr[0]), Math.abs(lg[q] - lg[0]), Math.abs(lb[q] - lb[0]), Math.abs(qa[q] - qa[0]))
+      const flat = spread < 0.002
+      if (!flat) for (let q = 0; q < 4; q++) oklab(lr[q], lg[q], lb[q], lab[q])
+      // the best split: the mask of quarters in the first colour (bottom-right always in the second: the rest are mirrors)
+      let best = 0, bestErr = Infinity
+      for (let m = 0; m < 8 && !flat; m++) {
+        let err = 0
+        for (const side of [m, 15 ^ m]) {
+          let n = 0, L = 0, A = 0, B = 0
+          for (let q = 0; q < 4; q++) if (side & (1 << q)) { n++; L += lab[q][0]; A += lab[q][1]; B += lab[q][2] }
+          if (!n) continue
+          L /= n; A /= n; B /= n
+          for (let q = 0; q < 4; q++) if (side & (1 << q)) err += 1.4 * (lab[q][0] - L) ** 2 + (lab[q][1] - A) ** 2 + (lab[q][2] - B) ** 2
+        }
+        if (err < bestErr - 1e-12) { bestErr = err; best = m }
+      }
+      // each side's colour (its quarters' light averaged, back to the screen's curve), or the terminal's own background
+      // where a side is mostly empty (see the classic encoder above: a faint side drawn as a colour shows as dark marks)
+      const colour = (side) => {
+        let n = 0, sr = 0, sg = 0, sb = 0, sa = 0
+        for (let q = 0; q < 4; q++) if (side & (1 << q)) { n++; sr += lr[q]; sg += lg[q]; sb += lb[q]; sa += empty[q] ? 0 : qa[q] }
+        if (!n || sa / n < FAINT) return DEFAULT
+        return (to8(unlin(sr / n)) << 16) | (to8(unlin(sg / n)) << 8) | to8(unlin(sb / n))
+      }
+      let fgMask = best, fg = colour(best), bg = colour(15 ^ best)
+      if (fgMask === 0) { fgMask = 15; fg = bg; bg = DEFAULT } // one colour across the cell
+      else if (fg === DEFAULT) { fgMask = 15 ^ fgMask; fg = bg; bg = DEFAULT } // the lit side is drawn, the empty side is the terminal's
+      // a glyph is never drawn in the terminal's default foreground (its text colour)
       if (fg === DEFAULT || fgMask === 0) { words[w++] = 0x20; words[w++] = DEFAULT; words[w++] = DEFAULT }
       else if (fgMask === 15) { words[w++] = 0x2580; words[w++] = fg; words[w++] = bg === DEFAULT ? fg : bg } // a whole cell: as the half blocks draw it
       else { words[w++] = QUAD[fgMask]; words[w++] = fg; words[w++] = bg }
