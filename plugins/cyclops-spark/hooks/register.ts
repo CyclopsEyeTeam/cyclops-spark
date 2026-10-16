@@ -39,7 +39,7 @@ import { KEEPER, PRISM } from './link-marks.js'
 import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
 import { motion, motionFor } from './motion.js'
-import { canvasFor, captionLines, galleryHTML, HD_MARKS, markFloor, revisitRequest, sceneSVG, SIZES, slug, withCaption } from './convert.js'
+import { canvasFor, captionLines, captionStrip, galleryHTML, HD_MARKS, markFloor, revisitRequest, rollLayout, rollSize, sceneSVG, SIZES, slug, withCaption } from './convert.js'
 
 const PANE = 'cyclops-spark'
 const T0 = Date.now()
@@ -521,6 +521,7 @@ const costText = (jobs: Job[]) => { const t = jobsEstimate(jobs); return t ? 'ab
 let convertProgress: { done: number; total: number; what: string } | null = null // a set with painter calls: how far it has got
 // /spark convert [faithful | refined | interpretive | three | all [faithful | refined | interpretive]] [hd | 4k | width]
 async function convertPainting($: EngineInterface, words: string[]): Promise<string> {
+  if (words[0] === 'roll') return rollPaintings($, words[1] ?? '') // the session's paintings as a clip
   const modes = ['faithful', 'refined', 'interpretive', 'three', 'all']
   let [mode = '', next = '', after = ''] = words
   let way: Way | '' = ''
@@ -555,7 +556,7 @@ async function convertPainting($: EngineInterface, words: string[]): Promise<str
       mode = o[1]; way = o[2]
     }
   }
-  if (!modes.includes(mode)) return 'convert takes: faithful (the same marks, large) | refined | interpretive | three (this painting all three ways) | all (every painting of the session; then faithful, refined or interpretive, or pick one), then hd (1920 wide, the default) or 4k. On its own, /spark convert lets you click one'
+  if (!modes.includes(mode)) return 'convert takes: faithful (the same marks, large) | refined | interpretive | three (this painting all three ways) | all (every painting of the session; then faithful, refined or interpretive, or pick one) | roll (every painting as a clip), then hd (1920 wide, the default) or 4k. On its own, /spark convert lets you click one'
   const width = sizeWord === '' ? SIZES.hd! : SIZES[sizeWord] ?? (/^\d{3,4}$/.test(sizeWord) ? Math.max(256, Math.min(4096, Number(sizeWord))) : 0)
   if (!width) return 'convert size: hd (1920 wide) or 4k (3840)'
   if (convertBusy) return convertProgress ? `Spark is still converting: ${convertProgress.done} of ${convertProgress.total} (${convertProgress.what})` : 'Spark is still converting'
@@ -641,6 +642,114 @@ async function convertPainting($: EngineInterface, words: string[]): Promise<str
     return `converting ${what}, ${width} wide, into ${folder}: ${calls ? `${calls} painter ${calls === 1 ? 'call' : 'calls'}, about ${kilo(est)} tokens` : 'no tokens'}. It goes on beside the work; Spark says when it is done (/spark state shows how far)`
   }
   return run()
+}
+
+// /spark convert roll: the session's paintings as a clip. Each is laid down mark by mark as it first was (2 s), held
+// with its title (3 s), and crossfaded into the next; the last fades out. Spark draws every frame herself (the same marks,
+// the same light as the terminal) and hands them to a small helper (link/spark_roll.py) as text, one painting at a time;
+// ffmpeg makes the MP4. Without ffmpeg, a smaller animated PNG. No tokens: nothing is asked of any model. It goes on
+// beside the work, and Spark says in the conversation when it is done.
+const ROLL = { reveal: 2, hold: 3, fade: 0.6, fps: 12 } // seconds laid down, seconds held, seconds of crossfade, frames a second laid down
+async function hasFfmpeg($: EngineInterface): Promise<boolean> {
+  try {
+    const proc = $.process.spawn({ argv: ['ffmpeg', '-hide_banner', '-version'] })
+    for await (const _ of proc) { /* its lines are not needed */ }
+    return ((await proc.result) as { code?: number } | null)?.code === 0
+  } catch { return false }
+}
+async function runHelper($: EngineInterface, args: string[]): Promise<{ ok: boolean; out: string; err: string }> {
+  let out = '', err = ''
+  try {
+    const proc = $.process.spawn({ argv: ['python3', `${$.plugin.root}/link/spark_roll.py`, ...args] })
+    for await (const piece of proc) { const p = piece as { stream?: string; text?: string }; if (p.stream === 'stderr') err += p.text ?? ''; else out += p.text ?? '' }
+    return { ok: ((await proc.result) as { code?: number } | null)?.code === 0, out, err }
+  } catch (e) { return { ok: false, out, err: err || String((e as Error)?.message || e) } }
+}
+async function rollPaintings($: EngineInterface, sizeWord: string): Promise<string> {
+  if (!story.length) return 'no paintings yet this session: /spark paint makes one'
+  if (convertBusy) return convertProgress ? `Spark is still converting: ${convertProgress.done} of ${convertProgress.total} (${convertProgress.what})` : 'Spark is still converting'
+  const asked = rollSize(sizeWord)
+  if (!asked) return 'roll size: hd (1080p, 1920 wide), or a width (16:9); 720p (1280 wide) when nothing is said'
+  convertBusy = true
+  const video = await hasFfmpeg($)
+  const [W, H] = video ? asked : [640, 360]
+  const frames = video ? Math.round(ROLL.reveal * ROLL.fps) : 8
+  const list = story.slice(), n = list.length
+  const root = await $.session.root().catch(() => '')
+  const folder = convertFolder.startsWith('/') || convertFolder.startsWith('~') ? convertFolder : (root ? root + '/' : '') + convertFolder
+  const d = new Date(), pad = (v: number) => String(v).padStart(2, '0')
+  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
+  const name = `spark-roll-${stamp}.${video ? 'mp4' : 'png'}`
+  const work = `${folder}/.spark-roll-${stamp}`
+  const when = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  const theme = activeTheme(), g = ground(), light = theme === 'light'
+  const PART = 3_000_000
+  const parts = Math.ceil(Math.ceil((W * H * 3) / 3) * 4 / PART)
+  convertProgress = { done: 0, total: n, what: 'the roll' }
+  const run = async (): Promise<string> => {
+    try {
+      const gb = g.map((v) => Math.round(v * 255))
+      for (let i = 0; i < n; i++) {
+        const p = list[i]!
+        const lines = captionLines(p.title, `${i + 1} of ${n}`, when)
+        const L = rollLayout(p.shape, W, H, lines.length)
+        // the frame: the ground, the caption strip at the bottom (the same for all this painting's frames), the painting
+        const frame = new Uint8Array(W * H * 3)
+        for (let k = 0; k < W * L.areaH; k++) { frame[k * 3] = gb[0]!; frame[k * 3 + 1] = gb[1]!; frame[k * 3 + 2] = gb[2]! }
+        frame.set(captionStrip(W, lines, g, { light }), W * L.areaH * 3)
+        const floor = markFloor(L.pw)
+        const base = createRaster(L.pw, L.ph), shot = createRaster(L.pw, L.ph)
+        const nm = p.marks.length
+        let laid = 0 // marks laid down whole in `base`
+        for (let f = 1; f <= frames; f++) {
+          await $.clock.now() // let everything else run
+          const q = (f / frames) * nm, whole = Math.min(nm, Math.floor(q))
+          if (whole > laid) { // the marks finished since the last frame, onto the base for good
+            await base.drawAsync(paintingScene({ ...p, marks: p.marks.slice(laid, whole) }, L.pw, L.ph, { reveal: 1, theme }), theme, { floor, keep: true }, () => $.clock.now())
+            laid = whole
+          }
+          let shown = base
+          if (q - whole > 0.001 && whole < nm) { // the one in progress, over a copy
+            shot.px.set(base.px)
+            shot.draw(paintingScene({ ...p, marks: [p.marks[whole]!] }, L.pw, L.ph, { reveal: q - whole, theme }), theme, { floor, keep: true })
+            shown = shot
+          }
+          const rgb = toRGB8(shown, g)
+          for (let y = 0; y < L.ph; y++) frame.set(rgb.subarray(y * L.pw * 3, (y + 1) * L.pw * 3), ((L.oy + y) * W + L.ox) * 3)
+          const b64 = base64(frame)
+          for (let k = 0; k < parts; k++) await $.fs.write(`${work}/f${String(i).padStart(3, '0')}-${String(f - 1).padStart(3, '0')}.b64.${k}`, b64.slice(k * PART, (k + 1) * PART))
+        }
+        if (video) { // this painting's part of the clip, now, so its frames are gone before the next is drawn
+          const seg = await runHelper($, ['segment', work, String(i), String(frames), String(W), String(H), String(parts), String(ROLL.fps), String(ROLL.hold)])
+          if (!seg.ok) return 'no roll: ' + (/No such file|not found|ENOENT|code 127/i.test(seg.err) && !seg.out ? 'python3 was not found (the roll needs it, with ffmpeg)' : seg.err.trim().slice(-160) || 'the helper could not make it')
+        }
+        if (convertProgress) convertProgress.done++
+        logRecent('roll ' + (i + 1))
+      }
+      const out = `${folder}/${name}`
+      const made = video
+        ? await runHelper($, ['join', work, String(n), out, String(ROLL.reveal + ROLL.hold), String(ROLL.fade)])
+        : await runHelper($, ['apng', work, String(n), String(frames), String(W), String(H), String(parts), '250', '2600', '3', out])
+      if (!made.ok) return 'no roll: ' + (/No such file|not found|ENOENT/i.test(made.err) && !made.out ? 'python3 was not found (the roll needs it)' : made.err.trim().slice(-160) || 'the helper could not make it')
+      const secs = Number(made.out.trim().split(/\s+/)[2]) || 0
+      converted.push({ file: name, title: `the roll · ${n} ${n === 1 ? 'painting' : 'paintings'}`, when: d.toTimeString().slice(0, 5), mode: video ? 'roll' : 'roll, animated PNG' })
+      await $.fs.write(`${folder}/index.html`, galleryHTML(converted))
+      const long = secs >= 60 ? `${Math.floor(secs / 60)} min ${Math.round(secs % 60)} s` : `${Math.round(secs)} s`
+      return `rolled ${n} ${n === 1 ? 'painting' : 'paintings'} into ${out} (${video ? `${W}x${H} MP4` : `${W}x${H} animated PNG: ffmpeg was not found, so a smaller one that plays in any browser (sudo apt install ffmpeg for the MP4)`}, ${long}), and the gallery page`
+    } catch (err) {
+      return 'no roll: ' + String((err as Error)?.message || err).slice(0, 120)
+    } finally {
+      convertBusy = false
+      convertProgress = null
+    }
+  }
+  const length = n * (ROLL.reveal + ROLL.hold) - (n - 1) * ROLL.fade
+  void quietly(async () => {
+    const text = await run()
+    await quietly(() => $.ui.log('Spark: ' + text))
+    await quietly(() => $.ui.toast(text.startsWith('rolled') ? `Spark: the roll is ready (${n} ${n === 1 ? 'painting' : 'paintings'})` : 'Spark: ' + text))
+  })
+  return `rolling all ${n} ${n === 1 ? 'painting' : 'paintings'} into a clip, ${video ? `${W}x${H} MP4, about ${Math.round(length)} s long` : `${W}x${H} animated PNG (ffmpeg was not found: sudo apt install ffmpeg for an MP4)`}, into ${folder}: each laid down, held with its title, then crossfaded into the next. No tokens. It goes on beside the work; Spark says when it is done (/spark state shows how far)`
 }
 
 // A live painting, if the turn has run long enough since the last one and this is a moment (or she has waited enough)
@@ -902,7 +1011,7 @@ const HELP = [
   '/spark link    on | off | status: Keeper and Prism beside Spark (Cyclops Link, off until you turn it on)',
   '/spark paint   a small painter paints each turn below Spark, and one now (it uses tokens); /spark paint off stops it',
   '/spark story   the session\'s paintings told again in order, each laid down anew (no tokens); /spark story again ends it',
-  '/spark convert the painting made large, SVG and PNG, into the convert folder: click a way (each with its token cost) or All… (this painting all three ways, or every painting one way), or say it: /spark convert refined 4k, three, all interpretive',
+  '/spark convert the painting made large, SVG and PNG, into the convert folder: click a way (each with its token cost) or All… (this painting all three ways, or every painting one way), or say it: /spark convert refined 4k, three, all interpretive; /spark convert roll makes every painting of the session into a clip (MP4 with ffmpeg)',
 ].join('\n')
 
 // focus asks for about 60% of the terminal (at least 64 columns, and always 40 left for the conversation), and the full
