@@ -21,3 +21,6 @@ export const TALK_IN: number
 export const TALK_OUT: number
 export function talkRequest(o: { said: string; mood?: string; title?: string; reflection?: string; facts?: Record<string, unknown> | null; palette?: string }): { system: string; prompt: string }
 export function parseTalk(text: string): { say: string; react: string | null } | null
+export const OPENING_WORDS: string[]
+export function hourWords(hour: number): string
+export function openingRequest(o: { palette?: string; theme?: string; shape?: string; size?: [number, number] | null; hour?: number; month?: number; word?: string }): { system: string; prompt: string }

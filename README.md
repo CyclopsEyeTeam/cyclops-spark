@@ -140,6 +140,12 @@ With the **Paint when Spark opens** setting on, a plain `/spark` opens Spark wit
 on, when a turn of 3 seconds or more lands, a small sub-agent paints Spark's expression of it in the room below her side
 pane, laid down mark by mark, with a few words of hers underneath.
 
+**Her opening.** The first painting of a conversation is not of the work: at the start there is next to nothing to
+paint from, so the first is hers, an opening made before the work has a shape. The painter is told nothing of the
+conversation, only the hour and the month where she is (a late-night opening is not a morning one), her colours, and one
+word drawn at random to start from, which it may follow or leave. `/spark story` and the roll name it as her opening.
+Every painting after it is of the work, and `/clear` brings a new opening.
+
 **Live paintings in long turns.** A long turn is painted while it is still going too: never sooner than 15 minutes after
 the turn began (or her last painting), at a moment that moves her (a failure mended, a subagent coming back, a long call
 settling, thinking turning into writing), or, with no such moment, 3 minutes later anyway. No limit on how many: just

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.8
+
+- **Spark's opening.** The first painting of a conversation is now hers, not the work's: at the start there is next to
+  nothing to paint from, so instead of a thin picture of one short exchange, the painter is told nothing of the
+  conversation, only the hour and the month (dawn, morning, afternoon, evening, night or the small hours), her colours,
+  and a word drawn at random from 32 (a threshold, a lantern, a comet, a forge…) to follow or leave. The story marks it
+  `· her opening`; every painting after it is of the work, and `/clear` brings a new opening. It is a cheaper call too:
+  no turn, no reply excerpt.
+
 ## 1.7.7
 
 - **`/spark` no longer disappears after a convert.** All of a session's plugin hooks share one worker, and the engine
