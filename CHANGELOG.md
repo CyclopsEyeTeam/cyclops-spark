@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.7.9
+
+- **Truest.** Layered is now called **truest**, first in the menu: the painting as Spark sees it beside the
+  conversation. It gives every mark the weight one terminal cell gives it, measured from how wide her painting was last
+  drawn, so specks, rays and trails hold the same share of the picture large as small. The depth (layers, softening,
+  shadows, bloom) stays. `layered` still works as a word.
+- **Colour depth.** Light past full keeps its hue: only the light beyond full spills toward white, rather than each
+  channel being cut off at full. A hot core still goes white, a halo stays amber, and a pink trail over violet stays
+  pink. This applies everywhere Spark turns light into colour: HD and half-block cells, kitty pixels, converts and the
+  roll. HD cells average their quarters in linear light and choose their two colours by perceptual distance (Oklab, with
+  a fast path for flat cells, about 15% more time than before). The first encoder is kept as `toQuadrantsClassic`, the
+  reference it is measured against.
+- **The roll breathes.** Each painting is held for its own length, in whole beats of the music's pulse (84 a minute):
+  a bar for a quiet painting that follows on from the last, up to two for a busier one or one that turns the colour
+  somewhere new. The last is held a bar longer, with the music settling on its home chord.
+- **Her tools.** Once there is a painting, three buttons sit top right in her pane: ▶ story (■ to end it),
+  ⇪ convert and ◎ roll. Each runs `/spark` as if typed, and its answer comes back as a line of hers. They only appear
+  where the painting keeps room of its own.
+- **Copy her words whole.** A ⧉ copy button under her answer, and `/spark copy`, put what you said and what she
+  answered on your clipboard. The terminal's own selection copies screen rows, so beside the conversation it only
+  took half of each row.
+
 ## 1.7.8
 
 - **Spark's opening.** The first painting of a conversation is now hers, not the work's: at the start there is next to
