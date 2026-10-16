@@ -12,6 +12,18 @@
   only) that plays in any browser, and Spark says how to get the MP4. No tokens; beside the work, with progress in
   `/spark state`, a note and a toast when done, and the clip in the gallery page as a video.
 - The raster can draw over what it holds (`keep`), so a painting is laid down a few marks at a time.
+- **Layered: a fourth way to convert, with the depth the terminal gives.** Drawn large and crisp, a painting's marks
+  read flat; in the terminal they are laid down in order at a size where every speck is a block and every line a soft
+  band of light. Layered (`hooks/layered.js`) draws the marks at the terminal's weight and builds the picture in depth:
+  the marks in their order cut into four layers, the far ones softened, each nearer layer's shadow on what lies behind
+  it, and a bloom of the brightest light. The PNG from the raster; the SVG with the same layers as filters (softening,
+  shadow, a bloom by luminance, in sRGB). No tokens; it goes on beside the work.
+- **The convert menus ask what, then which way.** What: this painting, this painting every way (all four), all the
+  session's paintings, or the roll. Which way: faithful, layered, refined, interpretive, each with its cost. Typed:
+  `layered`, `every` (`three` still works), `all <way>`, `roll <way>`.
+- **The roll in any way.** Faithful or layered (laid down in depth, 8 frames a second smoothed to 30, the finished layers
+  kept composed so a frame costs one layer); refined or interpretive revisit each painting first, one painter call each,
+  with the cost shown. The clip's name says its way (`spark-roll-<date>-<time>-layered.mp4`).
 
 ## 1.7.4
 

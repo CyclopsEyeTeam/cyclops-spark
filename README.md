@@ -108,8 +108,8 @@ This is separate from the plugin: installing Spark any other way does not add it
 | `/spark paint` | The painter: turns it on and paints one now (opening Spark at the side first if she is not up); from then on a small sub-agent paints Spark's expression of each turn below her (below). It uses tokens. |
 | `/spark paint off` | Stops the painter and empties the room below Spark. |
 | `/spark story` | The session's paintings told again, in order, each laid down anew, once through (no tokens). Under the painting: pause, back, next, end; or `/spark story pause \| play \| next \| back \| end`. |
-| `/spark convert` | The painting made large, as SVG and PNG, into the convert folder (below): click a way, each with its token cost beside it, or All… (this painting all three ways, or every painting one way). Or say it: `/spark convert refined 4k`, `three`, `all interpretive`. |
-| `/spark convert roll` | Every painting of the session as a clip: each laid down mark by mark, held with its title, crossfaded into the next (MP4 with ffmpeg; `roll hd` for 1080p). No tokens. |
+| `/spark convert` | The painting made large, as SVG and PNG, into the convert folder (below): click what (this painting, every way, all paintings, the roll), then which way (faithful, layered, refined, interpretive), each with its token cost beside it. Or say it: `/spark convert layered 4k`, `every`, `all refined`. |
+| `/spark convert roll` | Every painting of the session as a clip, in any of the four ways: each laid down mark by mark, held with its title, crossfaded into the next (MP4 with ffmpeg; `roll layered hd` for 1080p). |
 | `/spark help` | This list. |
 
 The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip, Cyclops Link, the
@@ -178,12 +178,18 @@ the words themselves. The last reflection shows in `/spark state`.
   composition intact, asking no model; **refined** gives the painter its own program back and asks for it again with
   finer curves, smoother gradients and more detailed light, the subject and composition kept; **interpretive** lets the
   painter revisit it freely, a new work derived from the original. The last two are one call each, counted in the
-  session's total. Every choice in the menu has what it will cost beside it (`Refined · about 3.1k tokens`, faithful
-  is free), estimated from what such calls have used this session, or before any from the painting itself. **All…**
-  opens a second menu: **all three ways of this painting**, or **every painting of the session** faithful, refined or
-  interpretive, each with its cost. Two painter calls or more take a while (a whole session, minutes), so they go on
-  beside your work: `/spark state` shows how far it has got, and Spark says in the conversation when it is done. Typed:
-  `/spark convert three` (this painting all three ways), `/spark convert all refined 4k`; `all` alone, or a size alone
+  session's total. A fourth way, **layered**, keeps the depth the painting has in the terminal: there it is laid down
+  mark by mark, the first marks the far ground and the last the nearest light, at a size where a speck is a whole block
+  and a line a soft band of light; drawn large and crisp, the same marks read flat. Layered draws them at the
+  terminal's weight and builds the picture as layers in depth: the marks in their order cut into four layers, the far
+  ones softened as a lens focused on the front would, each nearer layer casting a soft shadow onto what lies behind
+  it, and the brightest light blooming over the whole. The same marks, colours and order; no tokens. The menu asks
+  **what** first (this painting, this painting **every way**, **all** the session's paintings, or **the roll**), then
+  **which way**, each with what it will cost beside it (faithful and layered are free; refined and interpretive are
+  one painter call a painting, estimated from what such calls have used this session, or before any from the painting
+  itself). More than one picture, a layered one, or one larger than HD goes on beside your work: `/spark state` shows
+  how far it has got, and Spark says in the conversation when it is done. Typed: `/spark convert layered`,
+  `/spark convert every` (this painting all four ways), `/spark convert all refined 4k`; `all` alone, or a size alone
   (`/spark convert 4k`), asks. `hd` is 1920 wide (the default), `4k` 3840;
   the canvas keeps the painting's shape, and the picture is drawn exactly as the terminal draws it: on a dark ground
   every mark adds its light to what is under it (a glow brightens the hill it sits on, two lights make white), on a
@@ -195,8 +201,10 @@ the words themselves. The last reflection shows in `/spark state`.
   inside the project by default, or an absolute path). The caption is on the picture itself: the title, and under it
   `Spark · the date · the way`, in a small bitmap font sized to the picture (the **Caption** setting turns it off).
   This is the one time Spark writes files, and only when you ask.
-- **The roll: `/spark convert roll`.** Every painting of the session as one clip. Each is laid down mark by mark as it
-  first was (2 s), held with its title and `Spark · the date · 3 of 19` under it (3 s), and crossfaded into the next;
+- **The roll: `/spark convert roll`.** Every painting of the session as one clip, in any of the four ways (it asks
+  which, with the cost: faithful or layered are free, refined or interpretive revisit each painting first, one painter
+  call each; or say it, `/spark convert roll layered`). Each is laid down mark by mark as it first was (2 s; a layered
+  roll builds up in depth, the far layers softening in first), held with its title and `Spark · the date · 3 of 19` under it (3 s), and crossfaded into the next;
   the last fades out, so 19 paintings come to about a minute and a half. Spark draws every frame herself, the same marks
   and the same light as the terminal, at 1280x720 (`roll hd` for 1920x1080, or a width of your own), and hands them, one
   painting at a time, to a small helper (`link/spark_roll.py`) that makes the MP4 with **ffmpeg**
