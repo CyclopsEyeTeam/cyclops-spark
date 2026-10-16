@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.7.5
+
+- **`/spark convert roll`: the session as a clip.** Every painting is laid down mark by mark as it first was (2 s), held
+  with its title and its place in the roll under it (3 s), and crossfaded into the next (0.6 s); the last fades out.
+  Spark draws each frame herself (a painting's finished marks kept on a raster of their own, only the mark in progress
+  drawn again, so a frame costs little) at 1280x720, `roll hd` 1920x1080, or a width of your own; the frames go one
+  painting at a time to `link/spark_roll.py`, which pipes them into ffmpeg (x264, or ffmpeg's own mpeg4 where x264 is
+  missing), smooths the 12 laid-down frames a second to 30, holds the last, and joins the paintings with `xfade`. Each
+  painting's frames are removed as soon as its part is made. Without ffmpeg, a 640x360 animated PNG (standard library
+  only) that plays in any browser, and Spark says how to get the MP4. No tokens; beside the work, with progress in
+  `/spark state`, a note and a toast when done, and the clip in the gallery page as a video.
+- The raster can draw over what it holds (`keep`), so a painting is laid down a few marks at a time.
+
 ## 1.7.4
 
 - **Every convert choice shows what it costs, and All… does more.** The menu reads `Faithful · no tokens`,

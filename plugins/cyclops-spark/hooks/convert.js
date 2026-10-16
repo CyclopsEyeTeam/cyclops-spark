@@ -216,14 +216,36 @@ export function flattenRGBA(rgba, W, H, ground) {
 // A small gallery page of what was converted this session, for a browser
 export function galleryHTML(items) {
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
-  const cards = items.map((it) => `<figure><img src="${esc(it.file)}" alt="${esc(it.title)}"><figcaption><i>${esc(it.title)}</i><br><small>${esc(it.when)} · ${esc(it.mode)}</small></figcaption></figure>`).join('\n')
+  const media = (it) => /\.mp4$/.test(it.file) ? `<video src="${esc(it.file)}" controls loop muted playsinline></video>` : `<img src="${esc(it.file)}" alt="${esc(it.title)}">`
+  const cards = items.map((it) => `<figure>${media(it)}<figcaption><i>${esc(it.title)}</i><br><small>${esc(it.when)} · ${esc(it.mode)}</small></figcaption></figure>`).join('\n')
   return `<!doctype html>
 <meta charset="utf-8">
 <title>Spark's paintings</title>
-<style>body{margin:0;padding:24px;background:#141218;color:#e8e2ea;font:15px/1.4 system-ui,sans-serif}h1{font-weight:500;margin:0 0 20px}main{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:24px}figure{margin:0}img{width:100%;height:auto;display:block;border-radius:6px;background:#0d0b10}figcaption{padding:8px 2px;color:#cfc6d4}small{color:#8f879a}</style>
+<style>body{margin:0;padding:24px;background:#141218;color:#e8e2ea;font:15px/1.4 system-ui,sans-serif}h1{font-weight:500;margin:0 0 20px}main{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:24px}figure{margin:0}img,video{width:100%;height:auto;display:block;border-radius:6px;background:#0d0b10}figcaption{padding:8px 2px;color:#cfc6d4}small{color:#8f879a}</style>
 <h1>Spark's paintings</h1>
 <main>
 ${cards}
 </main>
 `
+}
+
+// ---------------------------------------------------------------- the roll: the session's paintings as a clip
+// A frame of the roll, W x H: the painting at its own shape (wide, square or tall), as large as fits above the caption
+// strip and centred in it; where it sits, and how big
+export function rollLayout(shape, W, H, lines) {
+  const strip = captionHeight(W, lines)
+  const areaH = H - strip
+  const [cw, ch] = canvasFor(shape, 1000)
+  const a = cw / ch
+  let pw = W, ph = Math.round(W / a)
+  if (ph > areaH) { ph = areaH; pw = Math.round(areaH * a) }
+  return { pw, ph, ox: Math.floor((W - pw) / 2), oy: Math.floor((areaH - ph) / 2), areaH, strip }
+}
+// The sizes the roll comes in: 720p by default, hd for 1080p; a width of its own keeps 16:9 (even numbers, as video
+// wants). Without ffmpeg, a smaller animated PNG
+export const ROLL_SIZES = { '': [1280, 720], '720': [1280, 720], hd: [1920, 1080], '1080': [1920, 1080] }
+export function rollSize(word) {
+  if (word in ROLL_SIZES) return ROLL_SIZES[word]
+  if (/^\d{3,4}$/.test(word)) { const w = Math.max(320, Math.min(1920, Number(word))) & ~1; return [w, Math.round((w * 9) / 16) & ~1] }
+  return null
 }

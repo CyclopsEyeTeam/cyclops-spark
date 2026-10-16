@@ -109,6 +109,7 @@ This is separate from the plugin: installing Spark any other way does not add it
 | `/spark paint off` | Stops the painter and empties the room below Spark. |
 | `/spark story` | The session's paintings told again, in order, each laid down anew, once through (no tokens). Under the painting: pause, back, next, end; or `/spark story pause \| play \| next \| back \| end`. |
 | `/spark convert` | The painting made large, as SVG and PNG, into the convert folder (below): click a way, each with its token cost beside it, or All… (this painting all three ways, or every painting one way). Or say it: `/spark convert refined 4k`, `three`, `all interpretive`. |
+| `/spark convert roll` | Every painting of the session as a clip: each laid down mark by mark, held with its title, crossfaded into the next (MP4 with ffmpeg; `roll hd` for 1080p). No tokens. |
 | `/spark help` | This list. |
 
 The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip, Cyclops Link, the
@@ -194,6 +195,14 @@ the words themselves. The last reflection shows in `/spark state`.
   inside the project by default, or an absolute path). The caption is on the picture itself: the title, and under it
   `Spark · the date · the way`, in a small bitmap font sized to the picture (the **Caption** setting turns it off).
   This is the one time Spark writes files, and only when you ask.
+- **The roll: `/spark convert roll`.** Every painting of the session as one clip. Each is laid down mark by mark as it
+  first was (2 s), held with its title and `Spark · the date · 3 of 19` under it (3 s), and crossfaded into the next;
+  the last fades out, so 19 paintings come to about a minute and a half. Spark draws every frame herself, the same marks
+  and the same light as the terminal, at 1280x720 (`roll hd` for 1920x1080, or a width of your own), and hands them, one
+  painting at a time, to a small helper (`link/spark_roll.py`) that makes the MP4 with **ffmpeg**
+  (`sudo apt install ffmpeg`). Without ffmpeg you get a smaller animated PNG (640x360) that plays in any browser, and
+  Spark says how to get the MP4. It asks nothing of any model, goes on beside your work (`/spark state` shows how far),
+  lands in the convert folder as `spark-roll-<date>-<time>.mp4`, and plays in the gallery page.
 - **The story of the session.** Every painting of the session is kept (in memory only) in the order it came.
   `/spark story` tells them again in her pane, each laid down mark by mark as it first was and held for a few seconds,
   with where it is in the story and when it was painted (`story · 3 of 9 · 21:01`), once through, then held on the
