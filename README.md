@@ -108,8 +108,9 @@ This is separate from the plugin: installing Spark any other way does not add it
 | `/spark paint` | The painter: turns it on and paints one now (opening Spark at the side first if she is not up); from then on a small sub-agent paints Spark's expression of each turn below her (below). It uses tokens. |
 | `/spark paint off` | Stops the painter and empties the room below Spark. |
 | `/spark story` | The session's paintings told again, in order, each laid down anew, once through (no tokens). Under the painting: pause, back, next, end; or `/spark story pause \| play \| next \| back \| end`. |
-| `/spark convert` | The painting made large, as SVG and PNG, into the convert folder (below): click what (this painting, every way, all paintings, the roll), then which way (faithful, layered, refined, interpretive), each with its token cost beside it. Or say it: `/spark convert layered 4k`, `every`, `all refined`. |
-| `/spark convert roll` | Every painting of the session as a clip, in any of the four ways: each laid down mark by mark, held with its title, crossfaded into the next (MP4 with ffmpeg; `roll layered hd` for 1080p). |
+| `/spark convert` | The painting made large, as SVG and PNG, into the convert folder (below): click what (this painting, every way, all paintings, the roll), then which way (truest, faithful, refined, interpretive), each with its token cost beside it. Or say it: `/spark convert layered 4k`, `every`, `all refined`. |
+| `/spark convert roll` | Every painting of the session as a clip, in any of the four ways: each laid down mark by mark, held with its title for a bar or two of its own, crossfaded into the next (MP4 with ffmpeg; `roll truest hd` for 1080p). |
+| `/spark copy` | What you last said to Spark and her answer, whole, onto your clipboard (or press ⧉ copy under her answer). A terminal's own selection copies screen rows, so beside the conversation it takes half of each. |
 | `/spark help` | This list. |
 
 The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip, Cyclops Link, the
@@ -139,6 +140,17 @@ Two controls: `/spark paint` turns it on and paints one now (again any time you 
 With the **Paint when Spark opens** setting on, a plain `/spark` opens Spark with the painter already on. While it is
 on, when a turn of 3 seconds or more lands, a small sub-agent paints Spark's expression of it in the room below her side
 pane, laid down mark by mark, with a few words of hers underneath.
+
+**Her tools.** Once there is a painting, three small buttons sit at the top of her pane, right-aligned: **▶ story**
+(■ story while it plays, to end it), **⇪ convert** and **◎ roll**. Each runs `/spark` as if typed, its menus asked as
+usual, and its answer is a line of hers in the conversation. They only appear where the painting keeps room of its own.
+
+**Colour depth.** Marks add their light, so where they meet a colour can pass full strength. Spark keeps such a colour
+at full strength with its hue whole and lets only the light beyond full spill toward white: a hot core still goes white,
+a halo stays amber, a pink trail over a violet ground stays pink (it used to be cut off channel by channel, which turned
+all of those pale). In HD, a cell's quarters are averaged in linear light and its two colours chosen by how different
+they look (Oklab), so the colours that give a painting its character stay apart as it shrinks into cells. The first HD
+encoder is kept in the code (`toQuadrantsClassic`) as the reference the new one is measured against.
 
 **Her opening.** The first painting of a conversation is not of the work: at the start there is next to nothing to
 paint from, so the first is hers, an opening made before the work has a shape. The painter is told nothing of the
@@ -184,17 +196,19 @@ the words themselves. The last reflection shows in `/spark state`.
   composition intact, asking no model; **refined** gives the painter its own program back and asks for it again with
   finer curves, smoother gradients and more detailed light, the subject and composition kept; **interpretive** lets the
   painter revisit it freely, a new work derived from the original. The last two are one call each, counted in the
-  session's total. A fourth way, **layered**, keeps the depth the painting has in the terminal: there it is laid down
-  mark by mark, the first marks the far ground and the last the nearest light, at a size where a speck is a whole block
-  and a line a soft band of light; drawn large and crisp, the same marks read flat. Layered draws them at the
-  terminal's weight and builds the picture as layers in depth: the marks in their order cut into four layers, the far
+  session's total. The first way in the menu, **truest** (it was called layered, and `layered` still works),
+  is the painting as Spark sees it beside the conversation: there it is laid down mark by mark, the first marks the far
+  ground and the last the nearest light, at a size where a speck is a whole cell and a line a soft band of light; drawn
+  large and crisp, the same marks read flat. Truest gives every mark the weight one of those cells gives it (the cells
+  as wide as her painting was last drawn, so a speck or a line keeps the same share of the picture, large as small),
+  and builds the picture as layers in depth: the marks in their order cut into four layers, the far
   ones softened as a lens focused on the front would, each nearer layer casting a soft shadow onto what lies behind
   it, and the brightest light blooming over the whole. The same marks, colours and order; no tokens. The menu asks
   **what** first (this painting, this painting **every way**, **all** the session's paintings, or **the roll**), then
-  **which way**, each with what it will cost beside it (faithful and layered are free; refined and interpretive are
+  **which way**, each with what it will cost beside it (truest and faithful are free; refined and interpretive are
   one painter call a painting, estimated from what such calls have used this session, or before any from the painting
-  itself). More than one picture, a layered one, or one larger than HD goes on beside your work: `/spark state` shows
-  how far it has got, and Spark says in the conversation when it is done. Typed: `/spark convert layered`,
+  itself). More than one picture, a truest one, or one larger than HD goes on beside your work: `/spark state` shows
+  how far it has got, and Spark says in the conversation when it is done. Typed: `/spark convert truest`,
   `/spark convert every` (this painting all four ways), `/spark convert all refined 4k`; `all` alone, or a size alone
   (`/spark convert 4k`), asks. `hd` is 1920 wide (the default), `4k` 3840;
   the canvas keeps the painting's shape, and the picture is drawn exactly as the terminal draws it: on a dark ground
@@ -208,9 +222,9 @@ the words themselves. The last reflection shows in `/spark state`.
   `Spark · the date · the way`, in a small bitmap font sized to the picture (the **Caption** setting turns it off).
   This is the one time Spark writes files, and only when you ask.
 - **The roll: `/spark convert roll`.** Every painting of the session as one clip, in any of the four ways (it asks
-  which, with the cost: faithful or layered are free, refined or interpretive revisit each painting first, one painter
-  call each; or say it, `/spark convert roll layered`). Each is laid down mark by mark as it first was (2 s; a layered
-  roll builds up in depth, the far layers softening in first), held with its title and `Spark · the date · 3 of 19` under it (3 s), and crossfaded into the next;
+  which, with the cost: truest or faithful are free, refined or interpretive revisit each painting first, one painter
+  call each; or say it, `/spark convert roll truest`). Each is laid down mark by mark as it first was (2 s; a truest
+  roll builds up in depth, the far layers softening in first), held with its title and `Spark · the date · 3 of 19` under it for as long as the music gives it (a bar or two of its own steady pulse: a busier painting, or one that turns the colour somewhere new, longer; the last a bar longer still, the music settling home under it), and crossfaded into the next;
   the last fades out, so 19 paintings come to about a minute and a half. Spark draws every frame herself, the same marks
   and the same light as the terminal, at 1280x720 (`roll hd` for 1920x1080, or a width of your own), and hands them, one
   painting at a time, to a small helper (`link/spark_roll.py`) that makes the MP4 with **ffmpeg**
@@ -220,7 +234,7 @@ the words themselves. The last reflection shows in `/spark state`.
   **It opens with a title card**: the Cyclops eye over a glow in the session's own colour, the title large in the
   bitmap font, and under it `Spark · the date · 19 paintings · music in F major`; it comes up over a second, holds,
   and crossfades into the first painting while the music opens on the key's home chord and a few rising bells. The
-  title is the one you give it (`/spark convert roll layered called Night build`), else the name you gave the
+  title is the one you give it (`/spark convert roll truest called Night build`), else the name you gave the
   conversation with `/rename`, else the project's folder. The **Title card on the roll** setting leaves it out.
   **The roll has its own music**, an instrumental read from the paintings (`hooks/music.js`), no tokens: the
   session's colours pick the key (their hue round the circle of fifths) and the mode (warm and light: major; cool or
