@@ -55,9 +55,11 @@ export function createRaster(W, H, { fill = false } = {}) {
   // its specks and lines visible with a floor of its own)
   // `res`: how many of this raster's pixels make one of the terminal's half-block pixels (2 for HD): the thinnest marks
   // keep the weight they have in the terminal, drawn at the finer grid
-  function* drawing(scene, theme, { over = false, floor = 0.6, res = 1 } = {}) {
+  // `keep`: draw over what the raster already holds instead of starting clean (the roll lays a painting down a few marks
+  // at a time)
+  function* drawing(scene, theme, { over = false, floor = 0.6, res = 1, keep = false } = {}) {
     const fl = Math.max(0.6 * res, floor), fw = Math.max(0.45 * res, floor * 0.75), fp = Math.max(0.5 * res, floor * 0.75) // dots, rings and arcs, paths
-    px.fill(0)
+    if (!keep) px.fill(0)
     stamp.fill(-1)
     const additive = theme !== 'light' && !over
     let pid = 0

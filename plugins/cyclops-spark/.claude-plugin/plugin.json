@@ -1,6 +1,6 @@
 {
   "name": "cyclops-spark",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "description": "Spark, Claude's living presence for the terminal: a small procedural creature drawn only from real Claude Code session events, as half-block cells or kitty/Ghostty pixels.",
   "author": {
     "name": "Cyclops Eye Team"
@@ -30,6 +30,18 @@
       "type": "boolean",
       "title": "Welcome eye",
       "description": "When a session starts, the Cyclops eye is drawn above the prompt until your first message, then the room is given back.",
+      "default": true
+    },
+    "rollTitle": {
+      "type": "boolean",
+      "title": "Title card on the roll",
+      "description": "Open /spark convert roll with a title card: the Cyclops eye, the title (the name you gave the conversation with /rename, or the project's folder; or /spark convert roll ... called <a title>), the date, how many paintings and the music's key.",
+      "default": true
+    },
+    "rollMusic": {
+      "type": "boolean",
+      "title": "Music in the roll",
+      "description": "Give /spark convert roll its own instrumental music, read from the paintings: the session's colours pick the key, each painting a chord, each mark laid down a note. No tokens. Off: a silent clip.",
       "default": true
     },
     "hd": {

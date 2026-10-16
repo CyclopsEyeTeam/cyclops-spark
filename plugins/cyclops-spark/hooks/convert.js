@@ -10,6 +10,7 @@
 
 import { REACTIONS } from './core.js'
 import { FONT, FONT_H } from './font.js'
+import { eyeRaster } from './eye.js'
 
 export const SIZES = { hd: 1920, '4k': 3840 }
 export const HD_MARKS = 240
@@ -68,20 +69,24 @@ const hex = (c) => '#' + c.map((v) => Math.round(Math.max(0, Math.min(1, v)) * 2
 // ---------------------------------------------------------------- the scene as SVG
 // The scene is what paintingScene gives the raster: primitives in unit space (0,0 the middle; min(W,H) spans 2.4).
 // The same mapping the raster uses, so the SVG and the PNG are the one picture.
-export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '', caption = null, floor = 0.6 } = {}) {
+// `layers` (layered): the scene in depth, back to front, each [scene, depth 0..1]; drawn with the far ones softened,
+// each nearer one's shadow on those behind, and the brightest light blooming, as hooks/layered.js draws the PNG
+export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '', caption = null, floor = 0.6, layers = null } = {}) {
   const scale = Math.min(W, H) / 2.4, ox = W / 2, oy = H / 2
   const fl = Math.max(0.6, floor), fw = Math.max(0.9, floor * 1.5) // the thinnest a dot (radius) or a stroke (width) is drawn
   const X = (x) => +(ox + x * scale).toFixed(2), Y = (y) => +(oy + y * scale).toFixed(2), R = (r) => +(r * scale).toFixed(2)
   const col = (c) => hex(c)
   const dark = theme !== 'light'
   const bg = ground || (dark ? '#141218' : '#f6f2ec')
-  const defs = [], body = []
+  const defs = []
   let id = 0
   const num = (v) => +Number(v).toFixed(3)
-  for (const p of scene) {
+  const marks = (sc, pfx = 'g') => {
+  const body = []
+  for (const p of sc) {
     const a = num(p.a ?? 1)
     if (p.k === 'glow') {
-      const g = 'g' + id++
+      const g = pfx + id++
       defs.push(`<radialGradient id="${g}"><stop offset="0" stop-color="${col(p.c)}" stop-opacity="${num(a * (dark ? 0.9 : 0.5))}"/><stop offset="0.45" stop-color="${col(p.c)}" stop-opacity="${num(a * (dark ? 0.3 : 0.17))}"/><stop offset="0.7" stop-color="${col(p.c)}" stop-opacity="${num(a * (dark ? 0.07 : 0.04))}"/><stop offset="1" stop-color="${col(p.c)}" stop-opacity="0"/></radialGradient>`)
       body.push(`<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${R(p.r * 1.6)}" fill="url(#${g})"/>`)
     } else if (p.k === 'dot') {
@@ -103,7 +108,7 @@ export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '
       const same = !c1 || (c0[0] === c1[0] && c0[1] === c1[1] && c0[2] === c1[2])
       if (same) body.push(`<polygon points="${pts}" fill="${col(c0)}" fill-opacity="${a}"/>`)
       else {
-        const g = 'g' + id++, gx = Math.cos(p.grad || 0), gy = Math.sin(p.grad || 0)
+        const g = pfx + id++, gx = Math.cos(p.grad || 0), gy = Math.sin(p.grad || 0)
         const proj = p.pts.map(([x, y]) => X(x) * gx + Y(y) * gy), lo = Math.min(...proj), hi = Math.max(...proj)
         const mid = p.pts.reduce((s, [x, y]) => [s[0] + X(x) / p.pts.length, s[1] + Y(y) / p.pts.length], [0, 0])
         const base = mid[0] * gx + mid[1] * gy
@@ -117,14 +122,34 @@ export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '
       const same = c0[0] === c1[0] && c0[1] === c1[1] && c0[2] === c1[2]
       let stroke = col(c0)
       if (!same) {
-        const g = 'g' + id++, [fx, fy] = p.pts[0], [lx, ly] = p.pts[p.pts.length - 1]
+        const g = pfx + id++, [fx, fy] = p.pts[0], [lx, ly] = p.pts[p.pts.length - 1]
         defs.push(`<linearGradient id="${g}" gradientUnits="userSpaceOnUse" x1="${X(fx)}" y1="${Y(fy)}" x2="${X(lx)}" y2="${Y(ly)}"><stop offset="0" stop-color="${col(c0)}"/><stop offset="1" stop-color="${col(c1)}"/></linearGradient>`)
         stroke = `url(#${g})`
       }
       body.push(`<polyline points="${pts}" fill="none" stroke="${stroke}" stroke-opacity="${a}" stroke-width="${Math.max(fw, R(p.w))}" stroke-linecap="round" stroke-linejoin="round"/>`)
     }
   }
+  return body.join('')
+  }
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  let inner
+  if (layers) { // in depth: a layer's shadow (its cover, black, softened, a little lower), then the layer, softened by its depth; then the bloom
+    const short = Math.min(W, H), parts = []
+    defs.push(`<filter id="shadow" x="-10%" y="-10%" width="120%" height="130%" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 ${dark ? 0.4 : 0.22} 0"/><feOffset dy="${num(short * 0.006)}"/><feGaussianBlur stdDeviation="${num(short * 0.006)}"/></filter>`)
+    layers.forEach(([sc, depth], li) => {
+      const body = marks(sc, `l${li}g`)
+      defs.push(`<g id="layer${li}"${dark ? ' class="add"' : ''}>${body}</g>`)
+      if (li > 0) parts.push(`<use href="#layer${li}" filter="url(#shadow)"/>`)
+      if (depth > 0) defs.push(`<filter id="soft${li}" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="${num(short * 0.003 * depth)}"/></filter>`)
+      parts.push(`<use href="#layer${li}"${depth > 0 ? ` filter="url(#soft${li})"` : ''}${dark ? ' style="mix-blend-mode:screen;mix-blend-mode:plus-lighter"' : ''}/>`)
+    })
+    if (dark) { // the bloom: what is past three quarters bright, softened wide, added back
+      // brightness from the light as the eye weighs it, so the bloom keeps the colour of what blooms
+      defs.push(`<filter id="bloom" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB"><feColorMatrix in="SourceGraphic" type="luminanceToAlpha" result="l"/><feComponentTransfer in="l" result="m"><feFuncA type="linear" slope="4" intercept="-3"/></feComponentTransfer><feComposite in="SourceGraphic" in2="m" operator="in" result="b"/><feGaussianBlur in="b" stdDeviation="${num(short * 0.016)}"/></filter>`)
+      parts.push(`<g opacity="0.9" style="mix-blend-mode:screen;mix-blend-mode:plus-lighter" filter="url(#bloom)">${layers.map((_, li) => `<use href="#layer${li}"/>`).join('')}</g>`)
+    }
+    inner = parts.join('')
+  } else inner = `<g${dark ? ' class="add"' : ''}>${marks(scene)}</g>`
   const strip = caption ? captionHeight(W, caption.length) : 0
   const s = captionScale(W), size = FONT_H * s * 0.95
   const inks = dark ? ['#ece4f0', '#968ca0'] : ['#282430', '#787080']
@@ -138,7 +163,7 @@ export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '
     // on a dark ground every mark adds its light to what is already there, as the terminal draws it: plus-lighter where
     // the viewer has it (browsers), screen (nearly it) elsewhere; each mark on its own, so a glow brightens the hill it
     // sits on. On a light ground each goes over the last, as paper
-    `<g${dark ? ' class="add"' : ''}>${body.join('')}</g>`,
+    inner,
     text,
     '</svg>',
     '',
@@ -161,6 +186,32 @@ export function captionHeight(W, lines = 2) {
   return s * 4 + lines * (FONT_H * s + s * 3) + s * 3
 }
 // The strip's RGB (W × captionHeight), the text in the ink colours over the ground
+// Text in the bitmap font onto an RGB buffer, `s` pixels a font pixel, its top left at x0, y0; `alpha` mixes it over
+// what is there. Returns where the text ended
+export function drawText(rgb, W, H, text, x0, y0, s, ink, alpha = 1) {
+  for (const ch of String(text)) {
+    const [adv, rows] = glyph(ch)
+    for (let y = 0; y < FONT_H; y++) {
+      const bits = parseInt(rows.slice(y * 3, y * 3 + 3), 16)
+      if (!bits) continue
+      for (let x = 0; x < CELL; x++) {
+        if (!((bits >> x) & 1)) continue
+        for (let dy = 0; dy < s; dy++) for (let dx = 0; dx < s; dx++) {
+          const px = x0 + x * s + dx, py = y0 + y * s + dy
+          if (px < 0 || px >= W || py < 0 || py >= H) continue
+          const k = (py * W + px) * 3
+          for (let c = 0; c < 3; c++) rgb[k + c] = Math.round(ink[c] * alpha + rgb[k + c] * (1 - alpha))
+        }
+      }
+    }
+    x0 += adv * s
+    if (x0 > W) break
+  }
+  return x0
+}
+// how wide a text is, in font pixels
+export const textWidth = (text) => [...String(text)].reduce((n, ch) => n + glyph(ch)[0], 0)
+
 export function captionStrip(W, lines, ground, { light = false } = {}) {
   const s = captionScale(W)
   const H = captionHeight(W, lines.length)
@@ -170,26 +221,7 @@ export function captionStrip(W, lines, ground, { light = false } = {}) {
   const inks = light ? [[40, 36, 48], [120, 112, 128]] : [[236, 228, 240], [150, 140, 160]]
   let y0 = s * 4
   for (const line of lines) {
-    const ink = inks[line.dim ? 1 : 0]
-    let x0 = s * 5
-    for (const ch of String(line.text)) {
-      const [adv, rows] = glyph(ch)
-      for (let y = 0; y < FONT_H; y++) {
-        const bits = parseInt(rows.slice(y * 3, y * 3 + 3), 16)
-        if (!bits) continue
-        for (let x = 0; x < CELL; x++) {
-          if (!((bits >> x) & 1)) continue
-          for (let dy = 0; dy < s; dy++) for (let dx = 0; dx < s; dx++) {
-            const px = x0 + x * s + dx, py = y0 + y * s + dy
-            if (px < 0 || px >= W || py >= H) continue
-            const k = (py * W + px) * 3
-            rgb[k] = ink[0]; rgb[k + 1] = ink[1]; rgb[k + 2] = ink[2]
-          }
-        }
-      }
-      x0 += adv * s
-      if (x0 > W) break
-    }
+    drawText(rgb, W, H, line.text, s * 5, y0, s, inks[line.dim ? 1 : 0])
     y0 += FONT_H * s + s * 3
   }
   return rgb
@@ -216,14 +248,73 @@ export function flattenRGBA(rgba, W, H, ground) {
 // A small gallery page of what was converted this session, for a browser
 export function galleryHTML(items) {
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
-  const cards = items.map((it) => `<figure><img src="${esc(it.file)}" alt="${esc(it.title)}"><figcaption><i>${esc(it.title)}</i><br><small>${esc(it.when)} · ${esc(it.mode)}</small></figcaption></figure>`).join('\n')
+  const media = (it) => /\.mp4$/.test(it.file) ? `<video src="${esc(it.file)}" controls loop muted playsinline></video>` : `<img src="${esc(it.file)}" alt="${esc(it.title)}">`
+  const cards = items.map((it) => `<figure>${media(it)}<figcaption><i>${esc(it.title)}</i><br><small>${esc(it.when)} · ${esc(it.mode)}</small></figcaption></figure>`).join('\n')
   return `<!doctype html>
 <meta charset="utf-8">
 <title>Spark's paintings</title>
-<style>body{margin:0;padding:24px;background:#141218;color:#e8e2ea;font:15px/1.4 system-ui,sans-serif}h1{font-weight:500;margin:0 0 20px}main{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:24px}figure{margin:0}img{width:100%;height:auto;display:block;border-radius:6px;background:#0d0b10}figcaption{padding:8px 2px;color:#cfc6d4}small{color:#8f879a}</style>
+<style>body{margin:0;padding:24px;background:#141218;color:#e8e2ea;font:15px/1.4 system-ui,sans-serif}h1{font-weight:500;margin:0 0 20px}main{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:24px}figure{margin:0}img,video{width:100%;height:auto;display:block;border-radius:6px;background:#0d0b10}figcaption{padding:8px 2px;color:#cfc6d4}small{color:#8f879a}</style>
 <h1>Spark's paintings</h1>
 <main>
 ${cards}
 </main>
 `
+}
+
+// ---------------------------------------------------------------- the roll: the session's paintings as a clip
+// A frame of the roll, W x H: the painting at its own shape (wide, square or tall), as large as fits above the caption
+// strip and centred in it; where it sits, and how big
+export function rollLayout(shape, W, H, lines) {
+  const strip = captionHeight(W, lines)
+  const areaH = H - strip
+  const [cw, ch] = canvasFor(shape, 1000)
+  const a = cw / ch
+  let pw = W, ph = Math.round(W / a)
+  if (ph > areaH) { ph = areaH; pw = Math.round(areaH * a) }
+  return { pw, ph, ox: Math.floor((W - pw) / 2), oy: Math.floor((areaH - ph) / 2), areaH, strip }
+}
+// The sizes the roll comes in: 720p by default, hd for 1080p; a width of its own keeps 16:9 (even numbers, as video
+// wants). Without ffmpeg, a smaller animated PNG
+export const ROLL_SIZES = { '': [1280, 720], '720': [1280, 720], hd: [1920, 1080], '1080': [1920, 1080] }
+export function rollSize(word) {
+  if (word in ROLL_SIZES) return ROLL_SIZES[word]
+  if (/^\d{3,4}$/.test(word)) { const w = Math.max(320, Math.min(1920, Number(word))) & ~1; return [w, Math.round((w * 9) / 16) & ~1] }
+  return null
+}
+
+// ---------------------------------------------------------------- the roll's title card
+// The first thing in the roll: the Cyclops eye over a soft glow in the session's own colour, the title (the name you gave
+// the conversation, or the project's) large in the bitmap font, and under it a dim line (Spark, the date, how many
+// paintings, the music's key). `alpha` (0..1) brings it all up out of the ground, for its fade in
+export function titleCard({ W, H, title, sub, ground, light = false, glow = [0.8, 0.5, 0.7], alpha = 1 }) {
+  const rgb = new Uint8Array(W * H * 3)
+  const g = ground.map((v) => Math.round(v * 255))
+  const cx = W / 2, cy = H * 0.36
+  // the ground, with the glow: wide and soft, the session's colour
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const d2 = ((x - cx) / (W * 0.42)) ** 2 + ((y - cy) / (H * 0.42)) ** 2
+    const k = (y * W + x) * 3, gl = Math.exp(-2.6 * d2) * 0.28 * alpha
+    for (let c = 0; c < 3; c++) rgb[k + c] = Math.min(255, Math.round(light ? g[c] * (1 - gl * 0.5) + glow[c] * 255 * gl * 0.5 : g[c] + glow[c] * 255 * gl))
+  }
+  // the eye
+  const eh = Math.round(H * 0.34), ew = Math.round((eh * 64) / 30)
+  const eye = eyeRaster(ew, eh, { light })
+  const ex = Math.round(cx - ew / 2), ey = Math.round(cy - eh / 2)
+  for (let y = 0; y < eh; y++) for (let x = 0; x < ew; x++) {
+    const px = ex + x, py = ey + y
+    if (px < 0 || py < 0 || px >= W || py >= H) continue
+    const i = (y * ew + x) * 4, a = eye.px[i + 3] * alpha
+    if (a <= 0) continue
+    const k = (py * W + px) * 3
+    for (let c = 0; c < 3; c++) rgb[k + c] = Math.round(Math.min(1, eye.px[i + c] / Math.max(eye.px[i + 3], 1e-6)) * 255 * a + rgb[k + c] * (1 - a))
+  }
+  // the title, as large as fits, and the line under it
+  const inks = light ? [[40, 36, 48], [110, 102, 120]] : [[240, 232, 244], [150, 140, 162]]
+  const tw = Math.max(1, textWidth(title))
+  const s = Math.max(2, Math.min(Math.floor((W * 0.86) / tw), Math.round(H / 110)))
+  const ty = Math.round(H * 0.6)
+  drawText(rgb, W, H, title, Math.round(cx - (tw * s) / 2), ty, s, inks[0], alpha)
+  const ss = Math.max(2, Math.min(Math.floor((W * 0.86) / Math.max(1, textWidth(sub))), Math.round(s * 0.5)))
+  drawText(rgb, W, H, sub, Math.round(cx - (textWidth(sub) * ss) / 2), ty + FONT_H * s + s * 4, ss, inks[1], alpha)
+  return rgb
 }

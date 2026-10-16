@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.7.5
+
+- **`/spark convert roll`: the session as a clip.** Every painting is laid down mark by mark as it first was (2 s), held
+  with its title and its place in the roll under it (3 s), and crossfaded into the next (0.6 s); the last fades out.
+  Spark draws each frame herself (a painting's finished marks kept on a raster of their own, only the mark in progress
+  drawn again, so a frame costs little) at 1280x720, `roll hd` 1920x1080, or a width of your own; the frames go one
+  painting at a time to `link/spark_roll.py`, which pipes them into ffmpeg (x264, or ffmpeg's own mpeg4 where x264 is
+  missing), smooths the 12 laid-down frames a second to 30, holds the last, and joins the paintings with `xfade`. Each
+  painting's frames are removed as soon as its part is made. Without ffmpeg, a 640x360 animated PNG (standard library
+  only) that plays in any browser, and Spark says how to get the MP4. No tokens; beside the work, with progress in
+  `/spark state`, a note and a toast when done, and the clip in the gallery page as a video.
+- The raster can draw over what it holds (`keep`), so a painting is laid down a few marks at a time.
+- **Layered: a fourth way to convert, with the depth the terminal gives.** Drawn large and crisp, a painting's marks
+  read flat; in the terminal they are laid down in order at a size where every speck is a block and every line a soft
+  band of light. Layered (`hooks/layered.js`) draws the marks at the terminal's weight and builds the picture in depth:
+  the marks in their order cut into four layers, the far ones softened, each nearer layer's shadow on what lies behind
+  it, and a bloom of the brightest light. The PNG from the raster; the SVG with the same layers as filters (softening,
+  shadow, a bloom by luminance, in sRGB). No tokens; it goes on beside the work.
+- **The convert menus ask what, then which way.** What: this painting, this painting every way (all four), all the
+  session's paintings, or the roll. Which way: faithful, layered, refined, interpretive, each with its cost. Typed:
+  `layered`, `every` (`three` still works), `all <way>`, `roll <way>`.
+- **The roll in any way.** Faithful or layered (laid down in depth, 8 frames a second smoothed to 30, the finished layers
+  kept composed so a frame costs one layer); refined or interpretive revisit each painting first, one painter call each,
+  with the cost shown. The clip's name says its way (`spark-roll-<date>-<time>-layered.mp4`).
+- **The roll has its own music.** An instrumental read from the paintings, no tokens (`hooks/music.js` writes the score,
+  `link/spark_roll.py music` plays it): the session's colours pick the key and mode, each painting a chord of it (a soft
+  pad and a bass, changing with each painting), and each mark sounds as it is laid down, by kind (dot, ring, arc: bell;
+  line, curve: plucked string; spray: sparkles; glow: a swell), pitched by its height, placed by where it sits, as
+  loud as its light; every kind of mark a painting has is heard, at most 14 notes a painting. Rendered at 32 kHz with
+  numpy (an 85 s roll in about 5 s), at 16 kHz without; laid under the clip with an echo, a limiter and fades. The
+  **Music in the roll** setting (`rollMusic`) makes a silent clip instead.
+- **The roll opens with a title card.** The Cyclops eye over a soft glow in the session's colour, the title large in the
+  bitmap font, and `Spark · the date · N paintings · music in <key>` under it (3.5 s: up over a second, then held,
+  crossfaded into the first painting); the music opens under it with the key's home chord and a few rising bells. The
+  title: `called <a title>` on the command (as you write it), else the name given with `/rename` this session, else the
+  project's folder. The **Title card on the roll** setting (`rollTitle`) leaves it out. The join takes a length per
+  part, as the card is shorter than a painting.
+
 ## 1.7.4
 
 - **Every convert choice shows what it costs, and All… does more.** The menu reads `Faithful · no tokens`,

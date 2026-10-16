@@ -6,6 +6,8 @@ import type { Engine } from 'claude-code/testing'
 import { parsePainting, paintingScene } from '../hooks/painter.js'
 import { canvasFor, captionHeight, captionLines, captionStrip, flattenRGBA, galleryHTML, revisitRequest, sceneSVG, slug, withCaption } from '../hooks/convert.js'
 import { createRaster, toQuadrants, toRGB8 } from '../hooks/render-raster.js'
+import { blur, layeredRaster, layeredStepper, layersOf } from '../hooks/layered.js'
+import { colourOf, rollScore } from '../hooks/music.js'
 
 const loose = <T>(v: unknown) => v as T
 const cmd = ($: Engine, args: string) => $.command.run(loose({ command: 'spark', args, origin: { kind: 'person' }, presentation: {} }))
@@ -27,7 +29,7 @@ const PAINTING = JSON.stringify({
 const REFINED = JSON.stringify({ title: 'the fox, closer', spark: 'bloom', marks: Array.from({ length: 150 }, (_, i) => ({ k: 'dot', x: (i % 15) / 15, y: Math.floor(i / 15) / 10, r: 0.02, c: '#ffbc75', a: 0.8 })) })
 
 type Ask = { system: string; prompt: string }
-function engine(on: On, { python = true, revisit = REFINED }: { python?: boolean; revisit?: string } = {}) {
+function engine(on: On, { python = true, revisit = REFINED, ffmpeg = true }: { python?: boolean; revisit?: string; ffmpeg?: boolean } = {}) {
   mock.store(on)
   mock.clock(on)
   const asks: Ask[] = []
@@ -42,9 +44,11 @@ function engine(on: On, { python = true, revisit = REFINED }: { python?: boolean
   on('fs.write', async (_$, e) => { const { path, text } = e as { path: string; text: string }; files.set(path, text); return loose({ value: undefined }) })
   on('session.root', async () => loose({ value: '/home/t/zilo' }))
   on('process.spawn', async function* (_$, e) {
-    spawns.push([...(e as { argv: readonly string[] }).argv])
-    if (!python) { yield { stream: 'stderr' as const, text: 'env: python3: No such file or directory\n' }; return loose({ value: { code: 127, signal: null } }) }
-    yield { stream: 'stdout' as const, text: 'ok\n' }
+    const argv = [...(e as { argv: readonly string[] }).argv]
+    spawns.push(argv)
+    if (!python || (!ffmpeg && argv[0] === 'ffmpeg')) { yield { stream: 'stderr' as const, text: `env: ${argv[0]}: No such file or directory\n` }; return loose({ value: { code: 127, signal: null } }) }
+    // the roll's helper says where the clip went and how long it is
+    yield { stream: 'stdout' as const, text: argv[2] === 'join' ? `ok ${argv[5]} 9.4\n` : argv[2] === 'apng' ? `ok ${argv[12]} 8.7\n` : 'ok\n' }
     return loose({ value: { code: 0, signal: null } })
   })
   on('ui.open', async () => loose({ value: { isPlaced: true } }))
@@ -174,34 +178,38 @@ test('the pieces: slugs, canvases, the flattened bytes, and an SVG that stands o
   expect(rq.prompt).not.toContain('seed') // the painter sees its marks, not the renderer's bookkeeping
 })
 
-test('a bare /spark convert asks which way, in Claude Code\'s own dialog, and does what you click; dismissed, it does nothing', async ($, on) => {
+test('a bare /spark convert asks what, then which way, in Claude Code\'s own dialog, each with its cost, and does what you click; dismissed, it does nothing', async ($, on) => {
   const { files, asks } = engine(on)
-  let answer: string | null = 'Refined'
-  const asked: unknown[] = []
+  const answers: string[] = []
+  const asked: Array<{ question: string; labels: string[] }> = []
   on('tool.call', { tool: 'AskUserQuestion' }, async (_$, e) => {
     const q = (e as { questions: Array<{ question: string; options: Array<{ label: string }> }> }).questions
-    asked.push(q)
-    if (answer === null) return loose({ result: 'dismissed', isError: true })
-    const label = q[0]!.options.map((o) => o.label).find((l) => l.startsWith(answer!)) ?? answer
+    asked.push({ question: q[0]!.question, labels: q[0]!.options.map((o) => o.label) })
+    const a = answers.shift()
+    if (a === undefined) return loose({ result: 'dismissed', isError: true })
+    const label = q[0]!.options.map((o) => o.label).find((l) => l.startsWith(a)) ?? a
     return loose({ result: { questions: q, answers: { [q[0]!.question]: label } } })
   })
   expect(await say($, 'convert')).toMatch(/^no paintings yet this session/) // nothing to ask about yet
   expect(asked).toHaveLength(0)
   await cmd($, 'paint'); await settle()
   const n0 = asks.length
+  answers.push('This painting', 'Refined')
   const out = await say($, 'convert')
-  expect(asked).toHaveLength(1)
-  const q = (asked[0] as Array<{ question: string; options: Array<{ label: string }> }>)[0]!
-  expect(q.question).toBe('How shall Spark make the painting large?')
-  const labels = q.options.map((o) => o.label)
-  expect(labels[0]).toBe('Faithful · no tokens') // every choice with what it costs beside it
-  expect(labels[1]).toMatch(/^Refined · about \d+(\.\d)?k tokens$/)
-  expect(labels[2]).toMatch(/^Interpretive · about \d+(\.\d)?k tokens$/)
-  expect(labels[3]).toBe('All…')
+  expect(asked[0]!.question).toBe('What shall Spark make large?')
+  expect(asked[0]!.labels[0]).toBe('This painting…')
+  expect(asked[0]!.labels[1]).toMatch(/^Every way, this painting · about \d+(\.\d)?k tokens$/)
+  expect(asked[0]!.labels.slice(2)).toEqual(['All 1 painting…', 'The roll: all 1 as a clip…'])
+  expect(asked[1]!.question).toBe('Which way, this painting?')
+  expect(asked[1]!.labels[0]).toBe('Faithful · no tokens')
+  expect(asked[1]!.labels[1]).toBe('Layered · no tokens')
+  expect(asked[1]!.labels[2]).toMatch(/^Refined · about \d+(\.\d)?k tokens$/)
+  expect(asked[1]!.labels[3]).toMatch(/^Interpretive · about \d+(\.\d)?k tokens$/)
   expect(out).toMatch(/^converted \(refined, 1920 wide\)/)
   expect(asks.length).toBe(n0 + 1) // the refined way: the painter asked once
   expect([...files.keys()].some((f) => f.endsWith('-refined.svg'))).toBe(true)
-  answer = null
+  expect(await say($, 'convert')).toBe('convert: nothing chosen') // dismissed: nothing
+  answers.push('This painting') // the second dismissed: nothing either
   expect(await say($, 'convert')).toBe('convert: nothing chosen')
   await cmd($, 'paint off')
 })
@@ -259,7 +267,7 @@ test('a big picture goes to the helper in parts, each under what one write may c
   await cmd($, 'paint off')
 })
 
-test('All… opens a second menu: this painting all three ways, or every painting one way, each with its cost; two painter calls or more go on beside the work and Spark says when done', async ($, on) => {
+test('all paintings, every way, and the costs: what then which way; anything with more than one picture goes on beside the work and Spark says when done', async ($, on) => {
   const { files, asks, logs, toasts } = engine(on)
   const answers: string[] = []
   const asked: Array<{ question: string; labels: string[] }> = []
@@ -272,51 +280,83 @@ test('All… opens a second menu: this painting all three ways, or every paintin
     return loose({ result: { questions: q, answers: { [q[0]!.question]: label } } })
   })
   await cmd($, 'paint'); await say($, 'paint'); await say($, 'paint'); await settle()
-  // All…, then every painting faithfully (no painter calls, but three pictures: beside the work too)
-  answers.push('All…', 'All 3 paintings, faithful')
+  // all, faithfully: three pictures, beside the work
+  answers.push('All 3 paintings', 'Faithful')
   expect(await say($, 'convert 256')).toMatch(/^converting all 3 paintings, faithful, 256 wide, into .*: no tokens/)
+  expect(asked[1]!.question).toBe('All 3 paintings: which way?')
+  expect(asked[1]!.labels[2]).toMatch(/^Refined · about \d+(\.\d)?k tokens$/)
   await until(() => logs.length >= 1)
   expect(logs.at(-1)).toMatch(/^Spark: converted \(all, faithful, 256 wide\)/)
-  expect(asked[1]!.question).toBe('All… of this painting, or of all 3 paintings of this session?')
-  expect(asked[1]!.labels).toHaveLength(4)
-  expect(asked[1]!.labels[0]).toMatch(/^All three ways, this painting · about \d+(\.\d)?k tokens$/)
-  expect(asked[1]!.labels[1]).toBe('All 3 paintings, faithful · no tokens')
-  expect(asked[1]!.labels[2]).toMatch(/^All 3 paintings, refined · about \d+(\.\d)?k tokens$/)
-  expect(asked[1]!.labels[3]).toMatch(/^All 3 paintings, interpretive · about \d+(\.\d)?k tokens$/)
-  // All…, then this painting all three ways: two painter calls, beside the work
+  // this painting every way: four pictures, two of them painter calls
   let n0 = asks.length
-  answers.push('All…', 'All three ways')
-  expect(await say($, 'convert 256')).toMatch(/^converting this painting all three ways, 256 wide, into \/home\/t\/zilo\/spark-paintings: 2 painter calls, about \d+(\.\d)?k tokens/)
+  answers.push('Every way')
+  expect(await say($, 'convert 256')).toMatch(/^converting this painting every way, 256 wide, into \/home\/t\/zilo\/spark-paintings: 2 painter calls, about \d+(\.\d)?k tokens/)
   await until(() => logs.length >= 2)
   expect(asks.length).toBe(n0 + 2)
-  for (const w of ['faithful', 'refined', 'interpretive']) expect([...files.keys()].some((f) => f.endsWith(`-${w}.svg`))).toBe(true)
-  expect(logs.at(-1)).toMatch(/^Spark: converted \(all three ways, 256 wide\)/)
-  expect(toasts.at(-1)).toBe('Spark: converted this painting all three ways')
+  for (const w of ['faithful', 'layered', 'refined', 'interpretive']) expect([...files.keys()].some((f) => f.endsWith(`-${w}.svg`))).toBe(true)
+  expect(logs.at(-1)).toMatch(/^Spark: converted \(every way, 256 wide\)/)
+  expect(toasts.at(-1)).toBe('Spark: converted this painting every way')
   // now the costs are from what those calls really used: 900 + 700 tokens each, as the mock answers
-  answers.push('Refined')
+  answers.push('This painting', 'Refined')
   expect(await say($, 'convert 256')).toMatch(/^converted \(refined, 256 wide\)/)
-  expect(asked.at(-1)!.labels[1]).toBe('Refined · about 1.6k tokens')
-  answers.push('All…') // and the second menu dismissed: nothing is done
+  expect(asked.at(-1)!.labels[2]).toBe('Refined · about 1.6k tokens')
+  answers.push('All 3 paintings')
   expect(await say($, 'convert')).toBe('convert: nothing chosen')
-  expect(asked.at(-1)!.labels[0]).toBe('All three ways, this painting · about 3.2k tokens')
-  expect(asked.at(-1)!.labels[2]).toBe('All 3 paintings, refined · about 4.8k tokens')
-  // typed: all with its way and size, beside the work
+  expect(asked.at(-2)!.labels[1]).toBe('Every way, this painting · about 3.2k tokens')
+  expect(asked.at(-1)!.labels[3]).toBe('Interpretive · about 4.8k tokens')
+  // typed: all with its way and size; the old word three is every
   n0 = asks.length
   expect(await say($, 'convert all refined 256')).toMatch(/^converting all 3 paintings, refined, 256 wide, into .*: 3 painter calls, about 4\.8k tokens/)
   await until(() => logs.length >= 3)
   expect(asks.length).toBe(n0 + 3)
-  expect(logs.at(-1)).toMatch(/^Spark: converted \(all, refined, 256 wide\)/)
   expect(toasts.at(-1)).toBe('Spark: converted all 3 paintings, refined')
-  // typed all alone asks which way, for every painting
-  answers.push('All 3 paintings, interpretive')
-  expect(await say($, 'convert all 256')).toMatch(/^converting all 3 paintings, interpretive/)
-  expect(asked.at(-1)!.labels).toHaveLength(3) // typed all: every painting, so no 'this painting' choice
+  answers.push('Interpretive')
+  expect(await say($, 'convert all 256')).toMatch(/^converting all 3 paintings, interpretive/) // all alone asks which way
   await until(() => logs.length >= 4)
-  // typed three
-  expect(await say($, 'convert three 256')).toMatch(/^converting this painting all three ways/)
+  expect(await say($, 'convert three 256')).toMatch(/^converting this painting every way/)
   await until(() => logs.length >= 5)
-  expect(logs.at(-1)).toMatch(/^Spark: converted \(all three ways/)
+  expect(await say($, 'convert sideways')).toMatch(/^convert takes: faithful \| layered/)
   await cmd($, 'paint off')
+})
+
+test('layered: the same marks in depth, as the terminal shows them; the far layers softened, shadows, the bloom; no tokens, beside the work', async ($, on) => {
+  const { files, spawns, logs, asks } = engine(on)
+  await cmd($, 'paint'); await settle()
+  const n0 = asks.length
+  expect(await say($, 'convert layered 320')).toMatch(/^converting this painting, layered, 320 wide, into .*: no tokens\. It goes on beside the work/)
+  await until(() => logs.length >= 1)
+  expect(asks.length).toBe(n0)
+  expect(logs.at(-1)).toMatch(/^Spark: converted \(layered, 320 wide\) into .*01-a-fox-under-three-moons-layered\.svg, 01-a-fox-under-three-moons-layered\.png, index\.html$/)
+  const svg = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-layered.svg')!
+  expect(svg).toContain('<filter id="shadow"')
+  expect(svg).toContain('<filter id="soft0"') // the farthest layer softened
+  expect(svg).toContain('<filter id="bloom"')
+  expect((svg.match(/<g id="layer\d"/g) || []).length).toBeGreaterThanOrEqual(2)
+  expect(spawns.at(-1)!.slice(4, 6)).toEqual(['320', String(160 + captionHeight(320))])
+  await cmd($, 'paint off')
+})
+
+test('the layers: the marks in their order, back to front; laid down a little at a time, the last frame is the whole picture', async () => {
+  const p = parsePainting(PAINTING)!
+  const layers = layersOf(p)
+  expect(layers.map((l) => l.marks.length).reduce((a, b) => a + b, 0)).toBe(p.marks.length)
+  expect(layers[0]!.marks[0]).toEqual(p.marks[0]) // the first mark laid is the farthest
+  const W = 64, H = 32
+  const st = layeredStepper(p, W, H)
+  const empty = await st.frame(0)
+  expect(Math.max(...empty)).toBe(0) // nothing laid yet
+  await st.frame(p.marks.length / 2)
+  const end = await st.frame(p.marks.length)
+  const whole = (await layeredRaster(p, W, H)).px
+  let diff = 0
+  for (let i = 0; i < whole.length; i++) diff = Math.max(diff, Math.abs(whole[i]! - end[i]!))
+  expect(diff).toBeLessThan(1e-5) // laid down step by step or at once: the same picture
+  // softening keeps the light: a blurred point spreads, its total stays
+  const px = new Float32Array(9 * 9 * 4); px[(4 * 9 + 4) * 4] = 1; px[(4 * 9 + 4) * 4 + 3] = 1
+  blur(px, 9, 9, 4)
+  let sum = 0
+  for (let i = 0; i < px.length; i += 4) sum += px[i]!
+  expect(sum).toBeGreaterThan(0.6); expect(px[(4 * 9 + 4) * 4]!).toBeLessThan(0.5)
 })
 
 test('one picture larger than HD goes beside the work too (a command has ten seconds of its own); the fill is exact by scanlines', async ($, on) => {
@@ -333,5 +373,183 @@ test('one picture larger than HD goes beside the work too (a command has ten sec
   r.draw([{ k: 'poly', pts: [[-2 * u, -2 * u], [2.5 * u, -2 * u], [2.5 * u, 1 * u], [-2 * u, 1 * u]], c0: [1, 1, 1], a: 1 }], 'dark') // x 2..6.5, y 2..5
   const cov = (x: number, y: number) => r.px[(y * 8 + x) * 4 + 3]!
   expect(cov(3, 3)).toBe(1); expect(cov(6, 3)).toBe(0.5); expect(cov(7, 3)).toBe(0); expect(cov(3, 5)).toBe(0); expect(cov(1, 3)).toBe(0)
+  await cmd($, 'paint off')
+})
+
+test('/spark convert roll: every painting laid down, held and crossfaded into a clip; frames by Spark, the MP4 by ffmpeg, beside the work; no tokens', async ($, on) => {
+  const { files, spawns, logs, toasts, asks } = engine(on)
+  expect(await say($, 'convert roll faithful')).toMatch(/^no paintings yet this session/)
+  await cmd($, 'paint'); await say($, 'paint'); await settle()
+  expect(await say($, 'convert roll huge')).toMatch(/^roll size: hd/)
+  const n0 = asks.length
+  const started = await say($, 'convert roll faithful 320')
+  expect(started).toMatch(/^rolling all 2 paintings into a clip, faithful, 320x180 MP4, about 12 s long, into \/home\/t\/zilo\/spark-paintings: opening with a title card, “zilo”, then each laid down, held with its title, then crossfaded into the next, to music of its own, read from the paintings\. No tokens\./) // the title: the project's folder
+  expect(await say($, 'convert roll faithful 320')).toMatch(/^Spark is still converting: \d of 2 \(the roll, faithful\)/)
+  await until(() => logs.length >= 1)
+  expect(asks.length).toBe(n0) // nothing asked of any model
+  expect(spawns[0]).toEqual(['ffmpeg', '-hide_banner', '-version'])
+  const helper = spawns.filter((a) => a[0] === 'python3')
+  expect(helper.map((a) => a[2])).toEqual(['segment', 'segment', 'segment', 'music', 'join']) // one painting at a time, the title card, its music, then the whole
+  const work = helper[0]![3]!
+  expect(work).toMatch(/^\/home\/t\/zilo\/spark-paintings\/\.spark-roll-\d{4}-\d\d-\d\d-\d{4}$/)
+  expect(helper[0]!.slice(4)).toEqual(['1', '24', '320', '180', '1', '12', '3']) // 24 frames laid down at 12 a second, then held 3 s; the first painting second in the clip
+  expect(helper[2]!.slice(4)).toEqual(['0', '12', '320', '180', '1', '12', '2.5']) // the title card: up over 12 frames, then held, first in the clip
+  // the music: a score read from the paintings, played into a WAV, laid under the clip
+  const score = JSON.parse(files.get(`${work}/score.json`)!)
+  expect(score.key).toMatch(/^[A-G][b#]? (major|dorian|aeolian)$/)
+  expect(Math.abs(score.total - (3.5 + 9.4 - 0.6))).toBeLessThan(1e-6) // the title's 3.5 s, then the paintings
+  expect(score.events.filter((e: { v: string }) => e.v === 'pad')).toHaveLength(3) // the opening's home chord, then a chord for each painting
+  expect(Math.abs(score.chords[0].t - 2.9)).toBeLessThan(1e-6) // the first painting's chord as it comes in
+  expect(helper[3]!.slice(3)).toEqual([`${work}/score.json`, `${work}/music.wav`])
+  expect(helper[4]!.slice(4)).toEqual(['3', helper[4]![5]!, '3.5,5,5', '0.6', `${work}/music.wav`]) // a length for each part
+  expect(helper[4]![5]).toMatch(/\/spark-paintings\/spark-roll-\d{4}-\d\d-\d\d-\d{4}-faithful\.mp4$/)
+  // the frames: 24 a painting, the whole frame as base64 text
+  const frames = [...files.keys()].filter((f) => f.startsWith(work + '/') && f.includes('.b64.'))
+  expect(frames).toHaveLength(48 + 12)
+  // the title card's last frame: the eye and the title, bright on the ground
+  const card = Uint8Array.from(atob(files.get(`${work}/f000-011.b64.0`)!), (c) => c.charCodeAt(0))
+  let bright = 0, blue = 0
+  for (let i = 0; i < card.length; i += 3) { if (card[i]! + card[i + 1]! + card[i + 2]! > 600) bright++; if (card[i + 2]! > 200 && card[i]! < 120) blue++ }
+  expect(bright).toBeGreaterThan(100) // the title's letters and the white of the eye
+  expect(blue).toBeGreaterThan(50) // its lids
+  const last = files.get(`${work}/f001-023.b64.0`)!
+  expect(last.length).toBe(Math.ceil((320 * 180 * 3) / 3) * 4)
+  const rgb = Uint8Array.from(atob(last), (c) => c.charCodeAt(0))
+  const at = (x: number, y: number) => [rgb[(y * 320 + x) * 3]!, rgb[(y * 320 + x) * 3 + 1]!, rgb[(y * 320 + x) * 3 + 2]!]
+  expect(at(0, 0)).toEqual([18, 18, 20]) // the ground beside a wide painting... or the painting itself: either way a real colour
+  const lit = (y0: number, y1: number) => { let n = 0; for (let y = y0; y < y1; y++) for (let x = 0; x < 320; x++) { const [r, g, b] = at(x, y); if (r + g + b > 200) n++ } return n }
+  expect(lit(0, 120)).toBeGreaterThan(50) // the painting, laid down whole by the last frame
+  expect(lit(150, 180)).toBeGreaterThan(20) // its title under it
+  const first = Uint8Array.from(atob(files.get(`${work}/f001-000.b64.0`)!), (c) => c.charCodeAt(0))
+  let differ = 0
+  for (let i = 0; i < first.length; i++) if (first[i] !== rgb[i]) differ++
+  expect(differ).toBeGreaterThan(1000) // laid down mark by mark: the first frame is not the last
+  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings \(faithful\), opening with “zilo”, into \/home\/t\/zilo\/spark-paintings\/spark-roll-.*-faithful\.mp4 \(320x180 MP4, with its own music in [A-G][b#]? (major|dorian|aeolian), 9 s\), and the gallery page$/)
+  expect(toasts.at(-1)).toBe('Spark: the roll is ready (2 paintings, faithful)')
+  expect(files.get('/home/t/zilo/spark-paintings/index.html')).toMatch(/<video src="spark-roll-.*-faithful\.mp4" controls loop muted playsinline><\/video>/)
+  await cmd($, 'paint off')
+})
+
+test('the roll in any way: asked which (each with its cost), layered laid down in depth, refined with the painter revisiting each first', { timeoutMs: 30000 }, async ($, on) => {
+  const { files, spawns, logs, asks } = engine(on)
+  const answers: string[] = []
+  const asked: Array<{ question: string; labels: string[] }> = []
+  on('tool.call', { tool: 'AskUserQuestion' }, async (_$, e) => {
+    const q = (e as { questions: Array<{ question: string; options: Array<{ label: string }> }> }).questions
+    asked.push({ question: q[0]!.question, labels: q[0]!.options.map((o) => o.label) })
+    const a = answers.shift()
+    if (a === undefined) return loose({ result: 'dismissed', isError: true })
+    const label = q[0]!.options.map((o) => o.label).find((l) => l.startsWith(a)) ?? a
+    return loose({ result: { questions: q, answers: { [q[0]!.question]: label } } })
+  })
+  await cmd($, 'paint'); await say($, 'paint'); await settle()
+  // from the menus: the roll, then layered
+  answers.push('The roll', 'Layered')
+  expect(await say($, 'convert 320')).toMatch(/^rolling all 2 paintings into a clip, layered, 320x180 MP4/)
+  expect(asked[1]!.question).toBe('The roll of all 2 paintings: which way?')
+  expect(asked[1]!.labels[3]).toMatch(/^Interpretive · about \d+(\.\d)?k tokens$/)
+  await until(() => logs.length >= 1)
+  let helper = spawns.filter((a) => a[0] === 'python3')
+  expect(helper[0]!.slice(4)).toEqual(['1', '16', '320', '180', '1', '8', '3']) // layered: 16 frames at 8 a second, smoothed the same
+  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings \(layered\), opening with “zilo”, into .*-layered\.mp4/)
+  // typed: refined, the painter revisiting each painting first
+  const n0 = asks.length
+  expect(await say($, 'convert roll refined 320')).toMatch(/^rolling all 2 paintings into a clip, refined, .*2 painter calls, about \d+(\.\d)?k tokens/)
+  await until(() => logs.length >= 2)
+  expect(asks.length).toBe(n0 + 2)
+  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings \(refined\)/)
+  // and the roll alone asks which way
+  answers.push('Faithful')
+  expect(await say($, 'convert roll 320')).toMatch(/^rolling all 2 paintings into a clip, faithful/)
+  await until(() => logs.length >= 3)
+  helper = spawns.filter((a) => a[0] === 'python3')
+  expect(helper.filter((a) => a[2] === 'join')).toHaveLength(3)
+  expect(helper.filter((a) => a[2] === 'music')).toHaveLength(3) // music for every roll
+  expect([...files.keys()].filter((f) => f.includes('.spark-roll-')).length).toBeGreaterThan(0)
+  await cmd($, 'paint off')
+})
+
+test('without ffmpeg the roll is a smaller animated PNG, and Spark says how to get the MP4', { timeoutMs: 20000 }, async ($, on) => {
+  const { spawns, logs } = engine(on, { ffmpeg: false })
+  await cmd($, 'paint'); await settle()
+  expect(await say($, 'convert roll faithful')).toMatch(/^rolling all 1 painting into a clip, faithful, 640x360 animated PNG \(ffmpeg was not found: sudo apt install ffmpeg for an MP4\)/)
+  await until(() => logs.length >= 1)
+  const helper = spawns.filter((a) => a[0] === 'python3')
+  expect(helper.map((a) => a[2])).toEqual(['apng'])
+  expect(helper[0]!.slice(4, 12)).toEqual(['2', '8', '640', '360', '1', '250', '2600', '3']) // the title card and the painting
+  expect(logs.at(-1)).toMatch(/^Spark: rolled 1 painting \(faithful\), opening with “zilo”, into .*spark-roll-.*\.png \(640x360 animated PNG: ffmpeg was not found, so a smaller one that plays in any browser \(sudo apt install ffmpeg for the MP4\), 9 s\)/)
+  await cmd($, 'paint off')
+})
+
+test('the roll without music: the setting off makes a silent clip', { options: { rollMusic: false, rollTitle: false } }, async ($, on) => {
+  const { spawns, logs } = engine(on)
+  await cmd($, 'paint'); await settle()
+  expect(await say($, 'convert roll faithful 320')).not.toMatch(/music/)
+  await until(() => logs.length >= 1)
+  const helper = spawns.filter((a) => a[0] === 'python3')
+  expect(helper.map((a) => a[2])).toEqual(['segment', 'join'])
+  expect(helper[1]).toHaveLength(8) // python3, the helper, join and its five: no music to lay under it
+  expect(logs.at(-1)).not.toMatch(/music/)
+  await cmd($, 'paint off')
+})
+
+test('the music is read from the paintings: colour picks the key and mode, each painting a chord, each mark laid a note in time, every instrument in its range', () => {
+  const warm = parsePainting(JSON.stringify({ title: 'warm', marks: [
+    { k: 'fill', pts: [[0, 0], [1, 0], [1, 1], [0, 1]], c: '#ffb070', c2: '#ffd090', grad: 0.25, a: 1 },
+    { k: 'glow', x: 0.5, y: 0.5, r: 0.3, c: '#ff9050', a: 0.8 },
+    ...Array.from({ length: 30 }, (_, i) => ({ k: 'dot', x: i / 30, y: (i % 7) / 7, r: 0.01, c: '#fff0d0', a: 1 })),
+    { k: 'line', pts: [[0.1, 0.9], [0.9, 0.9]], w: 0.01, c: '#ffe0a0', a: 1 },
+  ] }))!
+  const cool = parsePainting(JSON.stringify({ title: 'cool', marks: [
+    { k: 'fill', pts: [[0, 0], [1, 0], [1, 1], [0, 1]], c: '#0a1430', c2: '#102050', grad: 0.25, a: 1 },
+    { k: 'spray', x: 0.5, y: 0.3, r: 0.4, n: 40, s: 0.004, c: '#4060a0', a: 0.8 },
+    { k: 'ring', x: 0.3, y: 0.2, r: 0.1, w: 0.01, c: '#3050a0', a: 0.8 },
+  ] }))!
+  expect(colourOf(warm).warm).toBeGreaterThan(0.5)
+  expect(colourOf(cool).warm).toBeLessThan(-0.3)
+  expect(rollScore([warm, warm]).mode).toBe('major')
+  expect(rollScore([cool, cool]).mode).toBe('aeolian')
+  const s = rollScore([warm, cool, warm], { reveal: 2, hold: 3, fade: 0.6, maxNotes: 14 })
+  expect(Math.abs(s.total - (3 * 5 - 2 * 0.6))).toBeLessThan(1e-6)
+  expect(s.chords.map((c) => c.t)).toEqual([0, 4.4, 8.8])
+  expect(s.chords[0]!.degree).not.toBe(s.chords[1]!.degree) // a new painting, a new chord
+  const notes = s.events.filter((e) => !['pad', 'bass'].includes(e.v))
+  const first = notes.filter((e) => e.t < 4.4)
+  expect(first.filter((e) => e.v !== 'sparkle').length).toBeLessThanOrEqual(14)
+  for (const e of first) { expect(e.t).toBeGreaterThan(0); expect(e.t).toBeLessThanOrEqual(2.3) } // as the marks are laid, in the first two seconds
+  const range: Record<string, [number, number]> = { bell: [64, 88], pluck: [52, 76], sparkle: [76, 96], swell: [55, 72], pad: [36, 72], bass: [24, 48] }
+  for (const e of s.events) for (const m of e.midi) { expect(m).toBeGreaterThanOrEqual(range[e.v]![0]); expect(m).toBeLessThanOrEqual(range[e.v]![1]) }
+  expect(new Set(notes.map((e) => e.v))).toEqual(new Set(['bell', 'pluck', 'swell', 'sparkle']))
+  for (const e of notes) { expect(e.pan).toBeGreaterThanOrEqual(-1); expect(e.pan).toBeLessThanOrEqual(1) }
+  // the notes are of the key: every one in its scale
+  const steps = { major: [0, 2, 4, 5, 7, 9, 11], dorian: [0, 2, 3, 5, 7, 9, 10], aeolian: [0, 2, 3, 5, 7, 8, 10] }[s.mode]!
+  for (const e of s.events) for (const m of e.midi) expect(steps).toContain((((m - s.root) % 12) + 12) % 12)
+})
+
+test('the roll\'s title: what you call it, else the name you gave the conversation (/rename), else the project; the setting off: no card', async ($, on) => {
+  const { files, spawns, logs } = engine(on)
+  on('command.run', { command: 'rename' }, async () => ({ text: 'renamed' }))
+  await cmd($, 'paint'); await settle()
+  const cardText = async (args: string) => {
+    expect(await say($, args)).toMatch(/opening with a title card/)
+    await until(() => logs.length >= spawns.filter((a) => a[2] === 'join').length + 1)
+    return logs.at(-1)!
+  }
+  expect(await cardText('convert roll faithful 320 called Night Build')).toMatch(/opening with “Night Build”/) // as you wrote it
+  await $.command.run(loose({ command: 'rename', args: 'Zilo world engine', origin: { kind: 'person' }, presentation: {} }))
+  expect(await cardText('convert roll faithful 320')).toMatch(/opening with “Zilo world engine”/)
+  expect(files.size).toBeGreaterThan(0)
+  await cmd($, 'paint off')
+})
+
+test('without a title card the roll starts with its first painting', { options: { rollTitle: false } }, async ($, on) => {
+  const { spawns, logs } = engine(on)
+  await cmd($, 'paint'); await settle()
+  expect(await say($, 'convert roll faithful 320')).not.toMatch(/title card/)
+  await until(() => logs.length >= 1)
+  const helper = spawns.filter((a) => a[0] === 'python3')
+  expect(helper.map((a) => a[2])).toEqual(['segment', 'music', 'join'])
+  expect(helper[0]!.slice(4, 5)).toEqual(['0'])
+  expect(helper[2]!.slice(4)).toEqual(['1', helper[2]![5]!, '5', '0.6', helper[2]![8]!])
   await cmd($, 'paint off')
 })

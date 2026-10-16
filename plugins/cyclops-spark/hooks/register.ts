@@ -33,13 +33,15 @@ import type { EngineInterface, Register } from 'claude-code'
 import { buildScene, createPresence, laneFor, PAINT_TOWARD, PALETTE_NAMES } from './core.js'
 import { base64, createRaster, toHalfBlocks, toQuadrants, toRGB8, toRGBA8 } from './render-raster.js'
 import { eyeColumns, eyeRaster } from './eye.js'
+import { layeredFloor, layeredRaster, layeredScenes, layeredStepper } from './layered.js'
+import { rollScore, sessionColour } from './music.js'
 import { buildTrace, replayAt } from './trace.js'
 import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
 import { KEEPER, PRISM } from './link-marks.js'
 import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
 import { motion, motionFor } from './motion.js'
-import { canvasFor, captionLines, galleryHTML, HD_MARKS, markFloor, revisitRequest, sceneSVG, SIZES, slug, withCaption } from './convert.js'
+import { canvasFor, captionLines, captionStrip, galleryHTML, titleCard, HD_MARKS, markFloor, revisitRequest, rollLayout, rollSize, sceneSVG, SIZES, slug, withCaption } from './convert.js'
 
 const PANE = 'cyclops-spark'
 const T0 = Date.now()
@@ -61,6 +63,9 @@ let kitty = false
 let welcomeOn = true
 let welcome = false
 let welcomeArt: { key: string; cells: string } | null = null
+let rollTitleOn = true // the roll opens with a title card: the rollTitle setting turns it off
+let sessionName = '' // the name the conversation was given with /rename, the roll's title when there is one
+let rollMusic = true // the roll's own music, read from its paintings (hooks/music.js); the rollMusic setting turns it off
 let hd = true // HD cells: four pixels to a cell (quadrant blocks) instead of two, in any terminal; /spark hd off returns to half blocks
 // /spark focus. Presentation only: it never touches the presence (no event, no restart). Spark gets a large pane beside the
 // conversation, which is never hidden or changed: the work keeps rolling, readable, and the prompt keeps the keyboard.
@@ -494,110 +499,137 @@ async function talkTo($: EngineInterface, words: string): Promise<void> {
   }
 }
 
-// /spark convert: the painting made large (see hooks/convert.js). The one time Spark writes files, and only when you ask.
-// Two menus at most, every choice with what it costs beside it. The first is for the painting showing: Faithful,
-// Refined, Interpretive, or All…; All… opens the second: all three ways of this painting, or every painting of the
-// session one way.
-type Way = 'faithful' | 'refined' | 'interpretive'
-const WAYS: Way[] = ['faithful', 'refined', 'interpretive']
+// /spark convert: the painting made large (see hooks/convert.js and hooks/layered.js). The one time Spark writes files,
+// and only when you ask. Two menus, every choice with what it costs beside it. The first asks what: this painting, this
+// painting every way, all the session's paintings, or the roll (all of them as a clip); the second asks which way:
+// Faithful (the same marks, large), Layered (the same marks in depth, as the terminal shows them), Refined or
+// Interpretive (the painter revisits each: one call a painting).
+type Way = 'faithful' | 'layered' | 'refined' | 'interpretive'
+const WAYS: Way[] = ['faithful', 'layered', 'refined', 'interpretive']
+const revisits = (w: Way) => w === 'refined' || w === 'interpretive'
 const Cap = (w: string) => w[0]!.toUpperCase() + w.slice(1)
 type Job = { source: Painting & { shape: string }; way: Way }
 // What the painter revisiting a painting has used this session, so the next estimate is from real calls
 const revisitSeen = { calls: 0, tokens: 0 }
-// About what these conversions will use: faithful nothing; refined or interpretive one painter call each, at what such
-// calls have used this session when there have been some, otherwise the request's own length (about 3.5 characters a
-// token) and an answer of about 17 tokens a mark, for a little more than the painting's own marks
+// About what these conversions will use: faithful and layered nothing; refined or interpretive one painter call each,
+// at what such calls have used this session when there have been some, otherwise the request's own length (about 3.5
+// characters a token) and an answer of about 17 tokens a mark, for a little more than the painting's own marks
 function jobsEstimate(jobs: Job[]): number {
   let n = 0
   for (const { source: p, way } of jobs) {
-    if (way === 'faithful') continue
+    if (!revisits(way)) continue
     if (revisitSeen.calls) { n += revisitSeen.tokens / revisitSeen.calls; continue }
-    const rq = revisitRequest({ painting: p, mode: way, palette, theme: activeTheme(), reflection })
+    const rq = revisitRequest({ painting: p, mode: way as 'refined' | 'interpretive', palette, theme: activeTheme(), reflection })
     n += Math.ceil((rq.system.length + rq.prompt.length) / 3.5) + Math.ceil(Math.min(HD_MARKS, Math.max(40, p.marks.length * 1.6)) * 17) + 60
   }
   return Math.round(n)
 }
 const costText = (jobs: Job[]) => { const t = jobsEstimate(jobs); return t ? 'about ' + kilo(t) + ' tokens' : 'no tokens' }
-let convertProgress: { done: number; total: number; what: string } | null = null // a set with painter calls: how far it has got
-// /spark convert [faithful | refined | interpretive | three | all [faithful | refined | interpretive]] [hd | 4k | width]
-async function convertPainting($: EngineInterface, words: string[]): Promise<string> {
-  const modes = ['faithful', 'refined', 'interpretive', 'three', 'all']
+let convertProgress: { done: number; total: number; what: string } | null = null // a conversion beside the work: how far it has got
+const plural = (n: number) => `${n} ${n === 1 ? 'painting' : 'paintings'}`
+const busyText = () => convertProgress ? `Spark is still converting: ${convertProgress.done} of ${convertProgress.total} (${convertProgress.what})` : 'Spark is still converting'
+const isSize = (w: string) => w in SIZES || /^\d{3,4}$/.test(w)
+// The painter revisits one of its own paintings (refined or interpretive): one call; a painting that does not come back
+// is drawn as it was (with a note)
+async function revisitPainting($: EngineInterface, source: Painting & { shape: string }, way: 'refined' | 'interpretive'): Promise<{ p: Painting & { shape: string }; ok: boolean; note: string }> {
+  const rq = revisitRequest({ painting: source, mode: way, palette, theme: activeTheme(), reflection })
+  const r = await $.model.complete({ model: paintModel, system: rq.system, prompt: rq.prompt, maxTokens: 6000, effort: 'low', timeoutMs: 60000 })
+  const used = spend((r as { usage?: Record<string, number> }).usage)
+  if (used) { revisitSeen.calls++; revisitSeen.tokens += used }
+  const q = r.isAnswered ? parsePainting(r.text, palette, HD_MARKS) : null
+  if (!q) return { p: source, ok: false, note: r.isAnswered ? 'the painter answered something that was not a painting; it was drawn as it was' : 'the painter sent nothing back; it was drawn as it was' }
+  return { p: { ...q, shape: source.shape }, ok: true, note: '' }
+}
+// the second menu: which way, each with what it costs for these paintings
+async function askWay($: EngineInterface, question: string, list: Array<Painting & { shape: string }>): Promise<Way | null> {
+  const labels = WAYS.map((w) => `${Cap(w)} · ${costText(list.map((source) => ({ source, way: w })))}`)
+  let choice = ''
+  try { choice = await $.ui.ask(question, { options: labels, header: 'Which way' }) } catch { return null }
+  const k = labels.indexOf(choice)
+  return k < 0 ? null : WAYS[k]!
+}
+// /spark convert [faithful | layered | refined | interpretive | every | all [way] | roll [way]] [hd | 4k | width]
+async function convertPainting($: EngineInterface, words: string[], raw: string[] = words): Promise<string> {
+  // `called <a title>`: the roll's title, as you write it
+  let called = ''
+  const at = words.indexOf('called')
+  if (at >= 0) { called = raw.slice(at + 1).join(' ').replace(/^["']|["']$/g, '').trim().slice(0, 60); words = words.slice(0, at) }
   let [mode = '', next = '', after = ''] = words
+  if (mode === 'three') mode = 'every' // the old word
   let way: Way | '' = ''
   let sizeWord = next
-  if (mode && !modes.includes(mode) && (mode in SIZES || /^\d{3,4}$/.test(mode))) { sizeWord = mode; mode = '' } // /spark convert 4k: pick, at that size
-  if (mode === 'all' && (WAYS as string[]).includes(next)) { way = next as Way; sizeWord = after } // all refined 4k
+  if (mode && isSize(mode) && !(WAYS as string[]).includes(mode)) { sizeWord = mode; mode = '' } // /spark convert 4k: pick, at that size
+  if ((mode === 'all' || mode === 'roll') && (WAYS as string[]).includes(next)) { way = next as Way; sizeWord = after } // all refined 4k, roll layered hd
+  if ((WAYS as string[]).includes(mode)) { way = mode as Way; mode = 'one' }
+  const known = ['', 'one', 'every', 'all', 'roll']
+  if (!known.includes(mode)) return 'convert takes: faithful | layered | refined | interpretive (this painting that way) | every (this painting every way) | all [way] (every painting of the session) | roll [way] (every painting as a clip), then a size: hd (1920 wide, the default) or 4k, for the roll hd (1080p). On its own, /spark convert lets you click'
+  const stillWidth = (w: string) => w === '' ? SIZES.hd! : SIZES[w] ?? (/^\d{3,4}$/.test(w) ? Math.max(256, Math.min(4096, Number(w))) : 0)
+  if (mode === 'roll' && !rollSize(sizeWord)) return 'roll size: hd (1080p, 1920 wide), or a width (16:9); 720p (1280 wide) when nothing is said'
+  if (mode !== 'roll' && !stillWidth(sizeWord)) return 'convert size: hd (1920 wide) or 4k (3840)'
   const pick = shownPainting()
-  if (!mode || (mode === 'all' && !way)) { // pick by clicking, in Claude Code's own dialog
-    if (!pick && !story.length) return 'no paintings yet this session: /spark paint makes one'
-    if (!mode) {
-      if (!pick) mode = 'all' // nothing showing (a story ended, the painter off): straight to the whole session
-      else {
-        const one = (w: Way) => `${Cap(w)} · ${costText([{ source: pick, way: w }])}`
-        const labels = [...WAYS.map(one), 'All…']
-        let choice = ''
-        try { choice = await $.ui.ask('How shall Spark make the painting large?', { options: labels, header: 'Convert' }) } catch { return 'convert: nothing chosen' }
-        const k = labels.indexOf(choice)
-        if (k < 0) return 'convert: nothing chosen'
-        mode = k < 3 ? WAYS[k]! : 'all…'
-      }
-    }
-    if (mode === 'all…' || mode === 'all') { // the second menu: this painting all three ways, or every painting one way
-      const all = story.slice(), n = all.length
-      const options: Array<[string, string, Way | '']> = []
-      if (pick && mode === 'all…') options.push([`All three ways, this painting · ${costText(WAYS.map((w) => ({ source: pick, way: w })))}`, 'three', ''])
-      if (n) for (const w of WAYS) options.push([`All ${n} ${n === 1 ? 'painting' : 'paintings'}, ${w} · ${costText(all.map((p) => ({ source: p, way: w })))}`, 'all', w])
-      if (!options.length) return 'no paintings yet this session: /spark paint makes one'
-      let choice = ''
-      try { choice = await $.ui.ask(n ? `All… of this painting, or of all ${n} ${n === 1 ? 'painting' : 'paintings'} of this session?` : 'All…', { options: options.map(([l]) => l), header: 'Convert all' }) } catch { return 'convert: nothing chosen' }
-      const o = options.find(([l]) => l === choice)
-      if (!o) return 'convert: nothing chosen'
-      mode = o[1]; way = o[2]
-    }
+  if (!pick && !story.length) return 'no paintings yet this session: /spark paint makes one'
+  if (!mode) { // the first menu: what
+    const n = story.length
+    const options: Array<[string, string]> = []
+    if (pick) options.push(['This painting…', 'one'], [`Every way, this painting · ${costText(WAYS.map((w) => ({ source: pick, way: w })))}`, 'every'])
+    if (n) options.push([`All ${plural(n)}…`, 'all'], [`The roll: all ${n} as a clip…`, 'roll'])
+    let choice = ''
+    try { choice = await $.ui.ask('What shall Spark make large?', { options: options.map(([l]) => l), header: 'Convert' }) } catch { return 'convert: nothing chosen' }
+    const o = options.find(([l]) => l === choice)
+    if (!o) return 'convert: nothing chosen'
+    mode = o[1]
   }
-  if (!modes.includes(mode)) return 'convert takes: faithful (the same marks, large) | refined | interpretive | three (this painting all three ways) | all (every painting of the session; then faithful, refined or interpretive, or pick one), then hd (1920 wide, the default) or 4k. On its own, /spark convert lets you click one'
-  const width = sizeWord === '' ? SIZES.hd! : SIZES[sizeWord] ?? (/^\d{3,4}$/.test(sizeWord) ? Math.max(256, Math.min(4096, Number(sizeWord))) : 0)
+  if (!way && mode !== 'every') { // the second: which way
+    const list = mode === 'one' ? (pick ? [pick] : []) : story.slice()
+    if (!list.length) return mode === 'one' ? 'no painting is showing: /spark story shows them, /spark paint makes one' : 'no paintings yet this session: /spark paint makes one'
+    const q = mode === 'one' ? 'Which way, this painting?' : mode === 'roll' ? `The roll of all ${plural(list.length)}: which way?` : `All ${plural(list.length)}: which way?`
+    const w = await askWay($, q, list)
+    if (!w) return 'convert: nothing chosen'
+    way = w
+  }
+  if (mode === 'roll') return rollPaintings($, way as Way, sizeWord, called)
+  const width = stillWidth(sizeWord)
   if (!width) return 'convert size: hd (1920 wide) or 4k (3840)'
-  if (convertBusy) return convertProgress ? `Spark is still converting: ${convertProgress.done} of ${convertProgress.total} (${convertProgress.what})` : 'Spark is still converting'
+  if (convertBusy) return busyText()
   if (mode !== 'all' && !pick) return story.length ? 'no painting is showing: /spark story shows them, /spark paint makes one' : 'no paintings yet this session: /spark paint makes one'
   if (mode === 'all' && !story.length) return 'no paintings yet this session: /spark paint makes one'
-  const jobs: Job[] = mode === 'all' ? story.map((source) => ({ source, way: way as Way })) : mode === 'three' ? WAYS.map((w) => ({ source: pick!, way: w })) : [{ source: pick!, way: mode as Way }]
-  const said = mode === 'all' ? `all, ${way}` : mode === 'three' ? 'all three ways' : mode
+  const jobs: Job[] = mode === 'all' ? story.map((source) => ({ source, way: way as Way })) : mode === 'every' ? WAYS.map((w) => ({ source: pick!, way: w })) : [{ source: pick!, way: way as Way }]
+  const said = mode === 'all' ? `all, ${way}` : mode === 'every' ? 'every way' : way
   convertBusy = true
   const root = await $.session.root().catch(() => '')
   const folder = convertFolder.startsWith('/') || convertFolder.startsWith('~') ? convertFolder : (root ? root + '/' : '') + convertFolder
   const written: string[] = []
   let note = ''
+  const theme = activeTheme()
+  const pause = () => $.clock.now()
   const run = async (): Promise<string> => {
     try {
-      for (const { source, way: revisit } of jobs) {
-        await $.clock.now() // between pictures: let everything else run
+      for (const { source, way: w } of jobs) {
+        await pause() // between pictures: let everything else run
         let p: Painting & { shape: string } = source
-        let tag: string = revisit
-        if (revisit !== 'faithful') { // the painter revisits its own work: one call
-          const rq = revisitRequest({ painting: source, mode: revisit, palette, theme: activeTheme(), reflection })
-          const r = await $.model.complete({ model: paintModel, system: rq.system, prompt: rq.prompt, maxTokens: 6000, effort: 'low', timeoutMs: 60000 })
-          const used = spend((r as { usage?: Record<string, number> }).usage)
-          if (used) { revisitSeen.calls++; revisitSeen.tokens += used }
-          const q = r.isAnswered ? parsePainting(r.text, palette, HD_MARKS) : null
-          if (!q) { note = r.isAnswered ? 'the painter answered something that was not a painting; the faithful version was written instead' : 'the painter sent nothing back; the faithful version was written instead'; tag = 'faithful' }
-          else p = { ...q, shape: source.shape }
-        }
+        let tag: string = w
+        if (revisits(w)) { const r = await revisitPainting($, source, w as 'refined' | 'interpretive'); p = r.p; if (!r.ok) { note = r.note; tag = 'faithful' } }
         const [W, H] = canvasFor(p.shape, width)
-        const scene = paintingScene(p, W, H, { reveal: 1, theme: activeTheme() })
         const n = converted.length + 1
         const name = slug(p.title, n) + '-' + tag
         const when = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
         const caption = convertCaption ? captionLines(p.title, tag, when) : null
-        const svgPath = `${folder}/${name}.svg`
-        const floor = markFloor(W) // specks and fine lines stay visible at full size, as they are in the terminal
-        await $.fs.write(svgPath, sceneSVG(scene, W, H, { theme: activeTheme(), title: p.title, caption, floor }))
+        let px: { W: number; H: number; px: Float32Array }
+        if (tag === 'layered') { // in depth: its layers, the far ones softened, shadows, the bloom
+          await $.fs.write(`${folder}/${name}.svg`, sceneSVG([], W, H, { theme, title: p.title, caption, floor: layeredFloor(W, H), layers: layeredScenes(p, W, H, { theme }) }))
+          px = await layeredRaster(p, W, H, { theme, pause })
+        } else {
+          const scene = paintingScene(p, W, H, { reveal: 1, theme })
+          const floor = markFloor(W) // specks and fine lines stay visible at full size, as they are in the terminal
+          await $.fs.write(`${folder}/${name}.svg`, sceneSVG(scene, W, H, { theme, title: p.title, caption, floor }))
+          const raster = createRaster(W, H)
+          await raster.drawAsync(scene, theme, { floor }, pause) // exactly as the terminal draws it: light added to light on a dark ground, over on a light one; handing over now and then, so Spark keeps moving
+          px = raster
+        }
         written.push(`${name}.svg`)
-        // the PNG: the raster at full size, flattened onto the ground, handed to the python helper as base64 text
-        const raster = createRaster(W, H)
-        await raster.drawAsync(scene, activeTheme(), { floor }, () => $.clock.now()) // exactly as the terminal draws it: light added to light on a dark ground, over on a light one; handing over now and then, so Spark keeps moving
-        const flat = toRGB8(raster, ground()) // and flattened onto the ground the same way her cells are
-        const { rgb, H: fullH } = caption ? withCaption(flat, W, H, caption, ground(), { light: activeTheme() === 'light' }) : { rgb: flat, H }
+        // the PNG: the pixels flattened onto the ground the same way her cells are, handed to the python helper as text
+        const flat = toRGB8(px as never, ground())
+        const { rgb, H: fullH } = caption ? withCaption(flat, W, H, caption, ground(), { light: theme === 'light' }) : { rgb: flat, H }
         // in parts of at most 3 MB of text each: one write may carry 4 MiB, and a 4k picture is far more than that
         const b64 = base64(rgb), PART = 3_000_000, parts = Math.ceil(b64.length / PART)
         const b64Path = `${folder}/${name}.rgb.b64`
@@ -625,14 +657,14 @@ async function convertPainting($: EngineInterface, words: string[]): Promise<str
     }
     return `converted (${said}, ${width} wide) into ${folder}: ${written.join(', ')}` + (note ? '. ' + note : '')
   }
-  // more than one picture, or one larger than HD, or two painter calls or more: it goes on beside the work (a command
-  // has ten seconds of its own time, and a session's worth takes far longer), and Spark says in the conversation when it
-  // is done (/spark state shows how far it has got). One HD picture is quick and comes back at once
-  const calls = jobs.filter((j) => j.way !== 'faithful').length
-  if (calls >= 2 || jobs.length >= 2 || width > SIZES.hd!) {
+  // more than one picture, one larger than HD, a layered one, or two painter calls or more: it goes on beside the work
+  // (a command has ten seconds of its own time), and Spark says in the conversation when it is done (/spark state shows
+  // how far it has got). One faithful, refined or interpretive picture at HD is quick and comes back at once
+  const calls = jobs.filter((j) => revisits(j.way)).length
+  if (calls >= 2 || jobs.length >= 2 || width > SIZES.hd! || jobs.some((j) => j.way === 'layered')) {
     const est = jobsEstimate(jobs)
     convertProgress = { done: 0, total: jobs.length, what: said }
-    const what = mode === 'three' ? 'this painting all three ways' : mode === 'all' ? `all ${jobs.length} ${jobs.length === 1 ? 'painting' : 'paintings'}, ${way}` : `this painting, ${mode}`
+    const what = mode === 'every' ? 'this painting every way' : mode === 'all' ? `all ${plural(jobs.length)}, ${way}` : `this painting, ${way}`
     void quietly(async () => {
       const text = await run()
       await quietly(() => $.ui.log('Spark: ' + text))
@@ -641,6 +673,165 @@ async function convertPainting($: EngineInterface, words: string[]): Promise<str
     return `converting ${what}, ${width} wide, into ${folder}: ${calls ? `${calls} painter ${calls === 1 ? 'call' : 'calls'}, about ${kilo(est)} tokens` : 'no tokens'}. It goes on beside the work; Spark says when it is done (/spark state shows how far)`
   }
   return run()
+}
+
+// /spark convert roll [way]: the session's paintings as a clip. Each is laid down mark by mark as it first was (2 s),
+// held with its title (3 s), and crossfaded into the next; the last fades out. The way is the convert's: faithful (the
+// same marks), layered (in depth), refined or interpretive (the painter revisits each first: one call a painting). Spark
+// draws every frame herself and hands them to a small helper (link/spark_roll.py) as text, one painting at a time;
+// ffmpeg makes the MP4. Without ffmpeg, a smaller animated PNG. It goes on beside the work, and Spark says in the
+// conversation when it is done.
+const ROLL = { reveal: 2, hold: 3, fade: 0.6, fps: 12, layeredFps: 8 } // seconds laid down, held, crossfaded; frames a second laid down (layered frames cost more, so fewer, smoothed the same)
+async function hasFfmpeg($: EngineInterface): Promise<boolean> {
+  try {
+    const proc = $.process.spawn({ argv: ['ffmpeg', '-hide_banner', '-version'] })
+    for await (const _ of proc) { /* its lines are not needed */ }
+    return ((await proc.result) as { code?: number } | null)?.code === 0
+  } catch { return false }
+}
+async function runHelper($: EngineInterface, args: string[]): Promise<{ ok: boolean; out: string; err: string }> {
+  let out = '', err = ''
+  try {
+    const proc = $.process.spawn({ argv: ['python3', `${$.plugin.root}/link/spark_roll.py`, ...args] })
+    for await (const piece of proc) { const p = piece as { stream?: string; text?: string }; if (p.stream === 'stderr') err += p.text ?? ''; else out += p.text ?? '' }
+    return { ok: ((await proc.result) as { code?: number } | null)?.code === 0, out, err }
+  } catch (e) { return { ok: false, out, err: err || String((e as Error)?.message || e) } }
+}
+// The roll's title: the one you gave it (`called ...`), else the conversation's name (/rename), else the project's folder
+const TITLE = { fadeFrames: 12, fps: 12, hold: 2.5 } // the card comes up over a second, then holds: 3.5 s, crossfaded into the first painting
+async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, called = ''): Promise<string> {
+  if (!story.length) return 'no paintings yet this session: /spark paint makes one'
+  if (convertBusy) return busyText()
+  const asked = rollSize(sizeWord)
+  if (!asked) return 'roll size: hd (1080p, 1920 wide), or a width (16:9); 720p (1280 wide) when nothing is said'
+  convertBusy = true
+  const video = await hasFfmpeg($)
+  const [W, H] = video ? asked : [640, 360]
+  const fps = way === 'layered' ? ROLL.layeredFps : ROLL.fps
+  const frames = video ? Math.round(ROLL.reveal * fps) : 8
+  const list = story.slice(), n = list.length
+  const root = await $.session.root().catch(() => '')
+  const lead = rollTitleOn ? 1 : 0 // segments before the first painting: the title card
+  const title = called || sessionName || root.replace(/\/+$/, '').split('/').pop() || 'Spark'
+  const titleSecs = video ? TITLE.fadeFrames / TITLE.fps + TITLE.hold : 0
+  const folder = convertFolder.startsWith('/') || convertFolder.startsWith('~') ? convertFolder : (root ? root + '/' : '') + convertFolder
+  const d = new Date(), pad = (v: number) => String(v).padStart(2, '0')
+  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
+  const name = `spark-roll-${stamp}-${way}.${video ? 'mp4' : 'png'}`
+  const work = `${folder}/.spark-roll-${stamp}`
+  const when = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  const theme = activeTheme(), g = ground(), light = theme === 'light'
+  const pause = () => $.clock.now()
+  const PART = 3_000_000
+  const parts = Math.ceil(Math.ceil((W * H * 3) / 3) * 4 / PART)
+  const calls = revisits(way) ? n : 0
+  const est = jobsEstimate(list.map((source) => ({ source, way })))
+  convertProgress = { done: 0, total: n, what: `the roll, ${way}` }
+  const notes: string[] = []
+  const rolled: Array<Painting & { shape: string }> = [] // the paintings as rolled (revisited ones as the painter gave them back): the music is read from these
+  const run = async (): Promise<string> => {
+    try {
+      const gb = g.map((v) => Math.round(v * 255))
+      for (let i = 0; i < n; i++) {
+        let p: Painting & { shape: string } = list[i]!
+        if (revisits(way)) { const r = await revisitPainting($, p, way as 'refined' | 'interpretive'); p = r.p; if (!r.ok && !notes.length) notes.push(r.note.replace(/^the painter/, 'for some paintings the painter')) }
+        rolled.push(p)
+        const seq = i + lead // its place in the clip, after the title card
+        const lines = captionLines(p.title, `${i + 1} of ${n}`, when)
+        const L = rollLayout(p.shape, W, H, lines.length)
+        // the frame: the ground, the caption strip at the bottom (the same for all this painting's frames), the painting
+        const frame = new Uint8Array(W * H * 3)
+        for (let k = 0; k < W * L.areaH; k++) { frame[k * 3] = gb[0]!; frame[k * 3 + 1] = gb[1]!; frame[k * 3 + 2] = gb[2]! }
+        frame.set(captionStrip(W, lines, g, { light }), W * L.areaH * 3)
+        const nm = p.marks.length
+        // each frame's pixels with f/frames of the marks laid: in depth (layered), or as the terminal draws them, the
+        // finished marks kept on a raster of their own and only the one in progress drawn again
+        let next: (q: number) => Promise<{ px: Float32Array }>
+        if (way === 'layered') {
+          const st = layeredStepper(p, L.pw, L.ph, { theme })
+          next = async (q) => ({ px: await st.frame(q, pause) })
+        } else {
+          const floor = markFloor(L.pw)
+          const base = createRaster(L.pw, L.ph), shot = createRaster(L.pw, L.ph)
+          let laid = 0
+          next = async (q) => {
+            const whole = Math.min(nm, Math.floor(q))
+            if (whole > laid) { await base.drawAsync(paintingScene({ ...p, marks: p.marks.slice(laid, whole) }, L.pw, L.ph, { reveal: 1, theme }), theme, { floor, keep: true }, pause); laid = whole }
+            if (q - whole > 0.001 && whole < nm) {
+              shot.px.set(base.px)
+              shot.draw(paintingScene({ ...p, marks: [p.marks[whole]!] }, L.pw, L.ph, { reveal: q - whole, theme }), theme, { floor, keep: true })
+              return shot
+            }
+            return base
+          }
+        }
+        for (let f = 1; f <= frames; f++) {
+          await pause() // let everything else run
+          const shown = await next((f / frames) * nm)
+          const rgb = toRGB8({ W: L.pw, H: L.ph, px: shown.px } as never, g)
+          for (let y = 0; y < L.ph; y++) frame.set(rgb.subarray(y * L.pw * 3, (y + 1) * L.pw * 3), ((L.oy + y) * W + L.ox) * 3)
+          const b64 = base64(frame)
+          for (let k = 0; k < parts; k++) await $.fs.write(`${work}/f${String(seq).padStart(3, '0')}-${String(f - 1).padStart(3, '0')}.b64.${k}`, b64.slice(k * PART, (k + 1) * PART))
+        }
+        if (video) { // this painting's part of the clip, now, so its frames are gone before the next is drawn
+          const seg = await runHelper($, ['segment', work, String(seq), String(frames), String(W), String(H), String(parts), String(fps), String(ROLL.hold)])
+          if (!seg.ok) return 'no roll: ' + (/No such file|not found|ENOENT|code 127/i.test(seg.err) && !seg.out ? 'python3 was not found (the roll needs it, with ffmpeg)' : seg.err.trim().slice(-160) || 'the helper could not make it')
+        }
+        if (convertProgress) convertProgress.done++
+        logRecent('roll ' + (i + 1))
+      }
+      const out = `${folder}/${name}`
+      // the music: read from the paintings as rolled, played by the helper into a WAV the join lays under the clip
+      let music = '', key = ''
+      const score = rollScore(rolled, { reveal: ROLL.reveal, hold: ROLL.hold, fade: ROLL.fade, lead: lead && video ? titleSecs - ROLL.fade : 0 })
+      // the title card, made last so it can name the music's key, but first in the clip
+      if (lead) {
+        const sub = `Spark · ${when} · ${plural(n)}${video && rollMusic ? ` · music in ${score.key}` : ''}`
+        const glow = sessionColour(rolled)
+        const tf = video ? TITLE.fadeFrames : frames
+        const full = titleCard({ W, H, title, sub, ground: g, light, glow }) // drawn once; each frame brings it up out of the ground
+        const card = new Uint8Array(full.length)
+        for (let f = 1; f <= tf; f++) {
+          await pause()
+          const a = Math.min(1, f / tf)
+          for (let k = 0; k < full.length; k += 3) for (let c = 0; c < 3; c++) card[k + c] = Math.round(full[k + c]! * a + gb[c]! * (1 - a))
+          const b64 = base64(card)
+          for (let k = 0; k < parts; k++) await $.fs.write(`${work}/f000-${String(f - 1).padStart(3, '0')}.b64.${k}`, b64.slice(k * PART, (k + 1) * PART))
+        }
+        if (video) {
+          const seg = await runHelper($, ['segment', work, '0', String(TITLE.fadeFrames), String(W), String(H), String(parts), String(TITLE.fps), String(TITLE.hold)])
+          if (!seg.ok) return 'no roll: ' + (seg.err.trim().slice(-160) || 'the helper could not make the title')
+        }
+      }
+      if (video && rollMusic) {
+        await $.fs.write(`${work}/score.json`, JSON.stringify(score))
+        const played = await runHelper($, ['music', `${work}/score.json`, `${work}/music.wav`])
+        if (played.ok) { music = `${work}/music.wav`; key = score.key }
+        else notes.push('no music: ' + (played.err.trim().slice(-120) || 'the helper could not play it'))
+      }
+      const made = video
+        ? await runHelper($, ['join', work, String(n + lead), out, [...(lead ? [titleSecs] : []), ...list.map(() => ROLL.reveal + ROLL.hold)].join(','), String(ROLL.fade), ...(music ? [music] : [])])
+        : await runHelper($, ['apng', work, String(n + lead), String(frames), String(W), String(H), String(parts), '250', '2600', '3', out])
+      if (!made.ok) return 'no roll: ' + (/No such file|not found|ENOENT/i.test(made.err) && !made.out ? 'python3 was not found (the roll needs it)' : made.err.trim().slice(-160) || 'the helper could not make it')
+      const secs = Number(made.out.trim().split(/\s+/)[2]) || 0
+      converted.push({ file: name, title: `the roll · ${plural(n)}`, when: d.toTimeString().slice(0, 5), mode: `roll, ${way}${video ? '' : ', animated PNG'}` })
+      await $.fs.write(`${folder}/index.html`, galleryHTML(converted))
+      const long = secs >= 60 ? `${Math.floor(secs / 60)} min ${Math.round(secs % 60)} s` : `${Math.round(secs)} s`
+      return `rolled ${plural(n)} (${way})${lead ? `, opening with “${title}”,` : ''} into ${out} (${video ? `${W}x${H} MP4${key ? `, with its own music in ${key}` : ''}` : `${W}x${H} animated PNG: ffmpeg was not found, so a smaller one that plays in any browser (sudo apt install ffmpeg for the MP4)`}, ${long}), and the gallery page` + (notes.length ? '. ' + notes[0] : '')
+    } catch (err) {
+      return 'no roll: ' + String((err as Error)?.message || err).slice(0, 120)
+    } finally {
+      convertBusy = false
+      convertProgress = null
+    }
+  }
+  const length = n * (ROLL.reveal + ROLL.hold) - (n - 1) * ROLL.fade + (lead && video ? titleSecs - ROLL.fade : 0)
+  void quietly(async () => {
+    const text = await run()
+    await quietly(() => $.ui.log('Spark: ' + text))
+    await quietly(() => $.ui.toast(text.startsWith('rolled') ? `Spark: the roll is ready (${plural(n)}, ${way})` : 'Spark: ' + text))
+  })
+  return `rolling all ${plural(n)} into a clip, ${way}, ${video ? `${W}x${H} MP4, about ${Math.round(length)} s long` : `${W}x${H} animated PNG (ffmpeg was not found: sudo apt install ffmpeg for an MP4)`}, into ${folder}: ${lead ? `opening with a title card, “${title}”, then ` : ''}each laid down, held with its title, then crossfaded into the next${video && rollMusic ? ', to music of its own, read from the paintings' : ''}. ${calls ? `${calls} painter ${calls === 1 ? 'call' : 'calls'}, about ${kilo(est)} tokens` : 'No tokens'}. It goes on beside the work; Spark says when it is done (/spark state shows how far)`
 }
 
 // A live painting, if the turn has run long enough since the last one and this is a moment (or she has waited enough)
@@ -902,7 +1093,7 @@ const HELP = [
   '/spark link    on | off | status: Keeper and Prism beside Spark (Cyclops Link, off until you turn it on)',
   '/spark paint   a small painter paints each turn below Spark, and one now (it uses tokens); /spark paint off stops it',
   '/spark story   the session\'s paintings told again in order, each laid down anew (no tokens); /spark story again ends it',
-  '/spark convert the painting made large, SVG and PNG, into the convert folder: click a way (each with its token cost) or All… (this painting all three ways, or every painting one way), or say it: /spark convert refined 4k, three, all interpretive',
+  '/spark convert the painting made large, SVG and PNG, into the convert folder: click what (this painting, every way, all paintings, the roll) then which way (faithful, layered, refined, interpretive, each with its token cost), or say it: /spark convert layered 4k, every, all refined, roll layered hd',
 ].join('\n')
 
 // focus asks for about 60% of the terminal (at least 64 columns, and always 40 left for the conversation), and the full
@@ -982,6 +1173,8 @@ export const register: Register = (on, options) => {
   if (SOUNDS.includes(o.sound as Sound)) sound = o.sound as Sound
   if (typeof o.calm === 'boolean') calm = o.calm
   if (typeof o.hd === 'boolean') hd = o.hd
+  if (typeof o.rollMusic === 'boolean') rollMusic = o.rollMusic
+  if (typeof o.rollTitle === 'boolean') rollTitleOn = o.rollTitle
   if (typeof o.welcome === 'boolean') welcomeOn = o.welcome
   if (typeof o.statusLine === 'boolean') statusOn = o.statusLine
   if (typeof o.murmur === 'boolean') murmurOn = o.murmur
@@ -1126,6 +1319,13 @@ export const register: Register = (on, options) => {
   // Claude Code's own /copy takes the last response too
   // Claude Code's own /copy takes the last response too: counted only when it says it copied (a picker left, or nothing
   // to copy, is not a copy)
+  // the name you give the conversation with /rename: the roll's title (read only from the command you typed)
+  on('command.run', { command: 'rename' }, async ($, e, next) => {
+    const res = await next(e)
+    const name = String((e as { args?: string }).args ?? '').trim()
+    if (name) sessionName = name.slice(0, 60)
+    return res
+  })
   on('command.run', { command: 'copy' }, async ($, e, next) => {
     const res = await next(e)
     if (typeof res?.text === 'string' && /copied to clipboard/i.test(res.text)) await quietly(() => copied($, 'copy'))
@@ -1217,7 +1417,7 @@ export const register: Register = (on, options) => {
         text = 'link ' + (linkOn ? linkStatus : 'off') + (linkOn && linkView ? ' · ' + linkLine(linkView) : '') + (linkWanted !== null ? ' (SPARK_LINK overrides the setting)' : '')
       } else text = 'link takes: on | off | status'
     }
-    else if (word === 'convert') text = await convertPainting($, e.args.trim().toLowerCase().split(/\s+/).slice(1))
+    else if (word === 'convert') text = await convertPainting($, e.args.trim().toLowerCase().split(/\s+/).slice(1), e.args.trim().split(/\s+/).slice(1))
     else if (word === 'story') { // the session's paintings, told again in order, once through: nothing is asked of any model
       const page = () => storyOn ? `page ${storyIndex() + 1} of ${story.length}` : ''
       if (storyOn && (arg === 'pause' || arg === 'hold')) { storyPause(true); text = `story held on ${page()}: /spark convert makes this one large; /spark story play goes on` }
