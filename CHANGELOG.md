@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.6
+
+- **No more blue specks around Spark in HD.** Where both sides of a quarter-block cell were too faint to keep, the cell
+  was drawn as a block glyph in the terminal's *default foreground*, which is its text colour (a light blue-grey on
+  many themes), so about 30 cells a frame flickered in that colour at her edges. Such a cell is now a plain space on
+  the terminal's own background; no glyph is ever drawn in the default foreground.
+- **The welcome eye no longer appears after an update mid-conversation.** Reinstalling reloads the plugin, which looks
+  like a new session to it; it now checks that no turns have been taken yet before showing the welcome.
+
 ## 1.7.5
 
 - **`/spark convert roll`: the session as a clip.** Every painting is laid down mark by mark as it first was (2 s), held

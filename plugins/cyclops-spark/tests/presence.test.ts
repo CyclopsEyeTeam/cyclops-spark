@@ -226,6 +226,14 @@ test('the welcome fits the room: smaller in a short band, the eye alone when nar
   await say($, 'hd on')
 })
 
+test('a plugin reloaded mid-conversation (an update) finds turns already taken: no welcome', async ($, on) => {
+  engine(on)
+  sessionHooks(on)
+  on('session.turns', async () => loose({ value: 7 }))
+  await startSession($)
+  expect((await band($)).eye).toBeUndefined()
+})
+
 test('the welcome setting off: no eye', { options: { welcome: false } }, async ($, on) => {
   engine(on)
   sessionHooks(on)

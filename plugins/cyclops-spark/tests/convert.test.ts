@@ -173,6 +173,17 @@ test('the pieces: slugs, canvases, the flattened bytes, and an SVG that stands o
   expect([...toQuadrants(q, [0, 0, 0])]).toEqual([0x258c, 0xff0000, 0x01000000])
   q.px.fill(0)
   expect([...toQuadrants(q, [0, 0, 0])]).toEqual([0x20, 0x01000000, 0x01000000]) // nothing: the terminal's own
+  // faint everywhere (each side under a third of cover): a space, never a glyph in the terminal's text colour
+  q.px.fill(0); for (let i = 0; i < 8; i++) q.px.set([0.1, 0.1, 0.12, 0.12], i * 4)
+  expect([...toQuadrants(q, [0, 0, 0])]).toEqual([0x20, 0x01000000, 0x01000000])
+  // a whole Spark, any frame: no cell draws its glyph in the default foreground
+  for (let t = 0; t < 40; t++) {
+    const r = createRaster(88, 88)
+    const pts = Array.from({ length: 8 }, (_, k) => ({ k: 'path', pts: [[0, 0], [Math.cos(k + t) * 1.1, Math.sin(k * 1.3 + t) * 1.1]], w: 0.01 + (t % 5) * 0.004, c0: [1, 0.9, 0.85], c1: [0.6, 0.5, 0.7], a: 0.3 + (t % 7) / 10 }))
+    r.draw([{ k: 'glow', x: 0, y: 0, r: 0.4, c: [1, 0.8, 0.9], a: 0.6 }, ...pts], 'dark', { res: 2 })
+    const w = toQuadrants(r, [0.07, 0.07, 0.08])
+    for (let i = 0; i < w.length; i += 3) if (w[i] !== 0x20) expect(w[i + 1]).not.toBe(0x01000000)
+  }
   expect(galleryHTML([{ file: 'x.png', title: 'a "quoted" one', when: '21:01', mode: 'faithful' }])).toContain('alt="a &quot;quoted&quot; one"')
   const rq = revisitRequest({ painting: p, mode: 'interpretive' })
   expect(rq.prompt).not.toContain('seed') // the painter sees its marks, not the renderer's bookkeeping
