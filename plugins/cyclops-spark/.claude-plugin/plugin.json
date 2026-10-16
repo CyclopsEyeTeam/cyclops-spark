@@ -32,6 +32,12 @@
       "description": "When a session starts, the Cyclops eye is drawn above the prompt until your first message, then the room is given back.",
       "default": true
     },
+    "rollMusic": {
+      "type": "boolean",
+      "title": "Music in the roll",
+      "description": "Give /spark convert roll its own instrumental music, read from the paintings: the session's colours pick the key, each painting a chord, each mark laid down a note. No tokens. Off: a silent clip.",
+      "default": true
+    },
     "hd": {
       "type": "boolean",
       "title": "HD cells",

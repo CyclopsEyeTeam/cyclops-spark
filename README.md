@@ -210,7 +210,15 @@ the words themselves. The last reflection shows in `/spark state`.
   painting at a time, to a small helper (`link/spark_roll.py`) that makes the MP4 with **ffmpeg**
   (`sudo apt install ffmpeg`). Without ffmpeg you get a smaller animated PNG (640x360) that plays in any browser, and
   Spark says how to get the MP4. It asks nothing of any model, goes on beside your work (`/spark state` shows how far),
-  lands in the convert folder as `spark-roll-<date>-<time>.mp4`, and plays in the gallery page.
+  lands in the convert folder as `spark-roll-<date>-<time>-<way>.mp4`, and plays in the gallery page.
+  **The roll has its own music**, an instrumental read from the paintings (`hooks/music.js`), no tokens: the
+  session's colours pick the key (their hue round the circle of fifths) and the mode (warm and light: major; cool or
+  dark: dorian; dark and cool: aeolian); each painting is a chord of that key, chosen by its own colour, held as a soft
+  pad over a bass from the moment it starts; and as its marks are laid down they sound, a dot, ring or arc a bell, a
+  line or curve a plucked string, a spray a few high sparkles, a glow a slow swell, pitched by how high the mark sits,
+  placed left or right where it sits, as loud as its light. The helper plays it with small instruments of its own
+  (quick with numpy, and it works without), and ffmpeg lays it under the clip with a little echo. The **Music in the
+  roll** setting turns it off; the animated PNG has none.
 - **The story of the session.** Every painting of the session is kept (in memory only) in the order it came.
   `/spark story` tells them again in her pane, each laid down mark by mark as it first was and held for a few seconds,
   with where it is in the story and when it was painted (`story · 3 of 9 · 21:01`), once through, then held on the

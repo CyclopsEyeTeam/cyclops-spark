@@ -24,6 +24,13 @@
 - **The roll in any way.** Faithful or layered (laid down in depth, 8 frames a second smoothed to 30, the finished layers
   kept composed so a frame costs one layer); refined or interpretive revisit each painting first, one painter call each,
   with the cost shown. The clip's name says its way (`spark-roll-<date>-<time>-layered.mp4`).
+- **The roll has its own music.** An instrumental read from the paintings, no tokens (`hooks/music.js` writes the score,
+  `link/spark_roll.py music` plays it): the session's colours pick the key and mode, each painting a chord of it (a soft
+  pad and a bass, changing with each painting), and each mark sounds as it is laid down, by kind (dot, ring, arc: bell;
+  line, curve: plucked string; spray: sparkles; glow: a swell), pitched by its height, placed by where it sits, as
+  loud as its light; every kind of mark a painting has is heard, at most 14 notes a painting. Rendered at 32 kHz with
+  numpy (an 85 s roll in about 5 s), at 16 kHz without; laid under the clip with an echo, a limiter and fades. The
+  **Music in the roll** setting (`rollMusic`) makes a silent clip instead.
 
 ## 1.7.4
 
