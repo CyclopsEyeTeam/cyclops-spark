@@ -68,20 +68,24 @@ const hex = (c) => '#' + c.map((v) => Math.round(Math.max(0, Math.min(1, v)) * 2
 // ---------------------------------------------------------------- the scene as SVG
 // The scene is what paintingScene gives the raster: primitives in unit space (0,0 the middle; min(W,H) spans 2.4).
 // The same mapping the raster uses, so the SVG and the PNG are the one picture.
-export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '', caption = null, floor = 0.6 } = {}) {
+// `layers` (layered): the scene in depth, back to front, each [scene, depth 0..1]; drawn with the far ones softened,
+// each nearer one's shadow on those behind, and the brightest light blooming, as hooks/layered.js draws the PNG
+export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '', caption = null, floor = 0.6, layers = null } = {}) {
   const scale = Math.min(W, H) / 2.4, ox = W / 2, oy = H / 2
   const fl = Math.max(0.6, floor), fw = Math.max(0.9, floor * 1.5) // the thinnest a dot (radius) or a stroke (width) is drawn
   const X = (x) => +(ox + x * scale).toFixed(2), Y = (y) => +(oy + y * scale).toFixed(2), R = (r) => +(r * scale).toFixed(2)
   const col = (c) => hex(c)
   const dark = theme !== 'light'
   const bg = ground || (dark ? '#141218' : '#f6f2ec')
-  const defs = [], body = []
+  const defs = []
   let id = 0
   const num = (v) => +Number(v).toFixed(3)
-  for (const p of scene) {
+  const marks = (sc, pfx = 'g') => {
+  const body = []
+  for (const p of sc) {
     const a = num(p.a ?? 1)
     if (p.k === 'glow') {
-      const g = 'g' + id++
+      const g = pfx + id++
       defs.push(`<radialGradient id="${g}"><stop offset="0" stop-color="${col(p.c)}" stop-opacity="${num(a * (dark ? 0.9 : 0.5))}"/><stop offset="0.45" stop-color="${col(p.c)}" stop-opacity="${num(a * (dark ? 0.3 : 0.17))}"/><stop offset="0.7" stop-color="${col(p.c)}" stop-opacity="${num(a * (dark ? 0.07 : 0.04))}"/><stop offset="1" stop-color="${col(p.c)}" stop-opacity="0"/></radialGradient>`)
       body.push(`<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${R(p.r * 1.6)}" fill="url(#${g})"/>`)
     } else if (p.k === 'dot') {
@@ -103,7 +107,7 @@ export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '
       const same = !c1 || (c0[0] === c1[0] && c0[1] === c1[1] && c0[2] === c1[2])
       if (same) body.push(`<polygon points="${pts}" fill="${col(c0)}" fill-opacity="${a}"/>`)
       else {
-        const g = 'g' + id++, gx = Math.cos(p.grad || 0), gy = Math.sin(p.grad || 0)
+        const g = pfx + id++, gx = Math.cos(p.grad || 0), gy = Math.sin(p.grad || 0)
         const proj = p.pts.map(([x, y]) => X(x) * gx + Y(y) * gy), lo = Math.min(...proj), hi = Math.max(...proj)
         const mid = p.pts.reduce((s, [x, y]) => [s[0] + X(x) / p.pts.length, s[1] + Y(y) / p.pts.length], [0, 0])
         const base = mid[0] * gx + mid[1] * gy
@@ -117,14 +121,34 @@ export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '
       const same = c0[0] === c1[0] && c0[1] === c1[1] && c0[2] === c1[2]
       let stroke = col(c0)
       if (!same) {
-        const g = 'g' + id++, [fx, fy] = p.pts[0], [lx, ly] = p.pts[p.pts.length - 1]
+        const g = pfx + id++, [fx, fy] = p.pts[0], [lx, ly] = p.pts[p.pts.length - 1]
         defs.push(`<linearGradient id="${g}" gradientUnits="userSpaceOnUse" x1="${X(fx)}" y1="${Y(fy)}" x2="${X(lx)}" y2="${Y(ly)}"><stop offset="0" stop-color="${col(c0)}"/><stop offset="1" stop-color="${col(c1)}"/></linearGradient>`)
         stroke = `url(#${g})`
       }
       body.push(`<polyline points="${pts}" fill="none" stroke="${stroke}" stroke-opacity="${a}" stroke-width="${Math.max(fw, R(p.w))}" stroke-linecap="round" stroke-linejoin="round"/>`)
     }
   }
+  return body.join('')
+  }
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  let inner
+  if (layers) { // in depth: a layer's shadow (its cover, black, softened, a little lower), then the layer, softened by its depth; then the bloom
+    const short = Math.min(W, H), parts = []
+    defs.push(`<filter id="shadow" x="-10%" y="-10%" width="120%" height="130%" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 ${dark ? 0.4 : 0.22} 0"/><feOffset dy="${num(short * 0.006)}"/><feGaussianBlur stdDeviation="${num(short * 0.006)}"/></filter>`)
+    layers.forEach(([sc, depth], li) => {
+      const body = marks(sc, `l${li}g`)
+      defs.push(`<g id="layer${li}"${dark ? ' class="add"' : ''}>${body}</g>`)
+      if (li > 0) parts.push(`<use href="#layer${li}" filter="url(#shadow)"/>`)
+      if (depth > 0) defs.push(`<filter id="soft${li}" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB"><feGaussianBlur stdDeviation="${num(short * 0.003 * depth)}"/></filter>`)
+      parts.push(`<use href="#layer${li}"${depth > 0 ? ` filter="url(#soft${li})"` : ''}${dark ? ' style="mix-blend-mode:screen;mix-blend-mode:plus-lighter"' : ''}/>`)
+    })
+    if (dark) { // the bloom: what is past three quarters bright, softened wide, added back
+      // brightness from the light as the eye weighs it, so the bloom keeps the colour of what blooms
+      defs.push(`<filter id="bloom" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB"><feColorMatrix in="SourceGraphic" type="luminanceToAlpha" result="l"/><feComponentTransfer in="l" result="m"><feFuncA type="linear" slope="4" intercept="-3"/></feComponentTransfer><feComposite in="SourceGraphic" in2="m" operator="in" result="b"/><feGaussianBlur in="b" stdDeviation="${num(short * 0.016)}"/></filter>`)
+      parts.push(`<g opacity="0.9" style="mix-blend-mode:screen;mix-blend-mode:plus-lighter" filter="url(#bloom)">${layers.map((_, li) => `<use href="#layer${li}"/>`).join('')}</g>`)
+    }
+    inner = parts.join('')
+  } else inner = `<g${dark ? ' class="add"' : ''}>${marks(scene)}</g>`
   const strip = caption ? captionHeight(W, caption.length) : 0
   const s = captionScale(W), size = FONT_H * s * 0.95
   const inks = dark ? ['#ece4f0', '#968ca0'] : ['#282430', '#787080']
@@ -138,7 +162,7 @@ export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '
     // on a dark ground every mark adds its light to what is already there, as the terminal draws it: plus-lighter where
     // the viewer has it (browsers), screen (nearly it) elsewhere; each mark on its own, so a glow brightens the hill it
     // sits on. On a light ground each goes over the last, as paper
-    `<g${dark ? ' class="add"' : ''}>${body.join('')}</g>`,
+    inner,
     text,
     '</svg>',
     '',
