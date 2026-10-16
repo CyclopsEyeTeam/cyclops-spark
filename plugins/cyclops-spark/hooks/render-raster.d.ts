@@ -4,6 +4,9 @@ export function createRaster(W: number, H: number, opts?: { fill?: boolean }): R
 export type Pixels = Pick<Raster, "W" | "H" | "px">
 export function toHalfBlocks(r: Pixels, ground: number[]): Uint32Array
 export function toQuadrants(r: Pixels, ground: number[]): Uint32Array
+export function toQuadrantsClassic(r: Pixels, ground: number[]): Uint32Array
+export const SPILL: number
+export function spill(r: number, g: number, b: number, out: number[]): number[]
 export function toRGBA8(r: Raster): Uint8Array
 export function toRGB8(r: Raster, ground: number[]): Uint8Array
 export function base64(bytes: Uint8Array): string
