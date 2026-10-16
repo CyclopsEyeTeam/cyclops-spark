@@ -10,6 +10,7 @@
 
 import { REACTIONS } from './core.js'
 import { FONT, FONT_H } from './font.js'
+import { eyeRaster } from './eye.js'
 
 export const SIZES = { hd: 1920, '4k': 3840 }
 export const HD_MARKS = 240
@@ -185,6 +186,32 @@ export function captionHeight(W, lines = 2) {
   return s * 4 + lines * (FONT_H * s + s * 3) + s * 3
 }
 // The strip's RGB (W × captionHeight), the text in the ink colours over the ground
+// Text in the bitmap font onto an RGB buffer, `s` pixels a font pixel, its top left at x0, y0; `alpha` mixes it over
+// what is there. Returns where the text ended
+export function drawText(rgb, W, H, text, x0, y0, s, ink, alpha = 1) {
+  for (const ch of String(text)) {
+    const [adv, rows] = glyph(ch)
+    for (let y = 0; y < FONT_H; y++) {
+      const bits = parseInt(rows.slice(y * 3, y * 3 + 3), 16)
+      if (!bits) continue
+      for (let x = 0; x < CELL; x++) {
+        if (!((bits >> x) & 1)) continue
+        for (let dy = 0; dy < s; dy++) for (let dx = 0; dx < s; dx++) {
+          const px = x0 + x * s + dx, py = y0 + y * s + dy
+          if (px < 0 || px >= W || py < 0 || py >= H) continue
+          const k = (py * W + px) * 3
+          for (let c = 0; c < 3; c++) rgb[k + c] = Math.round(ink[c] * alpha + rgb[k + c] * (1 - alpha))
+        }
+      }
+    }
+    x0 += adv * s
+    if (x0 > W) break
+  }
+  return x0
+}
+// how wide a text is, in font pixels
+export const textWidth = (text) => [...String(text)].reduce((n, ch) => n + glyph(ch)[0], 0)
+
 export function captionStrip(W, lines, ground, { light = false } = {}) {
   const s = captionScale(W)
   const H = captionHeight(W, lines.length)
@@ -194,26 +221,7 @@ export function captionStrip(W, lines, ground, { light = false } = {}) {
   const inks = light ? [[40, 36, 48], [120, 112, 128]] : [[236, 228, 240], [150, 140, 160]]
   let y0 = s * 4
   for (const line of lines) {
-    const ink = inks[line.dim ? 1 : 0]
-    let x0 = s * 5
-    for (const ch of String(line.text)) {
-      const [adv, rows] = glyph(ch)
-      for (let y = 0; y < FONT_H; y++) {
-        const bits = parseInt(rows.slice(y * 3, y * 3 + 3), 16)
-        if (!bits) continue
-        for (let x = 0; x < CELL; x++) {
-          if (!((bits >> x) & 1)) continue
-          for (let dy = 0; dy < s; dy++) for (let dx = 0; dx < s; dx++) {
-            const px = x0 + x * s + dx, py = y0 + y * s + dy
-            if (px < 0 || px >= W || py >= H) continue
-            const k = (py * W + px) * 3
-            rgb[k] = ink[0]; rgb[k + 1] = ink[1]; rgb[k + 2] = ink[2]
-          }
-        }
-      }
-      x0 += adv * s
-      if (x0 > W) break
-    }
+    drawText(rgb, W, H, line.text, s * 5, y0, s, inks[line.dim ? 1 : 0])
     y0 += FONT_H * s + s * 3
   }
   return rgb
@@ -272,4 +280,41 @@ export function rollSize(word) {
   if (word in ROLL_SIZES) return ROLL_SIZES[word]
   if (/^\d{3,4}$/.test(word)) { const w = Math.max(320, Math.min(1920, Number(word))) & ~1; return [w, Math.round((w * 9) / 16) & ~1] }
   return null
+}
+
+// ---------------------------------------------------------------- the roll's title card
+// The first thing in the roll: the Cyclops eye over a soft glow in the session's own colour, the title (the name you gave
+// the conversation, or the project's) large in the bitmap font, and under it a dim line (Spark, the date, how many
+// paintings, the music's key). `alpha` (0..1) brings it all up out of the ground, for its fade in
+export function titleCard({ W, H, title, sub, ground, light = false, glow = [0.8, 0.5, 0.7], alpha = 1 }) {
+  const rgb = new Uint8Array(W * H * 3)
+  const g = ground.map((v) => Math.round(v * 255))
+  const cx = W / 2, cy = H * 0.36
+  // the ground, with the glow: wide and soft, the session's colour
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const d2 = ((x - cx) / (W * 0.42)) ** 2 + ((y - cy) / (H * 0.42)) ** 2
+    const k = (y * W + x) * 3, gl = Math.exp(-2.6 * d2) * 0.28 * alpha
+    for (let c = 0; c < 3; c++) rgb[k + c] = Math.min(255, Math.round(light ? g[c] * (1 - gl * 0.5) + glow[c] * 255 * gl * 0.5 : g[c] + glow[c] * 255 * gl))
+  }
+  // the eye
+  const eh = Math.round(H * 0.34), ew = Math.round((eh * 64) / 30)
+  const eye = eyeRaster(ew, eh, { light })
+  const ex = Math.round(cx - ew / 2), ey = Math.round(cy - eh / 2)
+  for (let y = 0; y < eh; y++) for (let x = 0; x < ew; x++) {
+    const px = ex + x, py = ey + y
+    if (px < 0 || py < 0 || px >= W || py >= H) continue
+    const i = (y * ew + x) * 4, a = eye.px[i + 3] * alpha
+    if (a <= 0) continue
+    const k = (py * W + px) * 3
+    for (let c = 0; c < 3; c++) rgb[k + c] = Math.round(Math.min(1, eye.px[i + c] / Math.max(eye.px[i + 3], 1e-6)) * 255 * a + rgb[k + c] * (1 - a))
+  }
+  // the title, as large as fits, and the line under it
+  const inks = light ? [[40, 36, 48], [110, 102, 120]] : [[240, 232, 244], [150, 140, 162]]
+  const tw = Math.max(1, textWidth(title))
+  const s = Math.max(2, Math.min(Math.floor((W * 0.86) / tw), Math.round(H / 110)))
+  const ty = Math.round(H * 0.6)
+  drawText(rgb, W, H, title, Math.round(cx - (tw * s) / 2), ty, s, inks[0], alpha)
+  const ss = Math.max(2, Math.min(Math.floor((W * 0.86) / Math.max(1, textWidth(sub))), Math.round(s * 0.5)))
+  drawText(rgb, W, H, sub, Math.round(cx - (textWidth(sub) * ss) / 2), ty + FONT_H * s + s * 4, ss, inks[1], alpha)
+  return rgb
 }

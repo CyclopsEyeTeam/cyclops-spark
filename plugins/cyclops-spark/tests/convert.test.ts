@@ -383,28 +383,36 @@ test('/spark convert roll: every painting laid down, held and crossfaded into a 
   expect(await say($, 'convert roll huge')).toMatch(/^roll size: hd/)
   const n0 = asks.length
   const started = await say($, 'convert roll faithful 320')
-  expect(started).toMatch(/^rolling all 2 paintings into a clip, faithful, 320x180 MP4, about 9 s long, into \/home\/t\/zilo\/spark-paintings: each laid down, held with its title, then crossfaded into the next, to music of its own, read from the paintings\. No tokens\./)
+  expect(started).toMatch(/^rolling all 2 paintings into a clip, faithful, 320x180 MP4, about 12 s long, into \/home\/t\/zilo\/spark-paintings: opening with a title card, “zilo”, then each laid down, held with its title, then crossfaded into the next, to music of its own, read from the paintings\. No tokens\./) // the title: the project's folder
   expect(await say($, 'convert roll faithful 320')).toMatch(/^Spark is still converting: \d of 2 \(the roll, faithful\)/)
   await until(() => logs.length >= 1)
   expect(asks.length).toBe(n0) // nothing asked of any model
   expect(spawns[0]).toEqual(['ffmpeg', '-hide_banner', '-version'])
   const helper = spawns.filter((a) => a[0] === 'python3')
-  expect(helper.map((a) => a[2])).toEqual(['segment', 'segment', 'music', 'join']) // one painting at a time, its music, then the whole
+  expect(helper.map((a) => a[2])).toEqual(['segment', 'segment', 'segment', 'music', 'join']) // one painting at a time, the title card, its music, then the whole
   const work = helper[0]![3]!
   expect(work).toMatch(/^\/home\/t\/zilo\/spark-paintings\/\.spark-roll-\d{4}-\d\d-\d\d-\d{4}$/)
-  expect(helper[0]!.slice(4)).toEqual(['0', '24', '320', '180', '1', '12', '3']) // 24 frames laid down at 12 a second, then held 3 s
+  expect(helper[0]!.slice(4)).toEqual(['1', '24', '320', '180', '1', '12', '3']) // 24 frames laid down at 12 a second, then held 3 s; the first painting second in the clip
+  expect(helper[2]!.slice(4)).toEqual(['0', '12', '320', '180', '1', '12', '2.5']) // the title card: up over 12 frames, then held, first in the clip
   // the music: a score read from the paintings, played into a WAV, laid under the clip
   const score = JSON.parse(files.get(`${work}/score.json`)!)
   expect(score.key).toMatch(/^[A-G][b#]? (major|dorian|aeolian)$/)
-  expect(Math.abs(score.total - 9.4)).toBeLessThan(1e-6)
-  expect(score.events.filter((e: { v: string }) => e.v === 'pad')).toHaveLength(2) // a chord for each painting
-  expect(helper[2]!.slice(3)).toEqual([`${work}/score.json`, `${work}/music.wav`])
-  expect(helper[3]!.slice(4)).toEqual(['2', helper[3]![5]!, '5', '0.6', `${work}/music.wav`])
-  expect(helper[3]![5]).toMatch(/\/spark-paintings\/spark-roll-\d{4}-\d\d-\d\d-\d{4}-faithful\.mp4$/)
+  expect(Math.abs(score.total - (3.5 + 9.4 - 0.6))).toBeLessThan(1e-6) // the title's 3.5 s, then the paintings
+  expect(score.events.filter((e: { v: string }) => e.v === 'pad')).toHaveLength(3) // the opening's home chord, then a chord for each painting
+  expect(Math.abs(score.chords[0].t - 2.9)).toBeLessThan(1e-6) // the first painting's chord as it comes in
+  expect(helper[3]!.slice(3)).toEqual([`${work}/score.json`, `${work}/music.wav`])
+  expect(helper[4]!.slice(4)).toEqual(['3', helper[4]![5]!, '3.5,5,5', '0.6', `${work}/music.wav`]) // a length for each part
+  expect(helper[4]![5]).toMatch(/\/spark-paintings\/spark-roll-\d{4}-\d\d-\d\d-\d{4}-faithful\.mp4$/)
   // the frames: 24 a painting, the whole frame as base64 text
   const frames = [...files.keys()].filter((f) => f.startsWith(work + '/') && f.includes('.b64.'))
-  expect(frames).toHaveLength(48)
-  const last = files.get(`${work}/f000-023.b64.0`)!
+  expect(frames).toHaveLength(48 + 12)
+  // the title card's last frame: the eye and the title, bright on the ground
+  const card = Uint8Array.from(atob(files.get(`${work}/f000-011.b64.0`)!), (c) => c.charCodeAt(0))
+  let bright = 0, blue = 0
+  for (let i = 0; i < card.length; i += 3) { if (card[i]! + card[i + 1]! + card[i + 2]! > 600) bright++; if (card[i + 2]! > 200 && card[i]! < 120) blue++ }
+  expect(bright).toBeGreaterThan(100) // the title's letters and the white of the eye
+  expect(blue).toBeGreaterThan(50) // its lids
+  const last = files.get(`${work}/f001-023.b64.0`)!
   expect(last.length).toBe(Math.ceil((320 * 180 * 3) / 3) * 4)
   const rgb = Uint8Array.from(atob(last), (c) => c.charCodeAt(0))
   const at = (x: number, y: number) => [rgb[(y * 320 + x) * 3]!, rgb[(y * 320 + x) * 3 + 1]!, rgb[(y * 320 + x) * 3 + 2]!]
@@ -412,17 +420,17 @@ test('/spark convert roll: every painting laid down, held and crossfaded into a 
   const lit = (y0: number, y1: number) => { let n = 0; for (let y = y0; y < y1; y++) for (let x = 0; x < 320; x++) { const [r, g, b] = at(x, y); if (r + g + b > 200) n++ } return n }
   expect(lit(0, 120)).toBeGreaterThan(50) // the painting, laid down whole by the last frame
   expect(lit(150, 180)).toBeGreaterThan(20) // its title under it
-  const first = Uint8Array.from(atob(files.get(`${work}/f000-000.b64.0`)!), (c) => c.charCodeAt(0))
+  const first = Uint8Array.from(atob(files.get(`${work}/f001-000.b64.0`)!), (c) => c.charCodeAt(0))
   let differ = 0
   for (let i = 0; i < first.length; i++) if (first[i] !== rgb[i]) differ++
   expect(differ).toBeGreaterThan(1000) // laid down mark by mark: the first frame is not the last
-  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings \(faithful\) into \/home\/t\/zilo\/spark-paintings\/spark-roll-.*-faithful\.mp4 \(320x180 MP4, with its own music in [A-G][b#]? (major|dorian|aeolian), 9 s\), and the gallery page$/)
+  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings \(faithful\), opening with “zilo”, into \/home\/t\/zilo\/spark-paintings\/spark-roll-.*-faithful\.mp4 \(320x180 MP4, with its own music in [A-G][b#]? (major|dorian|aeolian), 9 s\), and the gallery page$/)
   expect(toasts.at(-1)).toBe('Spark: the roll is ready (2 paintings, faithful)')
   expect(files.get('/home/t/zilo/spark-paintings/index.html')).toMatch(/<video src="spark-roll-.*-faithful\.mp4" controls loop muted playsinline><\/video>/)
   await cmd($, 'paint off')
 })
 
-test('the roll in any way: asked which (each with its cost), layered laid down in depth, refined with the painter revisiting each first', async ($, on) => {
+test('the roll in any way: asked which (each with its cost), layered laid down in depth, refined with the painter revisiting each first', { timeoutMs: 30000 }, async ($, on) => {
   const { files, spawns, logs, asks } = engine(on)
   const answers: string[] = []
   const asked: Array<{ question: string; labels: string[] }> = []
@@ -442,8 +450,8 @@ test('the roll in any way: asked which (each with its cost), layered laid down i
   expect(asked[1]!.labels[3]).toMatch(/^Interpretive · about \d+(\.\d)?k tokens$/)
   await until(() => logs.length >= 1)
   let helper = spawns.filter((a) => a[0] === 'python3')
-  expect(helper[0]!.slice(4)).toEqual(['0', '16', '320', '180', '1', '8', '3']) // layered: 16 frames at 8 a second, smoothed the same
-  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings \(layered\) into .*-layered\.mp4/)
+  expect(helper[0]!.slice(4)).toEqual(['1', '16', '320', '180', '1', '8', '3']) // layered: 16 frames at 8 a second, smoothed the same
+  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings \(layered\), opening with “zilo”, into .*-layered\.mp4/)
   // typed: refined, the painter revisiting each painting first
   const n0 = asks.length
   expect(await say($, 'convert roll refined 320')).toMatch(/^rolling all 2 paintings into a clip, refined, .*2 painter calls, about \d+(\.\d)?k tokens/)
@@ -468,12 +476,12 @@ test('without ffmpeg the roll is a smaller animated PNG, and Spark says how to g
   await until(() => logs.length >= 1)
   const helper = spawns.filter((a) => a[0] === 'python3')
   expect(helper.map((a) => a[2])).toEqual(['apng'])
-  expect(helper[0]!.slice(4, 12)).toEqual(['1', '8', '640', '360', '1', '250', '2600', '3'])
-  expect(logs.at(-1)).toMatch(/^Spark: rolled 1 painting \(faithful\) into .*spark-roll-.*\.png \(640x360 animated PNG: ffmpeg was not found, so a smaller one that plays in any browser \(sudo apt install ffmpeg for the MP4\), 9 s\)/)
+  expect(helper[0]!.slice(4, 12)).toEqual(['2', '8', '640', '360', '1', '250', '2600', '3']) // the title card and the painting
+  expect(logs.at(-1)).toMatch(/^Spark: rolled 1 painting \(faithful\), opening with “zilo”, into .*spark-roll-.*\.png \(640x360 animated PNG: ffmpeg was not found, so a smaller one that plays in any browser \(sudo apt install ffmpeg for the MP4\), 9 s\)/)
   await cmd($, 'paint off')
 })
 
-test('the roll without music: the setting off makes a silent clip', { options: { rollMusic: false } }, async ($, on) => {
+test('the roll without music: the setting off makes a silent clip', { options: { rollMusic: false, rollTitle: false } }, async ($, on) => {
   const { spawns, logs } = engine(on)
   await cmd($, 'paint'); await settle()
   expect(await say($, 'convert roll faithful 320')).not.toMatch(/music/)
@@ -516,4 +524,32 @@ test('the music is read from the paintings: colour picks the key and mode, each 
   // the notes are of the key: every one in its scale
   const steps = { major: [0, 2, 4, 5, 7, 9, 11], dorian: [0, 2, 3, 5, 7, 9, 10], aeolian: [0, 2, 3, 5, 7, 8, 10] }[s.mode]!
   for (const e of s.events) for (const m of e.midi) expect(steps).toContain((((m - s.root) % 12) + 12) % 12)
+})
+
+test('the roll\'s title: what you call it, else the name you gave the conversation (/rename), else the project; the setting off: no card', async ($, on) => {
+  const { files, spawns, logs } = engine(on)
+  on('command.run', { command: 'rename' }, async () => ({ text: 'renamed' }))
+  await cmd($, 'paint'); await settle()
+  const cardText = async (args: string) => {
+    expect(await say($, args)).toMatch(/opening with a title card/)
+    await until(() => logs.length >= spawns.filter((a) => a[2] === 'join').length + 1)
+    return logs.at(-1)!
+  }
+  expect(await cardText('convert roll faithful 320 called Night Build')).toMatch(/opening with “Night Build”/) // as you wrote it
+  await $.command.run(loose({ command: 'rename', args: 'Zilo world engine', origin: { kind: 'person' }, presentation: {} }))
+  expect(await cardText('convert roll faithful 320')).toMatch(/opening with “Zilo world engine”/)
+  expect(files.size).toBeGreaterThan(0)
+  await cmd($, 'paint off')
+})
+
+test('without a title card the roll starts with its first painting', { options: { rollTitle: false } }, async ($, on) => {
+  const { spawns, logs } = engine(on)
+  await cmd($, 'paint'); await settle()
+  expect(await say($, 'convert roll faithful 320')).not.toMatch(/title card/)
+  await until(() => logs.length >= 1)
+  const helper = spawns.filter((a) => a[0] === 'python3')
+  expect(helper.map((a) => a[2])).toEqual(['segment', 'music', 'join'])
+  expect(helper[0]!.slice(4, 5)).toEqual(['0'])
+  expect(helper[2]!.slice(4)).toEqual(['1', helper[2]![5]!, '5', '0.6', helper[2]![8]!])
+  await cmd($, 'paint off')
 })
