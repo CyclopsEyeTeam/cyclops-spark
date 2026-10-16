@@ -34,14 +34,14 @@ import { buildScene, createPresence, laneFor, PAINT_TOWARD, PALETTE_NAMES } from
 import { base64, createRaster, toHalfBlocks, toQuadrants, toRGB8, toRGBA8 } from './render-raster.js'
 import { eyeColumns, eyeRaster } from './eye.js'
 import { layeredFloor, layeredRaster, layeredScenes, layeredStepper } from './layered.js'
-import { rollScore } from './music.js'
+import { rollScore, sessionColour } from './music.js'
 import { buildTrace, replayAt } from './trace.js'
 import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
 import { KEEPER, PRISM } from './link-marks.js'
 import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
 import { motion, motionFor } from './motion.js'
-import { canvasFor, captionLines, captionStrip, galleryHTML, HD_MARKS, markFloor, revisitRequest, rollLayout, rollSize, sceneSVG, SIZES, slug, withCaption } from './convert.js'
+import { canvasFor, captionLines, captionStrip, galleryHTML, titleCard, HD_MARKS, markFloor, revisitRequest, rollLayout, rollSize, sceneSVG, SIZES, slug, withCaption } from './convert.js'
 
 const PANE = 'cyclops-spark'
 const T0 = Date.now()
@@ -63,6 +63,8 @@ let kitty = false
 let welcomeOn = true
 let welcome = false
 let welcomeArt: { key: string; cells: string } | null = null
+let rollTitleOn = true // the roll opens with a title card: the rollTitle setting turns it off
+let sessionName = '' // the name the conversation was given with /rename, the roll's title when there is one
 let rollMusic = true // the roll's own music, read from its paintings (hooks/music.js); the rollMusic setting turns it off
 let hd = true // HD cells: four pixels to a cell (quadrant blocks) instead of two, in any terminal; /spark hd off returns to half blocks
 // /spark focus. Presentation only: it never touches the presence (no event, no restart). Spark gets a large pane beside the
@@ -547,7 +549,11 @@ async function askWay($: EngineInterface, question: string, list: Array<Painting
   return k < 0 ? null : WAYS[k]!
 }
 // /spark convert [faithful | layered | refined | interpretive | every | all [way] | roll [way]] [hd | 4k | width]
-async function convertPainting($: EngineInterface, words: string[]): Promise<string> {
+async function convertPainting($: EngineInterface, words: string[], raw: string[] = words): Promise<string> {
+  // `called <a title>`: the roll's title, as you write it
+  let called = ''
+  const at = words.indexOf('called')
+  if (at >= 0) { called = raw.slice(at + 1).join(' ').replace(/^["']|["']$/g, '').trim().slice(0, 60); words = words.slice(0, at) }
   let [mode = '', next = '', after = ''] = words
   if (mode === 'three') mode = 'every' // the old word
   let way: Way | '' = ''
@@ -581,7 +587,7 @@ async function convertPainting($: EngineInterface, words: string[]): Promise<str
     if (!w) return 'convert: nothing chosen'
     way = w
   }
-  if (mode === 'roll') return rollPaintings($, way as Way, sizeWord)
+  if (mode === 'roll') return rollPaintings($, way as Way, sizeWord, called)
   const width = stillWidth(sizeWord)
   if (!width) return 'convert size: hd (1920 wide) or 4k (3840)'
   if (convertBusy) return busyText()
@@ -691,7 +697,9 @@ async function runHelper($: EngineInterface, args: string[]): Promise<{ ok: bool
     return { ok: ((await proc.result) as { code?: number } | null)?.code === 0, out, err }
   } catch (e) { return { ok: false, out, err: err || String((e as Error)?.message || e) } }
 }
-async function rollPaintings($: EngineInterface, way: Way, sizeWord: string): Promise<string> {
+// The roll's title: the one you gave it (`called ...`), else the conversation's name (/rename), else the project's folder
+const TITLE = { fadeFrames: 12, fps: 12, hold: 2.5 } // the card comes up over a second, then holds: 3.5 s, crossfaded into the first painting
+async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, called = ''): Promise<string> {
   if (!story.length) return 'no paintings yet this session: /spark paint makes one'
   if (convertBusy) return busyText()
   const asked = rollSize(sizeWord)
@@ -703,6 +711,9 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string): Pr
   const frames = video ? Math.round(ROLL.reveal * fps) : 8
   const list = story.slice(), n = list.length
   const root = await $.session.root().catch(() => '')
+  const lead = rollTitleOn ? 1 : 0 // segments before the first painting: the title card
+  const title = called || sessionName || root.replace(/\/+$/, '').split('/').pop() || 'Spark'
+  const titleSecs = video ? TITLE.fadeFrames / TITLE.fps + TITLE.hold : 0
   const folder = convertFolder.startsWith('/') || convertFolder.startsWith('~') ? convertFolder : (root ? root + '/' : '') + convertFolder
   const d = new Date(), pad = (v: number) => String(v).padStart(2, '0')
   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
@@ -725,6 +736,7 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string): Pr
         let p: Painting & { shape: string } = list[i]!
         if (revisits(way)) { const r = await revisitPainting($, p, way as 'refined' | 'interpretive'); p = r.p; if (!r.ok && !notes.length) notes.push(r.note.replace(/^the painter/, 'for some paintings the painter')) }
         rolled.push(p)
+        const seq = i + lead // its place in the clip, after the title card
         const lines = captionLines(p.title, `${i + 1} of ${n}`, when)
         const L = rollLayout(p.shape, W, H, lines.length)
         // the frame: the ground, the caption strip at the bottom (the same for all this painting's frames), the painting
@@ -759,10 +771,10 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string): Pr
           const rgb = toRGB8({ W: L.pw, H: L.ph, px: shown.px } as never, g)
           for (let y = 0; y < L.ph; y++) frame.set(rgb.subarray(y * L.pw * 3, (y + 1) * L.pw * 3), ((L.oy + y) * W + L.ox) * 3)
           const b64 = base64(frame)
-          for (let k = 0; k < parts; k++) await $.fs.write(`${work}/f${String(i).padStart(3, '0')}-${String(f - 1).padStart(3, '0')}.b64.${k}`, b64.slice(k * PART, (k + 1) * PART))
+          for (let k = 0; k < parts; k++) await $.fs.write(`${work}/f${String(seq).padStart(3, '0')}-${String(f - 1).padStart(3, '0')}.b64.${k}`, b64.slice(k * PART, (k + 1) * PART))
         }
         if (video) { // this painting's part of the clip, now, so its frames are gone before the next is drawn
-          const seg = await runHelper($, ['segment', work, String(i), String(frames), String(W), String(H), String(parts), String(fps), String(ROLL.hold)])
+          const seg = await runHelper($, ['segment', work, String(seq), String(frames), String(W), String(H), String(parts), String(fps), String(ROLL.hold)])
           if (!seg.ok) return 'no roll: ' + (/No such file|not found|ENOENT|code 127/i.test(seg.err) && !seg.out ? 'python3 was not found (the roll needs it, with ffmpeg)' : seg.err.trim().slice(-160) || 'the helper could not make it')
         }
         if (convertProgress) convertProgress.done++
@@ -771,22 +783,41 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string): Pr
       const out = `${folder}/${name}`
       // the music: read from the paintings as rolled, played by the helper into a WAV the join lays under the clip
       let music = '', key = ''
+      const score = rollScore(rolled, { reveal: ROLL.reveal, hold: ROLL.hold, fade: ROLL.fade, lead: lead && video ? titleSecs - ROLL.fade : 0 })
+      // the title card, made last so it can name the music's key, but first in the clip
+      if (lead) {
+        const sub = `Spark · ${when} · ${plural(n)}${video && rollMusic ? ` · music in ${score.key}` : ''}`
+        const glow = sessionColour(rolled)
+        const tf = video ? TITLE.fadeFrames : frames
+        const full = titleCard({ W, H, title, sub, ground: g, light, glow }) // drawn once; each frame brings it up out of the ground
+        const card = new Uint8Array(full.length)
+        for (let f = 1; f <= tf; f++) {
+          await pause()
+          const a = Math.min(1, f / tf)
+          for (let k = 0; k < full.length; k += 3) for (let c = 0; c < 3; c++) card[k + c] = Math.round(full[k + c]! * a + gb[c]! * (1 - a))
+          const b64 = base64(card)
+          for (let k = 0; k < parts; k++) await $.fs.write(`${work}/f000-${String(f - 1).padStart(3, '0')}.b64.${k}`, b64.slice(k * PART, (k + 1) * PART))
+        }
+        if (video) {
+          const seg = await runHelper($, ['segment', work, '0', String(TITLE.fadeFrames), String(W), String(H), String(parts), String(TITLE.fps), String(TITLE.hold)])
+          if (!seg.ok) return 'no roll: ' + (seg.err.trim().slice(-160) || 'the helper could not make the title')
+        }
+      }
       if (video && rollMusic) {
-        const score = rollScore(rolled, { reveal: ROLL.reveal, hold: ROLL.hold, fade: ROLL.fade })
         await $.fs.write(`${work}/score.json`, JSON.stringify(score))
         const played = await runHelper($, ['music', `${work}/score.json`, `${work}/music.wav`])
         if (played.ok) { music = `${work}/music.wav`; key = score.key }
         else notes.push('no music: ' + (played.err.trim().slice(-120) || 'the helper could not play it'))
       }
       const made = video
-        ? await runHelper($, ['join', work, String(n), out, String(ROLL.reveal + ROLL.hold), String(ROLL.fade), ...(music ? [music] : [])])
-        : await runHelper($, ['apng', work, String(n), String(frames), String(W), String(H), String(parts), '250', '2600', '3', out])
+        ? await runHelper($, ['join', work, String(n + lead), out, [...(lead ? [titleSecs] : []), ...list.map(() => ROLL.reveal + ROLL.hold)].join(','), String(ROLL.fade), ...(music ? [music] : [])])
+        : await runHelper($, ['apng', work, String(n + lead), String(frames), String(W), String(H), String(parts), '250', '2600', '3', out])
       if (!made.ok) return 'no roll: ' + (/No such file|not found|ENOENT/i.test(made.err) && !made.out ? 'python3 was not found (the roll needs it)' : made.err.trim().slice(-160) || 'the helper could not make it')
       const secs = Number(made.out.trim().split(/\s+/)[2]) || 0
       converted.push({ file: name, title: `the roll · ${plural(n)}`, when: d.toTimeString().slice(0, 5), mode: `roll, ${way}${video ? '' : ', animated PNG'}` })
       await $.fs.write(`${folder}/index.html`, galleryHTML(converted))
       const long = secs >= 60 ? `${Math.floor(secs / 60)} min ${Math.round(secs % 60)} s` : `${Math.round(secs)} s`
-      return `rolled ${plural(n)} (${way}) into ${out} (${video ? `${W}x${H} MP4${key ? `, with its own music in ${key}` : ''}` : `${W}x${H} animated PNG: ffmpeg was not found, so a smaller one that plays in any browser (sudo apt install ffmpeg for the MP4)`}, ${long}), and the gallery page` + (notes.length ? '. ' + notes[0] : '')
+      return `rolled ${plural(n)} (${way})${lead ? `, opening with “${title}”,` : ''} into ${out} (${video ? `${W}x${H} MP4${key ? `, with its own music in ${key}` : ''}` : `${W}x${H} animated PNG: ffmpeg was not found, so a smaller one that plays in any browser (sudo apt install ffmpeg for the MP4)`}, ${long}), and the gallery page` + (notes.length ? '. ' + notes[0] : '')
     } catch (err) {
       return 'no roll: ' + String((err as Error)?.message || err).slice(0, 120)
     } finally {
@@ -794,13 +825,13 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string): Pr
       convertProgress = null
     }
   }
-  const length = n * (ROLL.reveal + ROLL.hold) - (n - 1) * ROLL.fade
+  const length = n * (ROLL.reveal + ROLL.hold) - (n - 1) * ROLL.fade + (lead && video ? titleSecs - ROLL.fade : 0)
   void quietly(async () => {
     const text = await run()
     await quietly(() => $.ui.log('Spark: ' + text))
     await quietly(() => $.ui.toast(text.startsWith('rolled') ? `Spark: the roll is ready (${plural(n)}, ${way})` : 'Spark: ' + text))
   })
-  return `rolling all ${plural(n)} into a clip, ${way}, ${video ? `${W}x${H} MP4, about ${Math.round(length)} s long` : `${W}x${H} animated PNG (ffmpeg was not found: sudo apt install ffmpeg for an MP4)`}, into ${folder}: each laid down, held with its title, then crossfaded into the next${video && rollMusic ? ', to music of its own, read from the paintings' : ''}. ${calls ? `${calls} painter ${calls === 1 ? 'call' : 'calls'}, about ${kilo(est)} tokens` : 'No tokens'}. It goes on beside the work; Spark says when it is done (/spark state shows how far)`
+  return `rolling all ${plural(n)} into a clip, ${way}, ${video ? `${W}x${H} MP4, about ${Math.round(length)} s long` : `${W}x${H} animated PNG (ffmpeg was not found: sudo apt install ffmpeg for an MP4)`}, into ${folder}: ${lead ? `opening with a title card, “${title}”, then ` : ''}each laid down, held with its title, then crossfaded into the next${video && rollMusic ? ', to music of its own, read from the paintings' : ''}. ${calls ? `${calls} painter ${calls === 1 ? 'call' : 'calls'}, about ${kilo(est)} tokens` : 'No tokens'}. It goes on beside the work; Spark says when it is done (/spark state shows how far)`
 }
 
 // A live painting, if the turn has run long enough since the last one and this is a moment (or she has waited enough)
@@ -1143,6 +1174,7 @@ export const register: Register = (on, options) => {
   if (typeof o.calm === 'boolean') calm = o.calm
   if (typeof o.hd === 'boolean') hd = o.hd
   if (typeof o.rollMusic === 'boolean') rollMusic = o.rollMusic
+  if (typeof o.rollTitle === 'boolean') rollTitleOn = o.rollTitle
   if (typeof o.welcome === 'boolean') welcomeOn = o.welcome
   if (typeof o.statusLine === 'boolean') statusOn = o.statusLine
   if (typeof o.murmur === 'boolean') murmurOn = o.murmur
@@ -1287,6 +1319,13 @@ export const register: Register = (on, options) => {
   // Claude Code's own /copy takes the last response too
   // Claude Code's own /copy takes the last response too: counted only when it says it copied (a picker left, or nothing
   // to copy, is not a copy)
+  // the name you give the conversation with /rename: the roll's title (read only from the command you typed)
+  on('command.run', { command: 'rename' }, async ($, e, next) => {
+    const res = await next(e)
+    const name = String((e as { args?: string }).args ?? '').trim()
+    if (name) sessionName = name.slice(0, 60)
+    return res
+  })
   on('command.run', { command: 'copy' }, async ($, e, next) => {
     const res = await next(e)
     if (typeof res?.text === 'string' && /copied to clipboard/i.test(res.text)) await quietly(() => copied($, 'copy'))
@@ -1378,7 +1417,7 @@ export const register: Register = (on, options) => {
         text = 'link ' + (linkOn ? linkStatus : 'off') + (linkOn && linkView ? ' · ' + linkLine(linkView) : '') + (linkWanted !== null ? ' (SPARK_LINK overrides the setting)' : '')
       } else text = 'link takes: on | off | status'
     }
-    else if (word === 'convert') text = await convertPainting($, e.args.trim().toLowerCase().split(/\s+/).slice(1))
+    else if (word === 'convert') text = await convertPainting($, e.args.trim().toLowerCase().split(/\s+/).slice(1), e.args.trim().split(/\s+/).slice(1))
     else if (word === 'story') { // the session's paintings, told again in order, once through: nothing is asked of any model
       const page = () => storyOn ? `page ${storyIndex() + 1} of ${story.length}` : ''
       if (storyOn && (arg === 'pause' || arg === 'hold')) { storyPause(true); text = `story held on ${page()}: /spark convert makes this one large; /spark story play goes on` }
