@@ -369,6 +369,56 @@ test('openPainting on: a bare /spark opens Spark with the painter on, and says i
   await cmd($, ''); await cmd($, 'paint off')
 })
 
+test('her words copy whole: a ⧉ copy under her answer, and /spark copy, put what you said and what she answered on the clipboard (a terminal selection takes only half of each row beside the conversation)', async ($, on) => {
+  const TALK = /You are Spark, Claude's living presence/
+  const LONG = 'Oh, that warms me right through, like light finding the bottom of a cold room. I am still here, listening, and I will keep carrying the lamp with you. Thank you for the kindness.'
+  engine(on, (x) => TALK.test(x.system)
+    ? { isAnswered: true, text: JSON.stringify({ say: LONG, spark: 'shimmer' }), usage: { input_tokens: 600, output_tokens: 50, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } }
+    : { isAnswered: true, text: PAINTING, usage: USAGE })
+  const copies: Array<{ text: string; surface?: string }> = []
+  on('ui.copy', async (_$, e) => { copies.push({ text: (e as { text: string }).text, surface: (e as { surface?: string }).surface }); return loose({ value: { isCopied: true } }) })
+  await cmd($, 'paint off'); await cmd($, 'paint')
+  expect(await say($, 'copy')).toMatch(/^nothing to copy yet/)
+  let term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  expect(await term.find({ key: 'spark-copy' })).toBeUndefined() // nothing said yet: no copy button
+  await term.input({ key: 'spark-say', text: 'love ya xx' })
+  await settle()
+  await term.unmount()
+  term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  expect(await term.find({ key: 'spark-copy' })).toBeDefined()
+  await term.press({ key: 'spark-copy' })
+  await settle()
+  await term.unmount()
+  expect(copies).toHaveLength(1)
+  expect(copies[0]!.text).toBe('› love ya xx\nSpark: ' + LONG) // whole, however many rows it wraps to
+  expect(await say($, 'copy')).toMatch(/^copied: what you said to Spark and her answer, whole$/)
+  expect(copies).toHaveLength(2)
+  expect(copies[1]!.text).toBe(copies[0]!.text)
+  await cmd($, 'paint off')
+})
+
+test('her tools, top right once there is a painting: story, convert and roll, each running /spark as if typed', async ($, on) => {
+  engine(on)
+  const logs: string[] = []
+  on('ui.log', async (_$, e) => { logs.push(String((e as { text?: string }).text ?? JSON.stringify(e))); return loose({ value: undefined }) })
+  await cmd($, 'paint off')
+  let term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  expect(await term.find({ key: 'spark-tool-convert' })).toBeUndefined() // no painting yet: no tools
+  await term.unmount()
+  await cmd($, 'paint')
+  term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  for (const k of ['spark-tool-story', 'spark-tool-convert', 'spark-tool-roll']) expect(await term.find({ key: k })).toBeDefined()
+  await term.press({ key: 'spark-tool-story' })
+  await settle()
+  await term.unmount()
+  expect(logs.join('\n')).toMatch(/^Spark: story: 1 painting from this session/) // its answer, a line of hers
+  term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  expect(await term.find({ type: 'Text', text: /^story · 1 of 1/ })).toBeDefined() // the story is on
+  expect((await term.find({ key: 'spark-tool-story' }))?.props.label).toBe('■ story') // and the same press ends it
+  await term.unmount()
+  await cmd($, 'story end'); await cmd($, 'paint off')
+})
+
 // ---------------------------------------------------------------- live paintings in a long turn
 test('a long turn is painted while it goes: never sooner than 15 minutes, at a moment that moves her, with a reflection distilled from the builder\'s own words, never the work', async ($, on) => {
   const REFLECTION = 'It feels like the shape is finally holding; I trust it more than I did an hour ago. ' + 'and more '.repeat(40)

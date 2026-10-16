@@ -111,6 +111,9 @@ function* bloomOver(acc, W, H, short, bloom, tmp) {
   }
 }
 
+// `res`: how many of this canvas's pixels make one of the terminal's (truest: the canvas width over the columns her
+// painting is drawn in), so each mark keeps the weight a terminal cell gives it: a speck at least a cell, a line at
+// least about half of one, as you see them beside the conversation
 // The picture laid down a little at a time (for the roll): frame(q) is the picture with q of its marks laid (the one in
 // progress partly), in depth. The layers already finished are kept composed, and the one being laid keeps its finished
 // marks on a raster of its own, so a frame costs one layer's softening, its shadow and the bloom, not the whole picture.
@@ -118,7 +121,7 @@ function* bloomOver(acc, W, H, short, bloom, tmp) {
 // reused frame after frame (a picture's worth each: the finished layers, the frame, the layer in progress, scratch), so
 // a long roll asks no more memory than its first frame; the whole picture (q at the last mark) is composed straight
 // onto the finished layers, with no frame buffer at all
-export function layeredStepper(p, W, H, { theme = 'dark' } = {}) {
+export function layeredStepper(p, W, H, { theme = 'dark', res = 1 } = {}) {
   const light = theme === 'light', floor = layeredFloor(W, H), short = Math.min(W, H)
   const layers = layersOf(p), L = layers.length
   const starts = []
@@ -136,7 +139,7 @@ export function layeredStepper(p, W, H, { theme = 'dark' } = {}) {
   const cur = createRaster(W, H)
   let laid = 0 // the marks of layer `done` already on `cur`
   const lay = async (upTo, pause) => {
-    if (upTo > laid) { await cur.drawAsync(paintingScene({ ...p, marks: layers[done].marks.slice(laid, upTo) }, W, H, { reveal: 1, theme }), theme, { floor, keep: true }, pause); laid = upTo }
+    if (upTo > laid) { await cur.drawAsync(paintingScene({ ...p, marks: layers[done].marks.slice(laid, upTo) }, W, H, { reveal: 1, theme }), theme, { floor, res, keep: true }, pause); laid = upTo }
   }
   const soften = async (px, li, pause) => { const d = depthOf(li); if (d > 0) await drainAsync(blurring(px, W, H, short * 0.006 * d, 4, tmp), pause) }
   return {
@@ -160,7 +163,7 @@ export function layeredStepper(p, W, H, { theme = 'dark' } = {}) {
       if (part > 0.001 && upTo < layers[li].marks.length) {
         shot = shot || createRaster(W, H)
         shot.px.set(cur.px)
-        await shot.drawAsync(paintingScene({ ...p, marks: [layers[li].marks[upTo]] }, W, H, { reveal: part, theme }), theme, { floor, keep: true }, pause)
+        await shot.drawAsync(paintingScene({ ...p, marks: [layers[li].marks[upTo]] }, W, H, { reveal: part, theme }), theme, { floor, res, keep: true }, pause)
         layer = shot.px
       } else work.set(cur.px)
       await pause()
@@ -178,8 +181,8 @@ export function layeredStepper(p, W, H, { theme = 'dark' } = {}) {
 
 // The whole picture, W x H, as a raster's pixels ({ W, H, px }, premultiplied RGBA, light added on a dark ground as the
 // terminal does, painted over on a light one)
-export async function layeredRaster(p, W, H, { theme = 'dark', pause = async () => {} } = {}) {
-  return { W, H, px: await layeredStepper(p, W, H, { theme }).frame(p.marks.length, pause) }
+export async function layeredRaster(p, W, H, { theme = 'dark', pause = async () => {}, res = 1 } = {}) {
+  return { W, H, px: await layeredStepper(p, W, H, { theme, res }).frame(p.marks.length, pause) }
 }
 
 // The scenes of its layers, back to front, each with its depth (1 the farthest), for sceneSVG's `layers`

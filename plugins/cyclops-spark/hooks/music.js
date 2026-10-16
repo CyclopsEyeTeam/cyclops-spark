@@ -45,14 +45,38 @@ export function colourOf(p) {
   return { hue: ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360, sat: s / w, light: l / w, warm: warm / Math.max(1e-6, s) }
 }
 
+// BREATHING ROOM. The roll does not hold every painting for the same time: the music sets each one's hold, in beats of
+// its own steady pulse (84 a minute). A painting with more in it, or one that turns the colour of the session somewhere
+// new, is given longer to be looked at (up to eight beats); a quiet one that follows on from the last, less (four, a
+// bar); and the last painting is held a bar longer, the music settling home under it. The chord changes with each
+// painting, so the music breathes where the pictures do.
+export const BEAT = 60 / 84
+export function rollHolds(list) {
+  const colours = list.map(colourOf)
+  return list.map((p, i) => {
+    const busy = Math.min(1, p.marks.length / 60) // how much is in it
+    let turn = 0.5 // how far its colour moves from the one before (the first: halfway)
+    if (i > 0) {
+      const a = colours[i - 1], b = colours[i]
+      const dh = Math.abs(((a.hue - b.hue + 540) % 360) - 180) / 180 * Math.min(1, (a.sat + b.sat) * 2) // hue matters as far as either has colour
+      turn = Math.min(1, dh + Math.abs(a.light - b.light) * 2.5)
+    }
+    const beats = 4 + Math.round(Math.min(1, 0.5 * busy + 0.5 * turn) * 4) + (i === list.length - 1 ? 4 : 0)
+    return Math.round(beats * BEAT * 1000) / 1000
+  })
+}
+
 // The score for the roll: the timing of the roll (each painting starting at i * (reveal + hold - fade), its marks laid
 // down over the first `reveal` seconds), the key, and every sound with its time, pitch (MIDI), length, strength and place
 // `lead`: seconds before the first painting (the title card), sounded as the opening: the key's home chord swelling in,
 // and a few bells rising through it
-export function rollScore(list, { reveal = 2, hold = 3, fade = 0.6, maxNotes = 14, lead = 0 } = {}) {
-  const span = reveal + hold
-  const step = span - fade
-  const total = lead + list.length * span - (list.length - 1) * fade
+// `holds`: each painting's own hold (rollHolds), in place of the one `hold` for all
+export function rollScore(list, { reveal = 2, hold = 3, fade = 0.6, maxNotes = 14, lead = 0, holds = null } = {}) {
+  const spanOf = (i) => reveal + (holds && holds[i] != null ? holds[i] : hold)
+  const starts = []
+  let at0 = lead
+  for (let i = 0; i < list.length; i++) { starts.push(at0); at0 += spanOf(i) - fade }
+  const total = list.length ? starts[list.length - 1] + spanOf(list.length - 1) : lead
   const colours = list.map(colourOf)
   // the session's colour: the key
   let x = 0, y = 0, light = 0, warm = 0
@@ -75,10 +99,11 @@ export function rollScore(list, { reveal = 2, hold = 3, fade = 0.6, maxNotes = 1
   let last = -1
   list.forEach((p, i) => {
     const c = colours[i]
-    const t0 = lead + i * step
+    const t0 = starts[i], span = spanOf(i)
     const lift = Math.max(0, Math.min(0.999, 0.5 + (c.light - light) * 2.2 + (c.warm - warm) * 0.6))
     let degree = ladder[Math.floor(lift * ladder.length)]
     if (degree === last && list.length > 1) degree = ladder[(Math.floor(lift * ladder.length) + 2) % ladder.length] // a new painting, a new chord
+    if (holds && i === list.length - 1 && list.length > 1) degree = 0 // the last painting: home, the music settling under it
     last = degree
     const chord = [0, 2, 4, 6].map((k) => tone(degree + k, 3)) // a seventh chord about middle C
     chords.push({ t: t0, degree, chord })

@@ -34,7 +34,7 @@ import { buildScene, createPresence, laneFor, PAINT_TOWARD, PALETTE_NAMES } from
 import { base64, base64Async, createRaster, toHalfBlocks, toQuadrants, toRGB8Async, toRGBA8 } from './render-raster.js'
 import { eyeColumns, eyeRaster } from './eye.js'
 import { layeredFloor, layeredRaster, layeredScenes, layeredStepper } from './layered.js'
-import { rollScore, sessionColour } from './music.js'
+import { rollHolds, rollScore, sessionColour } from './music.js'
 import { buildTrace, replayAt } from './trace.js'
 import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
 import { KEEPER, PRISM } from './link-marks.js'
@@ -176,6 +176,10 @@ type TurnEnd = { reason: string; durationMs: number }
 let lastTurn: { facts: TurnFacts | null; end: TurnEnd; answer: string } | null = null
 type PaintSite = { columns: number; rows: number; image: boolean; hd: boolean; raster: ReturnType<typeof createRaster>; key: string; frame: { cells?: string; rgba?: string; width?: number; height?: number } }
 let paintSite: PaintSite | null = null
+// how many columns wide her painting was last drawn in the terminal (its size as you see it): truest gives each mark the
+// weight one of those cells gives it, so a speck or a line holds the same share of the picture, large as small
+let paintCols = 0
+const cellRes = (W: number) => W / Math.max(24, paintCols || 44)
 const REVEAL_S = 2.4          // a new painting is laid down mark by mark over this long
 const AUTO_MIN_MS = 3000      // turns shorter than this are not painted on their own (/spark paint still paints them)
 const AUTO_GAP_S = 20         // at most one painting on its own every 20 s
@@ -195,6 +199,10 @@ let reflection = ''     // the builder's last reflection, as sent to the painter
 // TALK: what you last said to Spark from her pane, and her answer (in memory only; /clear and painting off let it go)
 let talk: { said: string; reply: string; busy: boolean } | null = null
 let sayTo: ((words: string) => void) | null = null // the pane's Input sends here
+let copyTo: ((text: string, surface?: string) => void) | null = null // the pane's copy button puts her words on the clipboard
+// what you said to her and what she answered, whole, as the copy button and /spark copy put them on the clipboard (a
+// terminal's own selection copies screen rows, so with her pane beside the conversation it takes half of each row)
+const talkText = () => talk && !talk.busy && talk.reply ? `› ${talk.said}\nSpark: ${talk.reply}` : ''
 let spoken = ''         // the last SPOKEN_CHARS the builder said aloud this turn (text, never thinking), in memory only
 const MODEL_ID = /^[\w.:\-\[\]\/@]{1,80}$/
 
@@ -330,6 +338,14 @@ async function askOnTheSide($: EngineInterface, question: string, id: string, vi
   return { ok, text }
 }
 // you took the reply. Heard in full only: it answers something you just did
+// her words on the clipboard of the surface asked from, and a word to say so
+async function copyWords($: EngineInterface, text: string, surface?: string): Promise<string> {
+  const r = await $.ui.copy({ text, ...(surface ? { surface } : {}) } as never) as { isCopied: boolean; reason?: string }
+  const said = r.isCopied ? 'copied: what you said to Spark and her answer, whole' : `could not copy (${r.reason || 'no clipboard'})`
+  await quietly(() => $.ui.toast('Spark: ' + said))
+  return said
+}
+
 async function copied($: EngineInterface, via: string, id?: string) {
   emit({ type: 'reply.copied', via, ...(id ? { id } : {}) })
   await cue($, 'copied', 'full')
@@ -505,16 +521,17 @@ async function talkTo($: EngineInterface, words: string): Promise<void> {
 // /spark convert: the painting made large (see hooks/convert.js and hooks/layered.js). The one time Spark writes files,
 // and only when you ask. Two menus, every choice with what it costs beside it. The first asks what: this painting, this
 // painting every way, all the session's paintings, or the roll (all of them as a clip); the second asks which way:
-// Faithful (the same marks, large), Layered (the same marks in depth, as the terminal shows them), Refined or
-// Interpretive (the painter revisits each: one call a painting).
-type Way = 'faithful' | 'layered' | 'refined' | 'interpretive'
-const WAYS: Way[] = ['faithful', 'layered', 'refined', 'interpretive']
+// Truest (the painting as Spark sees it in the terminal: each mark with the weight a terminal cell gives it, in depth),
+// Faithful (the same marks, large and fine), Refined or Interpretive (the painter revisits each: one call a painting).
+// Truest was Layered; the old word still works.
+type Way = 'truest' | 'faithful' | 'refined' | 'interpretive'
+const WAYS: Way[] = ['truest', 'faithful', 'refined', 'interpretive']
 const revisits = (w: Way) => w === 'refined' || w === 'interpretive'
 const Cap = (w: string) => w[0]!.toUpperCase() + w.slice(1)
 type Job = { source: Painting & { shape: string }; way: Way }
 // What the painter revisiting a painting has used this session, so the next estimate is from real calls
 const revisitSeen = { calls: 0, tokens: 0 }
-// About what these conversions will use: faithful and layered nothing; refined or interpretive one painter call each,
+// About what these conversions will use: truest and faithful nothing; refined or interpretive one painter call each,
 // at what such calls have used this session when there have been some, otherwise the request's own length (about 3.5
 // characters a token) and an answer of about 17 tokens a mark, for a little more than the painting's own marks
 function jobsEstimate(jobs: Job[]): number {
@@ -551,21 +568,22 @@ async function askWay($: EngineInterface, question: string, list: Array<Painting
   const k = labels.indexOf(choice)
   return k < 0 ? null : WAYS[k]!
 }
-// /spark convert [faithful | layered | refined | interpretive | every | all [way] | roll [way]] [hd | 4k | width]
+// /spark convert [truest | faithful | refined | interpretive | every | all [way] | roll [way]] [hd | 4k | width]
 async function convertPainting($: EngineInterface, words: string[], raw: string[] = words): Promise<string> {
   // `called <a title>`: the roll's title, as you write it
   let called = ''
   const at = words.indexOf('called')
   if (at >= 0) { called = raw.slice(at + 1).join(' ').replace(/^["']|["']$/g, '').trim().slice(0, 60); words = words.slice(0, at) }
+  words = words.map((w) => w === 'layered' ? 'truest' : w) // the old word for truest
   let [mode = '', next = '', after = ''] = words
   if (mode === 'three') mode = 'every' // the old word
   let way: Way | '' = ''
   let sizeWord = next
   if (mode && isSize(mode) && !(WAYS as string[]).includes(mode)) { sizeWord = mode; mode = '' } // /spark convert 4k: pick, at that size
-  if ((mode === 'all' || mode === 'roll') && (WAYS as string[]).includes(next)) { way = next as Way; sizeWord = after } // all refined 4k, roll layered hd
+  if ((mode === 'all' || mode === 'roll') && (WAYS as string[]).includes(next)) { way = next as Way; sizeWord = after } // all refined 4k, roll truest hd
   if ((WAYS as string[]).includes(mode)) { way = mode as Way; mode = 'one' }
   const known = ['', 'one', 'every', 'all', 'roll']
-  if (!known.includes(mode)) return 'convert takes: faithful | layered | refined | interpretive (this painting that way) | every (this painting every way) | all [way] (every painting of the session) | roll [way] (every painting as a clip), then a size: hd (1920 wide, the default) or 4k, for the roll hd (1080p). On its own, /spark convert lets you click'
+  if (!known.includes(mode)) return 'convert takes: truest | faithful | refined | interpretive (this painting that way) | every (this painting every way) | all [way] (every painting of the session) | roll [way] (every painting as a clip), then a size: hd (1920 wide, the default) or 4k, for the roll hd (1080p). On its own, /spark convert lets you click'
   const stillWidth = (w: string) => w === '' ? SIZES.hd! : SIZES[w] ?? (/^\d{3,4}$/.test(w) ? Math.max(256, Math.min(4096, Number(w))) : 0)
   if (mode === 'roll' && !rollSize(sizeWord)) return 'roll size: hd (1080p, 1920 wide), or a width (16:9); 720p (1280 wide) when nothing is said'
   if (mode !== 'roll' && !stillWidth(sizeWord)) return 'convert size: hd (1920 wide) or 4k (3840)'
@@ -618,9 +636,9 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
         const when = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
         const caption = convertCaption ? captionLines(p.title, tag, when) : null
         let px: { W: number; H: number; px: Float32Array }
-        if (tag === 'layered') { // in depth: its layers, the far ones softened, shadows, the bloom
-          await $.fs.write(`${folder}/${name}.svg`, sceneSVG([], W, H, { theme, title: p.title, caption, floor: layeredFloor(W, H), layers: layeredScenes(p, W, H, { theme }) }))
-          px = await layeredRaster(p, W, H, { theme, pause })
+        if (tag === 'truest') { // as she sees it: the terminal's weight for each mark, in depth (its layers, the far ones softened, shadows, the bloom)
+          await $.fs.write(`${folder}/${name}.svg`, sceneSVG([], W, H, { theme, title: p.title, caption, floor: Math.max(layeredFloor(W, H), 0.6 * cellRes(W)), layers: layeredScenes(p, W, H, { theme }) }))
+          px = await layeredRaster(p, W, H, { theme, pause, res: cellRes(W) })
         } else {
           const scene = paintingScene(p, W, H, { reveal: 1, theme })
           const floor = markFloor(W) // specks and fine lines stay visible at full size, as they are in the terminal
@@ -660,11 +678,11 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
     }
     return `converted (${said}, ${width} wide) into ${folder}: ${written.join(', ')}` + (note ? '. ' + note : '')
   }
-  // more than one picture, one larger than HD, a layered one, or two painter calls or more: it goes on beside the work
+  // more than one picture, one larger than HD, a truest one, or two painter calls or more: it goes on beside the work
   // (a command has ten seconds of its own time), and Spark says in the conversation when it is done (/spark state shows
   // how far it has got). One faithful, refined or interpretive picture at HD is quick and comes back at once
   const calls = jobs.filter((j) => revisits(j.way)).length
-  if (calls >= 2 || jobs.length >= 2 || width > SIZES.hd! || jobs.some((j) => j.way === 'layered')) {
+  if (calls >= 2 || jobs.length >= 2 || width > SIZES.hd! || jobs.some((j) => j.way === 'truest')) {
     const est = jobsEstimate(jobs)
     convertProgress = { done: 0, total: jobs.length, what: said }
     const what = mode === 'every' ? 'this painting every way' : mode === 'all' ? `all ${plural(jobs.length)}, ${way}` : `this painting, ${way}`
@@ -680,11 +698,11 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
 
 // /spark convert roll [way]: the session's paintings as a clip. Each is laid down mark by mark as it first was (2 s),
 // held with its title (3 s), and crossfaded into the next; the last fades out. The way is the convert's: faithful (the
-// same marks), layered (in depth), refined or interpretive (the painter revisits each first: one call a painting). Spark
+// same marks), truest (as she sees it, in depth), refined or interpretive (the painter revisits each first: one call a painting). Spark
 // draws every frame herself and hands them to a small helper (link/spark_roll.py) as text, one painting at a time;
 // ffmpeg makes the MP4. Without ffmpeg, a smaller animated PNG. It goes on beside the work, and Spark says in the
 // conversation when it is done.
-const ROLL = { reveal: 2, hold: 3, fade: 0.6, fps: 12, layeredFps: 8 } // seconds laid down, held, crossfaded; frames a second laid down (layered frames cost more, so fewer, smoothed the same)
+const ROLL = { reveal: 2, hold: 3, fade: 0.6, fps: 12, truestFps: 8 } // seconds laid down, held (about: the music sets each), crossfaded; frames a second laid down (truest frames cost more, so fewer, smoothed the same)
 async function hasFfmpeg($: EngineInterface): Promise<boolean> {
   try {
     const proc = $.process.spawn({ argv: ['ffmpeg', '-hide_banner', '-version'] })
@@ -710,9 +728,10 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
   convertBusy = true
   const video = await hasFfmpeg($)
   const [W, H] = video ? asked : [640, 360]
-  const fps = way === 'layered' ? ROLL.layeredFps : ROLL.fps
+  const fps = way === 'truest' ? ROLL.truestFps : ROLL.fps
   const frames = video ? Math.round(ROLL.reveal * fps) : 8
   const list = story.slice(), n = list.length
+  const holds = rollHolds(list) // each painting's own hold, set by the music: breathing room
   const root = await $.session.root().catch(() => '')
   const lead = rollTitleOn ? 1 : 0 // segments before the first painting: the title card
   const title = called || sessionName || root.replace(/\/+$/, '').split('/').pop() || 'Spark'
@@ -747,11 +766,11 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
         for (let k = 0; k < W * L.areaH; k++) { frame[k * 3] = gb[0]!; frame[k * 3 + 1] = gb[1]!; frame[k * 3 + 2] = gb[2]! }
         frame.set(captionStrip(W, lines, g, { light }), W * L.areaH * 3)
         const nm = p.marks.length
-        // each frame's pixels with f/frames of the marks laid: in depth (layered), or as the terminal draws them, the
+        // each frame's pixels with f/frames of the marks laid: as she sees it, in depth (truest), or as the terminal draws them, the
         // finished marks kept on a raster of their own and only the one in progress drawn again
         let next: (q: number) => Promise<{ px: Float32Array }>
-        if (way === 'layered') {
-          const st = layeredStepper(p, L.pw, L.ph, { theme })
+        if (way === 'truest') {
+          const st = layeredStepper(p, L.pw, L.ph, { theme, res: cellRes(L.pw) })
           next = async (q) => ({ px: await st.frame(q, pause) })
         } else {
           const floor = markFloor(L.pw)
@@ -777,7 +796,7 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
           for (let k = 0; k < parts; k++) await $.fs.write(`${work}/f${String(seq).padStart(3, '0')}-${String(f - 1).padStart(3, '0')}.b64.${k}`, b64.slice(k * PART, (k + 1) * PART))
         }
         if (video) { // this painting's part of the clip, now, so its frames are gone before the next is drawn
-          const seg = await runHelper($, ['segment', work, String(seq), String(frames), String(W), String(H), String(parts), String(fps), String(ROLL.hold)])
+          const seg = await runHelper($, ['segment', work, String(seq), String(frames), String(W), String(H), String(parts), String(fps), String(holds[i])])
           if (!seg.ok) return 'no roll: ' + (/No such file|not found|ENOENT|code 127/i.test(seg.err) && !seg.out ? 'python3 was not found (the roll needs it, with ffmpeg)' : seg.err.trim().slice(-160) || 'the helper could not make it')
         }
         if (convertProgress) convertProgress.done++
@@ -786,7 +805,7 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
       const out = `${folder}/${name}`
       // the music: read from the paintings as rolled, played by the helper into a WAV the join lays under the clip
       let music = '', key = ''
-      const score = rollScore(rolled, { reveal: ROLL.reveal, hold: ROLL.hold, fade: ROLL.fade, lead: lead && video ? titleSecs - ROLL.fade : 0 })
+      const score = rollScore(rolled, { reveal: ROLL.reveal, hold: ROLL.hold, holds, fade: ROLL.fade, lead: lead && video ? titleSecs - ROLL.fade : 0 })
       // the title card, made last so it can name the music's key, but first in the clip
       if (lead) {
         const sub = `Spark · ${when} · ${plural(n)}${video && rollMusic ? ` · music in ${score.key}` : ''}`
@@ -818,7 +837,7 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
         else notes.push('no music: ' + (played.err.trim().slice(-120) || 'the helper could not play it'))
       }
       const made = video
-        ? await runHelper($, ['join', work, String(n + lead), out, [...(lead ? [titleSecs] : []), ...list.map(() => ROLL.reveal + ROLL.hold)].join(','), String(ROLL.fade), ...(music ? [music] : [])])
+        ? await runHelper($, ['join', work, String(n + lead), out, [...(lead ? [titleSecs] : []), ...holds.map((h) => ROLL.reveal + h)].join(','), String(ROLL.fade), ...(music ? [music] : [])])
         : await runHelper($, ['apng', work, String(n + lead), String(frames), String(W), String(H), String(parts), '250', '2600', '3', out])
       if (!made.ok) return 'no roll: ' + (/No such file|not found|ENOENT/i.test(made.err) && !made.out ? 'python3 was not found (the roll needs it)' : made.err.trim().slice(-160) || 'the helper could not make it')
       const secs = Number(made.out.trim().split(/\s+/)[2]) || 0
@@ -833,13 +852,13 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
       convertProgress = null
     }
   }
-  const length = n * (ROLL.reveal + ROLL.hold) - (n - 1) * ROLL.fade + (lead && video ? titleSecs - ROLL.fade : 0)
+  const length = holds.reduce((t, h) => t + ROLL.reveal + h, 0) - (n - 1) * ROLL.fade + (lead && video ? titleSecs - ROLL.fade : 0)
   void quietly(async () => {
     const text = await run()
     await quietly(() => $.ui.log('Spark: ' + text))
     await quietly(() => $.ui.toast(text.startsWith('rolled') ? `Spark: the roll is ready (${plural(n)}, ${way})` : 'Spark: ' + text))
   })
-  return `rolling all ${plural(n)} into a clip, ${way}, ${video ? `${W}x${H} MP4, about ${Math.round(length)} s long` : `${W}x${H} animated PNG (ffmpeg was not found: sudo apt install ffmpeg for an MP4)`}, into ${folder}: ${lead ? `opening with a title card, “${title}”, then ` : ''}each laid down, held with its title, then crossfaded into the next${video && rollMusic ? ', to music of its own, read from the paintings' : ''}. ${calls ? `${calls} painter ${calls === 1 ? 'call' : 'calls'}, about ${kilo(est)} tokens` : 'No tokens'}. It goes on beside the work; Spark says when it is done (/spark state shows how far)`
+  return `rolling all ${plural(n)} into a clip, ${way}, ${video ? `${W}x${H} MP4, about ${Math.round(length)} s long` : `${W}x${H} animated PNG (ffmpeg was not found: sudo apt install ffmpeg for an MP4)`}, into ${folder}: ${lead ? `opening with a title card, “${title}”, then ` : ''}each laid down, held with its title for a bar or two of its own (the last longest), then crossfaded into the next${video && rollMusic ? ', to music of its own, read from the paintings' : ''}. ${calls ? `${calls} painter ${calls === 1 ? 'call' : 'calls'}, about ${kilo(est)} tokens` : 'No tokens'}. It goes on beside the work; Spark says when it is done (/spark state shows how far)`
 }
 
 // A live painting, if the turn has run long enough since the last one and this is a moment (or she has waited enough)
@@ -916,6 +935,7 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
 
 // The painting as cells (or kitty pixels) for a canvas of columns × rows, drawn again only when something changed
 function paintFrame(columns: number, rows: number): PaintSite['frame'] {
+  paintCols = columns
   const image = kitty
   const fine = hd && !image
   if (!paintSite || paintSite.columns !== columns || paintSite.rows !== rows || paintSite.image !== image || paintSite.hd !== fine) {
@@ -956,8 +976,10 @@ function paintBlock(els: any, width: number, room0: number): any[] {
     const heard = talk ? [Text({ children: ['› ' + talk.said], dimColor: true, wrap: 'truncate-end' })] : []
     const answer = talk ? (talk.busy ? 'Spark is listening…' : 'Spark: ' + talk.reply) : ''
     const answerRows = answer ? wrapRows(answer, width) : 0
-    talkRows = heard.length + answerRows + 1
+    const canCopy = Boolean(talkText() && copyTo && Button)
+    talkRows = heard.length + answerRows + 1 + (canCopy ? 1 : 0)
     talkEls.push(...heard, ...(answer ? [Text({ children: [answer], italic: true, wrap: 'wrap' })] : []),
+      ...(canCopy ? [Button({ key: 'spark-copy', label: '⧉ copy', plain: true, dimColor: true, onPress: (press: { surface?: string }) => { const t = talkText(); if (t && copyTo) copyTo(t, press?.surface) } })] : []),
       Input({ key: 'spark-say', placeholder: 'say something to Spark', submitLabel: 'say', value: '', autoFocus: true, onSubmit: (v: string) => { if (sayTo) sayTo(v) } })) // autoFocus: a click on her pane puts you here
   }
   const room = room0 - talkRows
@@ -1108,7 +1130,8 @@ const HELP = [
   '/spark link    on | off | status: Keeper and Prism beside Spark (Cyclops Link, off until you turn it on)',
   '/spark paint   a small painter paints each turn below Spark, and one now (it uses tokens); /spark paint off stops it',
   '/spark story   the session\'s paintings told again in order, each laid down anew (no tokens); /spark story again ends it',
-  '/spark convert the painting made large, SVG and PNG, into the convert folder: click what (this painting, every way, all paintings, the roll) then which way (faithful, layered, refined, interpretive, each with its token cost), or say it: /spark convert layered 4k, every, all refined, roll layered hd',
+  '/spark copy    what you last said to Spark and her answer, whole, onto your clipboard (or ⧉ copy under it)',
+  '/spark convert the painting made large, SVG and PNG, into the convert folder: click what (this painting, every way, all paintings, the roll) then which way (truest, faithful, refined, interpretive, each with its token cost), or say it: /spark convert truest 4k, every, all refined, roll truest hd',
 ].join('\n')
 
 // focus asks for about 60% of the terminal (at least 64 columns, and always 40 left for the conversation), and the full
@@ -1180,6 +1203,139 @@ const pick = <T extends string>(list: readonly T[], arg: string, current: T): T 
 // it is dropped here. Errors from next(e) itself are Claude Code's and still pass through untouched.
 const quietly = async (work: () => unknown): Promise<void> => { try { await work() } catch { /* presence only */ } }
 
+// /spark, as typed, or pressed from her tools (a plugin's own $.command.run never reaches its own hook, so a press calls
+// this directly and its answer goes into the conversation as a line of hers)
+async function sparkRun($: EngineInterface, e: { args: string; presentation?: { columns?: number } }): Promise<{ text: string }> {
+  const [word = '', arg = ''] = e.args.trim().toLowerCase().split(/\s+/)
+  let text: string
+  if (typeof e.presentation?.columns === 'number' && e.presentation.columns > 0 && !focusMode) lastTerminal = e.presentation.columns
+  if (word === 'top' || word === 'band') { // a short strip above the prompt; the side pane gives way to it
+    band = arg === 'on' ? true : arg === 'off' ? false : !band
+    if (band && paneOpen && !focusMode) { paneOpen = false; await $.ui.close({ id: PANE }).catch(() => undefined) }
+    text = band ? 'Spark on top: a short strip above the prompt (/spark top again hides it)' : 'Spark top strip off'
+  }
+  else if (word === 'side') {
+    if (focusMode) text = await leaveFocus($, false)
+    else if (paneOpen && arg !== 'on') { paneOpen = false; await $.ui.close({ id: PANE }).catch(() => undefined); text = 'Spark side pane closed' }
+    else {
+      band = false // one place at a time
+      text = paneOpen ? 'Spark is already at the side' : await openPane($)
+      if (openPainting && !paintOn) { paintOn = true; text += '; ' + paintOnText() } // the openPainting setting
+      if (!named && sound !== 'off') { named = true; await cue($, 'name', 'soft') }
+    }
+  }
+  else if (word === 'kitty') { kitty = !kitty; text = kitty ? 'pane: real pixels (kitty / Ghostty)' : hd ? 'pane: HD cells (four pixels to a cell)' : 'pane: half-block cells' }
+  else if (word === 'hd') {
+    if (arg !== '' && arg !== 'on' && arg !== 'off') text = 'hd takes: on | off'
+    else { hd = arg === 'on' ? true : arg === 'off' ? false : !hd; sites.clear(); paintSite = null; $.ui.invalidate('ui.render'); text = hd ? 'hd on: Spark and her paintings in four pixels to a cell (quadrant blocks), finer lines, the same light' : 'hd off: two pixels to a cell (half blocks), as before 1.7.2' }
+  }
+  else if (word === 'calm') { calm = arg === 'on' ? true : arg === 'off' ? false : !calm; text = calm ? 'calm: no ambient motion (events still draw)' : 'calm off: ambient breathing and drift are back' }
+  else if (word === 'theme') {
+    const next = pick(THEMES, arg, theme)
+    if (next) { theme = next; sites.clear() }
+    text = next ? 'theme: ' + theme + (theme === 'auto' ? ' (the host says ' + hostTheme + ')' : '') : 'theme takes: ' + THEMES.join(' | ')
+  }
+  else if (word === 'palette') {
+    const next = pick(PALETTE_NAMES as readonly string[], arg, palette)
+    if (next) palette = next
+    text = next ? 'palette: ' + palette + ' (error is red in every palette)' : 'palette takes: ' + PALETTE_NAMES.join(' | ')
+  }
+  else if (word === 'sound') {
+    const next = pick(SOUNDS, arg, sound)
+    if (next) { sound = next; if (sound !== 'off') await cue($, 'bloom', 'soft', true) } // a preview of the level
+    text = next ? 'sound: ' + sound + (sound === 'off' ? '' : ' (plays on macOS and Linux; each cue follows a real event)') : 'sound takes: ' + SOUNDS.join(' | ')
+  }
+  else if (word === 'status') {
+    statusOn = arg === 'on' ? true : arg === 'off' ? false : !statusOn
+    if (statusOn) { lastStatus = ''; pushStatus($) } else { lastStatus = ''; $.ui.status(undefined) }
+    text = statusOn ? 'status line: on' : 'status line: off'
+  }
+  else if (word === 'murmur') {
+    murmurOn = arg === 'on' ? true : arg === 'off' ? false : !murmurOn
+    if (!murmurOn) { murmurKind = null; murmurNextAt = -1e9 }
+    text = murmurOn ? 'murmur: on (a hum while thinking, bubbles while writing; only while the model really streams)' : 'murmur: off'
+  }
+  else if (word === 'focus') {
+    const want = arg === 'on' ? true : arg === 'off' ? false : !focusMode
+    text = want ? await enterFocus($, lastTerminal) : await leaveFocus($, false)
+  }
+  else if (word === 'ask') {
+    const question = e.args.trim().replace(/^ask\s*/i, '')
+    if (!question) text = 'ask what? /spark ask <your question> (answered on the side: no tools, the work goes on)'
+    else {
+      const r = await askOnTheSide($, question, 'ask' + ++ids, 'command')
+      text = (r.ok ? 'Spark · side answer\n' : 'Spark · side question\n') + r.text
+    }
+  }
+  else if (word === 'replay') {
+    if (replay) { replay = null; text = 'replay off: the pane shows the live Spark' }
+    else {
+      replay = { t0: now(), presence: createPresence('spark'), trace: buildTrace(), i: 0, loop: 0 }
+      const opened = paneOpen ? '' : (await openPane($)) + '; '
+      text = opened + 'replay on: a scripted tour, labelled as a replay. It never touches the live Spark. /spark replay stops it'
+    }
+  }
+  else if (word === 'state') {
+    text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · hd ${hd ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${paintOn ? ' · paint on' + (paintSpent.calls ? ` (${spentText()})` : '') : ''}${convertProgress ? ` · converting ${convertProgress.done} of ${convertProgress.total} (${convertProgress.what})` : ''}\n` + (reflection ? `last reflection (sent to the painter): ${reflection}\n` : '') + recent.join('\n')
+  }
+  else if (word === 'link') {
+    if (arg === 'on' || arg === 'off') {
+      linkOn = arg === 'on'
+      if (linkOn) await startLink($); else await stopLink()
+      text = linkOn
+        ? (linkStatus === 'unavailable' ? 'link: Spark could not start her Link helper (it needs python3); she stays unlinked' : 'link on: Spark shares her coarse state and shows Keeper and Prism when they work in this folder. Nothing else is shared')
+        : 'link off: Spark says she has ended and is removed a minute later'
+    } else if (arg === '' || arg === 'status') {
+      text = 'link ' + (linkOn ? linkStatus : 'off') + (linkOn && linkView ? ' · ' + linkLine(linkView) : '') + (linkWanted !== null ? ' (SPARK_LINK overrides the setting)' : '')
+    } else text = 'link takes: on | off | status'
+  }
+  else if (word === 'convert') text = await convertPainting($, e.args.trim().toLowerCase().split(/\s+/).slice(1), e.args.trim().split(/\s+/).slice(1))
+  else if (word === 'story') { // the session's paintings, told again in order, once through: nothing is asked of any model
+    const page = () => storyOn ? `page ${storyIndex() + 1} of ${story.length}` : ''
+    if (storyOn && (arg === 'pause' || arg === 'hold')) { storyPause(true); text = `story held on ${page()}: /spark convert makes this one large; /spark story play goes on` }
+    else if (storyOn && (arg === 'play' || arg === 'go')) { if (storyOn.done) storyTurn(0); storyPause(false); text = `story goes on from ${page()}` }
+    else if (storyOn && (arg === 'next' || arg === 'back')) { storyTurn(storyIndex() + (arg === 'next' ? 1 : -1)); text = `story: ${page()}${storyOn.paused !== null ? ' (held)' : ''}` }
+    else if (storyOn && arg !== '' && arg !== 'end' && arg !== 'off') text = 'story takes: pause | play | next | back | end'
+    else if (storyOn) { storyOn = null; text = 'story ended: back to the last painting' }
+    else if (arg !== '' && arg !== 'on') text = story.length ? 'no story is on: /spark story starts one' : 'no paintings yet this session: /spark paint makes one'
+    else if (!story.length) text = 'no paintings yet this session: /spark paint makes one'
+    else {
+      if (!paneOpen) { band = false; text = (await openPane($)) + '; ' } else text = ''
+      hostT = (await $.clock.now()) / 1000
+      storyOn = { at: hostT, paused: null, done: false, shownAt: now() }; storySlide = 0
+      text += `story: ${story.length} ${story.length === 1 ? 'painting' : 'paintings'} from this session, each laid down again in order, ${STORY_S} s apiece, once through, then held on the last. Under the painting: pause (to convert that one), back, next, end; or /spark story pause | play | next | back | end`
+    }
+  }
+  else if (word === 'paint') { // two controls: /spark paint (on, and one now; opens Spark herself if she is not up) and /spark paint off
+    if (arg === 'off') {
+      const was = paintOn
+      paintOn = false; painting = null; paintSite = null; talk = null
+      text = (was ? 'painting off: the room below Spark is empty again' : 'painting is already off') + (paintSpent.calls ? ' · ' + spentText() : '')
+    } else if (arg === '' || arg === 'on' || arg === 'now') { // on and now are the old words for the same thing
+      const turning = !paintOn
+      paintOn = true
+      let opened = ''
+      if (!paneOpen && !focusMode) { band = false; opened = (await openPane($)) + '; ' } // she is not there yet: the painting needs her pane, so open it
+      const made = await paintNow($, 'asked')
+      text = opened + (turning ? paintOnText() + '. ' + made.replace(/ \(it shows below Spark at the side: \/spark\)$/, '') : made)
+    } else text = '/spark paint turns the painter on and paints one now (it uses tokens); /spark paint off stops it'
+  }
+  else if (word === 'copy') text = talkText() ? await copyWords($, talkText(), (e as { surface?: string }).surface) : 'nothing to copy yet: say something to Spark under her painting, and /spark copy (or ⧉ copy there) puts her answer on your clipboard'
+  else if (word === 'help' || (word !== '' && word !== 'pane')) text = HELP
+  else if (focusMode) text = await leaveFocus($, false) // a bare /spark in focus: back to your view
+  else if (paneOpen) { paneOpen = false; await $.ui.close({ id: PANE }).catch(() => undefined); text = 'presence pane closed' }
+  else { // opening Spark: the first time in a session it says its name (when sound is on); never again in that session
+    band = false // at the side now, so the strip above the prompt gives way
+    text = await openPane($)
+    if (openPainting && !paintOn) { paintOn = true; text += '; ' + paintOnText() } // the openPainting setting
+    if (!named && sound !== 'off') { named = true; await cue($, 'name', 'soft') }
+  }
+  $.ui.invalidate('ui.render')
+  return { text }
+}
+// her tools run /spark through here
+function pressSpark($: EngineInterface, args: string) { void quietly(async () => { const { text } = await sparkRun($, { args }); if (text) await $.ui.log('Spark: ' + text) }) }
+
 export const register: Register = (on, options) => {
   // defaults from the plugin's config menu; the commands below change them for this session
   const o = (options ?? {}) as Record<string, unknown>
@@ -1205,7 +1361,7 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await refreshTheme($)
-    await $.command.register({ name: 'spark', description: 'Spark, Claude\'s living presence: /spark [side|top|focus|kitty|hd|state|calm|theme|palette|sound|murmur|status|replay|ask|link|paint|story|convert|help]', immediate: true })
+    await $.command.register({ name: 'spark', description: 'Spark, Claude\'s living presence: /spark [side|top|focus|kitty|hd|state|calm|theme|palette|sound|murmur|status|replay|ask|link|paint|story|copy|convert|help]', immediate: true })
     const wanted = (await $.env.get('SPARK_LINK').catch(() => undefined))?.trim().toLowerCase()
     linkWanted = wanted === '1' || wanted === 'on' ? true : wanted === '0' || wanted === 'off' ? false : null
     if (linkWanted !== null) linkOn = linkWanted
@@ -1349,133 +1505,7 @@ export const register: Register = (on, options) => {
   })
 
   // ---------------------------------------------------------------- command
-  on('command.run', { command: 'spark' }, async ($, e) => {
-    const [word = '', arg = ''] = e.args.trim().toLowerCase().split(/\s+/)
-    let text: string
-    if (typeof e.presentation?.columns === 'number' && e.presentation.columns > 0 && !focusMode) lastTerminal = e.presentation.columns
-    if (word === 'top' || word === 'band') { // a short strip above the prompt; the side pane gives way to it
-      band = arg === 'on' ? true : arg === 'off' ? false : !band
-      if (band && paneOpen && !focusMode) { paneOpen = false; await $.ui.close({ id: PANE }).catch(() => undefined) }
-      text = band ? 'Spark on top: a short strip above the prompt (/spark top again hides it)' : 'Spark top strip off'
-    }
-    else if (word === 'side') {
-      if (focusMode) text = await leaveFocus($, false)
-      else if (paneOpen && arg !== 'on') { paneOpen = false; await $.ui.close({ id: PANE }).catch(() => undefined); text = 'Spark side pane closed' }
-      else {
-        band = false // one place at a time
-        text = paneOpen ? 'Spark is already at the side' : await openPane($)
-        if (openPainting && !paintOn) { paintOn = true; text += '; ' + paintOnText() } // the openPainting setting
-        if (!named && sound !== 'off') { named = true; await cue($, 'name', 'soft') }
-      }
-    }
-    else if (word === 'kitty') { kitty = !kitty; text = kitty ? 'pane: real pixels (kitty / Ghostty)' : hd ? 'pane: HD cells (four pixels to a cell)' : 'pane: half-block cells' }
-    else if (word === 'hd') {
-      if (arg !== '' && arg !== 'on' && arg !== 'off') text = 'hd takes: on | off'
-      else { hd = arg === 'on' ? true : arg === 'off' ? false : !hd; sites.clear(); paintSite = null; $.ui.invalidate('ui.render'); text = hd ? 'hd on: Spark and her paintings in four pixels to a cell (quadrant blocks), finer lines, the same light' : 'hd off: two pixels to a cell (half blocks), as before 1.7.2' }
-    }
-    else if (word === 'calm') { calm = arg === 'on' ? true : arg === 'off' ? false : !calm; text = calm ? 'calm: no ambient motion (events still draw)' : 'calm off: ambient breathing and drift are back' }
-    else if (word === 'theme') {
-      const next = pick(THEMES, arg, theme)
-      if (next) { theme = next; sites.clear() }
-      text = next ? 'theme: ' + theme + (theme === 'auto' ? ' (the host says ' + hostTheme + ')' : '') : 'theme takes: ' + THEMES.join(' | ')
-    }
-    else if (word === 'palette') {
-      const next = pick(PALETTE_NAMES as readonly string[], arg, palette)
-      if (next) palette = next
-      text = next ? 'palette: ' + palette + ' (error is red in every palette)' : 'palette takes: ' + PALETTE_NAMES.join(' | ')
-    }
-    else if (word === 'sound') {
-      const next = pick(SOUNDS, arg, sound)
-      if (next) { sound = next; if (sound !== 'off') await cue($, 'bloom', 'soft', true) } // a preview of the level
-      text = next ? 'sound: ' + sound + (sound === 'off' ? '' : ' (plays on macOS and Linux; each cue follows a real event)') : 'sound takes: ' + SOUNDS.join(' | ')
-    }
-    else if (word === 'status') {
-      statusOn = arg === 'on' ? true : arg === 'off' ? false : !statusOn
-      if (statusOn) { lastStatus = ''; pushStatus($) } else { lastStatus = ''; $.ui.status(undefined) }
-      text = statusOn ? 'status line: on' : 'status line: off'
-    }
-    else if (word === 'murmur') {
-      murmurOn = arg === 'on' ? true : arg === 'off' ? false : !murmurOn
-      if (!murmurOn) { murmurKind = null; murmurNextAt = -1e9 }
-      text = murmurOn ? 'murmur: on (a hum while thinking, bubbles while writing; only while the model really streams)' : 'murmur: off'
-    }
-    else if (word === 'focus') {
-      const want = arg === 'on' ? true : arg === 'off' ? false : !focusMode
-      text = want ? await enterFocus($, lastTerminal) : await leaveFocus($, false)
-    }
-    else if (word === 'ask') {
-      const question = e.args.trim().replace(/^ask\s*/i, '')
-      if (!question) text = 'ask what? /spark ask <your question> (answered on the side: no tools, the work goes on)'
-      else {
-        const r = await askOnTheSide($, question, 'ask' + ++ids, 'command')
-        text = (r.ok ? 'Spark · side answer\n' : 'Spark · side question\n') + r.text
-      }
-    }
-    else if (word === 'replay') {
-      if (replay) { replay = null; text = 'replay off: the pane shows the live Spark' }
-      else {
-        replay = { t0: now(), presence: createPresence('spark'), trace: buildTrace(), i: 0, loop: 0 }
-        const opened = paneOpen ? '' : (await openPane($)) + '; '
-        text = opened + 'replay on: a scripted tour, labelled as a replay. It never touches the live Spark. /spark replay stops it'
-      }
-    }
-    else if (word === 'state') {
-      text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · hd ${hd ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${paintOn ? ' · paint on' + (paintSpent.calls ? ` (${spentText()})` : '') : ''}${convertProgress ? ` · converting ${convertProgress.done} of ${convertProgress.total} (${convertProgress.what})` : ''}\n` + (reflection ? `last reflection (sent to the painter): ${reflection}\n` : '') + recent.join('\n')
-    }
-    else if (word === 'link') {
-      if (arg === 'on' || arg === 'off') {
-        linkOn = arg === 'on'
-        if (linkOn) await startLink($); else await stopLink()
-        text = linkOn
-          ? (linkStatus === 'unavailable' ? 'link: Spark could not start her Link helper (it needs python3); she stays unlinked' : 'link on: Spark shares her coarse state and shows Keeper and Prism when they work in this folder. Nothing else is shared')
-          : 'link off: Spark says she has ended and is removed a minute later'
-      } else if (arg === '' || arg === 'status') {
-        text = 'link ' + (linkOn ? linkStatus : 'off') + (linkOn && linkView ? ' · ' + linkLine(linkView) : '') + (linkWanted !== null ? ' (SPARK_LINK overrides the setting)' : '')
-      } else text = 'link takes: on | off | status'
-    }
-    else if (word === 'convert') text = await convertPainting($, e.args.trim().toLowerCase().split(/\s+/).slice(1), e.args.trim().split(/\s+/).slice(1))
-    else if (word === 'story') { // the session's paintings, told again in order, once through: nothing is asked of any model
-      const page = () => storyOn ? `page ${storyIndex() + 1} of ${story.length}` : ''
-      if (storyOn && (arg === 'pause' || arg === 'hold')) { storyPause(true); text = `story held on ${page()}: /spark convert makes this one large; /spark story play goes on` }
-      else if (storyOn && (arg === 'play' || arg === 'go')) { if (storyOn.done) storyTurn(0); storyPause(false); text = `story goes on from ${page()}` }
-      else if (storyOn && (arg === 'next' || arg === 'back')) { storyTurn(storyIndex() + (arg === 'next' ? 1 : -1)); text = `story: ${page()}${storyOn.paused !== null ? ' (held)' : ''}` }
-      else if (storyOn && arg !== '' && arg !== 'end' && arg !== 'off') text = 'story takes: pause | play | next | back | end'
-      else if (storyOn) { storyOn = null; text = 'story ended: back to the last painting' }
-      else if (arg !== '' && arg !== 'on') text = story.length ? 'no story is on: /spark story starts one' : 'no paintings yet this session: /spark paint makes one'
-      else if (!story.length) text = 'no paintings yet this session: /spark paint makes one'
-      else {
-        if (!paneOpen) { band = false; text = (await openPane($)) + '; ' } else text = ''
-        hostT = (await $.clock.now()) / 1000
-        storyOn = { at: hostT, paused: null, done: false, shownAt: now() }; storySlide = 0
-        text += `story: ${story.length} ${story.length === 1 ? 'painting' : 'paintings'} from this session, each laid down again in order, ${STORY_S} s apiece, once through, then held on the last. Under the painting: pause (to convert that one), back, next, end; or /spark story pause | play | next | back | end`
-      }
-    }
-    else if (word === 'paint') { // two controls: /spark paint (on, and one now; opens Spark herself if she is not up) and /spark paint off
-      if (arg === 'off') {
-        const was = paintOn
-        paintOn = false; painting = null; paintSite = null; talk = null
-        text = (was ? 'painting off: the room below Spark is empty again' : 'painting is already off') + (paintSpent.calls ? ' · ' + spentText() : '')
-      } else if (arg === '' || arg === 'on' || arg === 'now') { // on and now are the old words for the same thing
-        const turning = !paintOn
-        paintOn = true
-        let opened = ''
-        if (!paneOpen && !focusMode) { band = false; opened = (await openPane($)) + '; ' } // she is not there yet: the painting needs her pane, so open it
-        const made = await paintNow($, 'asked')
-        text = opened + (turning ? paintOnText() + '. ' + made.replace(/ \(it shows below Spark at the side: \/spark\)$/, '') : made)
-      } else text = '/spark paint turns the painter on and paints one now (it uses tokens); /spark paint off stops it'
-    }
-    else if (word === 'help' || (word !== '' && word !== 'pane')) text = HELP
-    else if (focusMode) text = await leaveFocus($, false) // a bare /spark in focus: back to your view
-    else if (paneOpen) { paneOpen = false; await $.ui.close({ id: PANE }).catch(() => undefined); text = 'presence pane closed' }
-    else { // opening Spark: the first time in a session it says its name (when sound is on); never again in that session
-      band = false // at the side now, so the strip above the prompt gives way
-      text = await openPane($)
-      if (openPainting && !paintOn) { paintOn = true; text += '; ' + paintOnText() } // the openPainting setting
-      if (!named && sound !== 'off') { named = true; await cue($, 'name', 'soft') }
-    }
-    $.ui.invalidate('ui.render')
-    return { text }
-  }).catch(($, e, next) => ({ // anything that goes wrong in /spark is said, and Spark stays loaded (her command with her)
+  on('command.run', { command: 'spark' }, async ($, e) => sparkRun($, e)).catch(($, e, next) => ({ // anything that goes wrong in /spark is said, and Spark stays loaded (her command with her)
     text: 'Spark: that did not finish (' + String(next.error?.message || next.error?.kind || 'unknown').slice(0, 120) + '); /spark is still here, try again',
   }))
 
@@ -1490,13 +1520,25 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     seeViewport(e as never)
     sayTo = (words: string) => { void quietly(() => talkTo($, words)) } // the Input under her painting talks to her
+    copyTo = (text: string, surface?: string) => { void quietly(() => copyWords($, text, surface ?? e.surface)) }
     const els = $.ui.resolve(e)
     const { f, label, said } = paneFrame()
     if (e.surface === 'terminal') {
       paneSeenOnTerminal = true
-      const { Box, Text, Raster, Image } = $.ui.resolve(e)
+      const { Box, Text, Raster, Image, Button } = $.ui.resolve(e)
       const W = e.props.bodyColumns ?? 60
       const bodyRows = e.props.scroll?.bodyRows ?? 0
+      // HER TOOLS, top right, once there is a painting to work with: the story, convert and the roll, each a press away
+      // (each runs /spark as if typed, its menus asked as usual and its answer a line of hers in the conversation)
+      const runSpark = (args: string) => pressSpark($, args)
+      const tool = (key: string, label: string, args: string) => Button({ key, label, plain: true, dimColor: true, onPress: () => runSpark(args) })
+      const tools = (width: number, spare: number) => paintOn && !replay && !focusMode && story.length > 0 && width >= 28 && spare >= 10 // only where the painting keeps room of its own
+        ? [Box({ flexDirection: 'row', justifyContent: 'flex-end', columnGap: 2, width, children: [
+            tool('spark-tool-story', storyOn ? '■ story' : '▶ story', 'story'),
+            tool('spark-tool-convert', '⇪ convert', 'convert'),
+            tool('spark-tool-roll', '◎ roll', 'convert roll'),
+          ] })]
+        : []
       let columns = Math.max(16, Math.min(160, W - 1))
       let rows = Math.max(8, Math.min(60, Math.round(columns / 2.1)))
       if (focusMode) {
@@ -1554,21 +1596,23 @@ export const register: Register = (on, options) => {
       paintBeside = bodyRows > 0 && W >= 40 && (e.props.placement === 'inline' || W >= bodyRows * 3) // where her painter's lane reaches
       if (painted && paintBeside) {
         const left = Math.max(16, Math.floor((W - 2) * 0.45)), right = W - 2 - left
+        const top = tools(right, bodyRows - 1)
         let rws = Math.max(2, Math.min(60, bodyRows - textRows(left)))
         let cols = Math.min(left, rws * 2)
         if (cols < rws * 2) rws = Math.max(2, Math.floor(cols / 2))
         cols = Math.max(4, cols)
         return Box({ flexDirection: 'row', columnGap: 2, children: [
           Box({ flexDirection: 'column', width: left, children: [draw(cols, rws), ...sparkText(left)] }),
-          Box({ flexDirection: 'column', width: right, children: paintBlock(els, right, bodyRows) }),
+          Box({ flexDirection: 'column', width: right, children: [...top, ...paintBlock(els, right, bodyRows - top.length)] }),
         ] })
       }
       // Otherwise a column: Spark, her line, then the painting in the rows she does not use (she never gets smaller for it)
-      const under = textRows(W)
+      const top = tools(W, bodyRows - Math.min(rows, Math.max(0, bodyRows - textRows(W))) - textRows(W) - 1)
+      const under = textRows(W) + top.length
       if (bodyRows > under + 2 && rows > bodyRows - under) rows = bodyRows - under
       if (e.props.placement === 'inline' && bodyRows > 0 && bodyRows - under < rows) { rows = Math.max(2, bodyRows - under); columns = Math.min(columns, rows * 2) } // a short inline pane: fit it, never clip it
       const below = (paintOn || storyOn !== null) && !replay && bodyRows > 0 ? paintBlock(els, columns, bodyRows - rows - under) : [] // the painter on: her painting, and a line to talk to her
-      return Box({ flexDirection: 'column', width: W, children: [draw(columns, rows), ...sparkText(W), ...below] })
+      return Box({ flexDirection: 'column', width: W, children: [...top, draw(columns, rows), ...sparkText(W), ...below] })
     }
     // not a terminal: the glyph and the same truthful line, nothing drawn
     const { Box, Text } = els
