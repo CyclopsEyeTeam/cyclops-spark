@@ -369,7 +369,10 @@ export function toQuadrants(r, ground) {
       let fgMask = best, fg = colour(best), bg = colour(15 ^ best)
       if (fgMask === 0) { fgMask = 15; fg = bg; bg = DEFAULT } // one colour across the cell
       else if (fg === DEFAULT) { fgMask = 15 ^ fgMask; fg = bg; bg = DEFAULT } // the lit side is drawn, the empty side is the terminal's
-      if (fgMask === 15) { words[w++] = 0x2580; words[w++] = fg; words[w++] = bg === DEFAULT ? fg : bg } // a whole cell: as the half blocks draw it
+      // a glyph is never drawn in the terminal's default foreground (its text colour): a cell with nothing lit enough
+      // to keep is the terminal's own background, a space
+      if (fg === DEFAULT || fgMask === 0) { words[w++] = 0x20; words[w++] = DEFAULT; words[w++] = DEFAULT }
+      else if (fgMask === 15) { words[w++] = 0x2580; words[w++] = fg; words[w++] = bg === DEFAULT ? fg : bg } // a whole cell: as the half blocks draw it
       else { words[w++] = QUAD[fgMask]; words[w++] = fg; words[w++] = bg }
     }
   }

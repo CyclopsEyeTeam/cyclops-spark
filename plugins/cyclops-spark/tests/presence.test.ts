@@ -226,6 +226,14 @@ test('the welcome fits the room: smaller in a short band, the eye alone when nar
   await say($, 'hd on')
 })
 
+test('a plugin reloaded mid-conversation (an update) finds turns already taken: no welcome', async ($, on) => {
+  engine(on)
+  sessionHooks(on)
+  on('session.turns', async () => loose({ value: 7 }))
+  await startSession($)
+  expect((await band($)).eye).toBeUndefined()
+})
+
 test('the welcome setting off: no eye', { options: { welcome: false } }, async ($, on) => {
   engine(on)
   sessionHooks(on)
@@ -610,7 +618,6 @@ test('focus: Spark large beside the conversation, which is never hidden; the pro
   expect(await draw('AssistantMessage', 'The build is green.')).toBe('reply row')
   expect(await draw('PromptHint', '')).toBe('hint')
   expect(await settings($)).toMatch(/status on/) // focus leaves the status entry alone too
-
   expect((await focus('focus')).text).toBe('focus off: back to your view')
   expect(closes).toContain('cyclops-spark') // the pane was closed before focus, so it closes again
   expect(await settings($)).toMatch(/status on/)

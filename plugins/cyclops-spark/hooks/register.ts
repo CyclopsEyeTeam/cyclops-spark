@@ -1196,7 +1196,8 @@ export const register: Register = (on, options) => {
     if (linkWanted !== null) linkOn = linkWanted
     if (linkOn) await startLink($)
     $.clock.every(50, () => void paint($))
-    welcome = welcomeOn
+    // a session just begun: a plugin reloaded mid-conversation (an update) finds turns already taken, and stays quiet
+    welcome = welcomeOn && (await $.session.turns().catch(() => 0)) === 0
     emit({ type: 'session.wake' })
     await cue($, 'wake', 'full')
     return next(e)
