@@ -211,6 +211,11 @@ the words themselves. The last reflection shows in `/spark state`.
   (`sudo apt install ffmpeg`). Without ffmpeg you get a smaller animated PNG (640x360) that plays in any browser, and
   Spark says how to get the MP4. It asks nothing of any model, goes on beside your work (`/spark state` shows how far),
   lands in the convert folder as `spark-roll-<date>-<time>-<way>.mp4`, and plays in the gallery page.
+  **It opens with a title card**: the Cyclops eye over a glow in the session's own colour, the title large in the
+  bitmap font, and under it `Spark · the date · 19 paintings · music in F major`; it comes up over a second, holds,
+  and crossfades into the first painting while the music opens on the key's home chord and a few rising bells. The
+  title is the one you give it (`/spark convert roll layered called Night build`), else the name you gave the
+  conversation with `/rename`, else the project's folder. The **Title card on the roll** setting leaves it out.
   **The roll has its own music**, an instrumental read from the paintings (`hooks/music.js`), no tokens: the
   session's colours pick the key (their hue round the circle of fifths) and the mode (warm and light: major; cool or
   dark: dorian; dark and cool: aeolian); each painting is a chord of that key, chosen by its own colour, held as a soft

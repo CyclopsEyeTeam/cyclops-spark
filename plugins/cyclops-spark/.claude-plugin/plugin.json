@@ -32,6 +32,12 @@
       "description": "When a session starts, the Cyclops eye is drawn above the prompt until your first message, then the room is given back.",
       "default": true
     },
+    "rollTitle": {
+      "type": "boolean",
+      "title": "Title card on the roll",
+      "description": "Open /spark convert roll with a title card: the Cyclops eye, the title (the name you gave the conversation with /rename, or the project's folder; or /spark convert roll ... called <a title>), the date, how many paintings and the music's key.",
+      "default": true
+    },
     "rollMusic": {
       "type": "boolean",
       "title": "Music in the roll",

@@ -47,10 +47,12 @@ export function colourOf(p) {
 
 // The score for the roll: the timing of the roll (each painting starting at i * (reveal + hold - fade), its marks laid
 // down over the first `reveal` seconds), the key, and every sound with its time, pitch (MIDI), length, strength and place
-export function rollScore(list, { reveal = 2, hold = 3, fade = 0.6, maxNotes = 14 } = {}) {
+// `lead`: seconds before the first painting (the title card), sounded as the opening: the key's home chord swelling in,
+// and a few bells rising through it
+export function rollScore(list, { reveal = 2, hold = 3, fade = 0.6, maxNotes = 14, lead = 0 } = {}) {
   const span = reveal + hold
   const step = span - fade
-  const total = list.length * span - (list.length - 1) * fade
+  const total = lead + list.length * span - (list.length - 1) * fade
   const colours = list.map(colourOf)
   // the session's colour: the key
   let x = 0, y = 0, light = 0, warm = 0
@@ -73,7 +75,7 @@ export function rollScore(list, { reveal = 2, hold = 3, fade = 0.6, maxNotes = 1
   let last = -1
   list.forEach((p, i) => {
     const c = colours[i]
-    const t0 = i * step
+    const t0 = lead + i * step
     const lift = Math.max(0, Math.min(0.999, 0.5 + (c.light - light) * 2.2 + (c.warm - warm) * 0.6))
     let degree = ladder[Math.floor(lift * ladder.length)]
     if (degree === last && list.length > 1) degree = ladder[(Math.floor(lift * ladder.length) + 2) % ladder.length] // a new painting, a new chord
@@ -105,7 +107,23 @@ export function rollScore(list, { reveal = 2, hold = 3, fade = 0.6, maxNotes = 1
       } else events.push({ v: voice, t: at, midi: [within(tone(deg, octave), voice)], len: voice === 'swell' ? 2.6 : voice === 'pluck' ? 1.6 : 2.4, vel, pan: across * 2 - 1 })
     }
   })
+  if (lead > 0) { // the opening, under the title: home, and the first notes of it
+    const home = [0, 2, 4, 6].map((k) => tone(k, 3))
+    events.push({ v: 'pad', t: 0, midi: home, len: lead + fade + 0.4, vel: 0.55, pan: 0 })
+    events.push({ v: 'bass', t: 0.2, midi: [tone(0, 2)], len: lead + fade, vel: 0.6, pan: 0 })
+    ;[0, 2, 4, 7].forEach((d, k) => events.push({ v: 'bell', t: 0.5 + k * 0.45, midi: [within(tone(d, 4), 'bell')], len: 2.4, vel: 0.7 - k * 0.08, pan: -0.45 + k * 0.3 }))
+  }
   events.sort((a, b) => a.t - b.t)
   const names = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B']
   return { key: `${names[root]} ${mode}`, root, mode, total: Math.round(total * 1000) / 1000, chords, events }
+}
+
+// The session's colour as an RGB glow (0..1): the hue of its paintings together, kept soft and light
+export function sessionColour(list) {
+  let x = 0, y = 0
+  for (const p of list) { const c = colourOf(p), a = (c.hue * Math.PI) / 180; x += Math.cos(a) * (c.sat + 0.05); y += Math.sin(a) * (c.sat + 0.05) }
+  const h = ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360, sat = 0.55, l = 0.6
+  const q = l < 0.5 ? l * (1 + sat) : l + sat - l * sat, p = 2 * l - q
+  const f = (t) => { t = (t + 1) % 1; return t < 1 / 6 ? p + (q - p) * 6 * t : t < 1 / 2 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p }
+  return [f(h / 360 + 1 / 3), f(h / 360), f(h / 360 - 1 / 3)]
 }

@@ -9,7 +9,7 @@ clip. Standard library only, and ffmpeg for the MP4. Every frame and segment fil
       painting i's frames (<dir>/f<iii>-<kkk>.b64.<p>), laid down at <fps>, the last held <hold> seconds, smoothed to
       30 frames a second, into <dir>/seg<iii>.mp4
   spark_roll.py join <dir> <n> <out.mp4> <seconds> <fade>
-      the n segments, each <seconds> long, crossfaded over <fade> seconds, and faded out at the end, into <out.mp4>
+      the n segments, each <seconds> long (or a length each, comma separated), crossfaded over <fade> seconds, and faded out at the end, into <out.mp4>
   spark_roll.py apng <dir> <n> <frames> <w> <h> <parts> <reveal_ms> <hold_ms> <fade_frames> <out.png>
       without ffmpeg: an animated PNG of the same, smaller (it plays in any browser)
   spark_roll.py music <score.json> <out.wav>
@@ -90,15 +90,19 @@ def segment(d, i, frames, w, h, parts, fps, hold):
 
 
 def join(d, n, out, seconds, fade, music=None):
+    # seconds: one length for every segment, or a list of them (the title card is shorter than a painting)
+    lengths = seconds if isinstance(seconds, list) else [seconds] * n
     segs = [os.path.join(d, "seg%03d.mp4" % i) for i in range(n)]
-    total = n * seconds - (n - 1) * fade
+    total = sum(lengths) - (n - 1) * fade
     inputs = []
     for s in segs:
         inputs += ["-i", s]
     chains = ["[%d:v]settb=AVTB,fps=30,format=yuv420p[s%d]" % (i, i) for i in range(n)]
     last = "s0"
+    at = 0.0
     for i in range(1, n):
-        chains.append("[%s][s%d]xfade=transition=fade:duration=%s:offset=%s[x%d]" % (last, i, fade, round(i * (seconds - fade), 3), i))
+        at += lengths[i - 1] - fade
+        chains.append("[%s][s%d]xfade=transition=fade:duration=%s:offset=%s[x%d]" % (last, i, fade, round(at, 3), i))
         last = "x%d" % i
     chains.append("[%s]fade=t=out:st=%s:d=1[v]" % (last, round(max(0, total - 1), 3)))
     audio = []
@@ -340,7 +344,8 @@ def main(argv):
                 return 1
             return segment(a[0], int(a[1]), int(a[2]), int(a[3]), int(a[4]), int(a[5]), int(a[6]), float(a[7]))
         if what == "join" and len(a) in (5, 6):
-            return join(a[0], int(a[1]), a[2], float(a[3]), float(a[4]), a[5] if len(a) == 6 else None)
+            lengths = [float(v) for v in a[3].split(",")]
+            return join(a[0], int(a[1]), a[2], lengths if len(lengths) > 1 else lengths[0], float(a[4]), a[5] if len(a) == 6 else None)
         if what == "music" and len(a) == 2:
             return music(a[0], a[1])
         if what == "apng" and len(a) == 10:

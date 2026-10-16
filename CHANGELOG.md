@@ -31,6 +31,12 @@
   loud as its light; every kind of mark a painting has is heard, at most 14 notes a painting. Rendered at 32 kHz with
   numpy (an 85 s roll in about 5 s), at 16 kHz without; laid under the clip with an echo, a limiter and fades. The
   **Music in the roll** setting (`rollMusic`) makes a silent clip instead.
+- **The roll opens with a title card.** The Cyclops eye over a soft glow in the session's colour, the title large in the
+  bitmap font, and `Spark · the date · N paintings · music in <key>` under it (3.5 s: up over a second, then held,
+  crossfaded into the first painting); the music opens under it with the key's home chord and a few rising bells. The
+  title: `called <a title>` on the command (as you write it), else the name given with `/rename` this session, else the
+  project's folder. The **Title card on the roll** setting (`rollTitle`) leaves it out. The join takes a length per
+  part, as the card is shorter than a painting.
 
 ## 1.7.4
 
