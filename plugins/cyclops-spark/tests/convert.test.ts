@@ -7,6 +7,7 @@ import { parsePainting, paintingScene } from '../hooks/painter.js'
 import { canvasFor, captionHeight, captionLines, captionStrip, flattenRGBA, galleryHTML, revisitRequest, sceneSVG, slug, withCaption } from '../hooks/convert.js'
 import { createRaster, toQuadrants, toRGB8 } from '../hooks/render-raster.js'
 import { blur, layeredRaster, layeredStepper, layersOf } from '../hooks/layered.js'
+import { colourOf, rollScore } from '../hooks/music.js'
 
 const loose = <T>(v: unknown) => v as T
 const cmd = ($: Engine, args: string) => $.command.run(loose({ command: 'spark', args, origin: { kind: 'person' }, presentation: {} }))
@@ -382,20 +383,26 @@ test('/spark convert roll: every painting laid down, held and crossfaded into a 
   expect(await say($, 'convert roll huge')).toMatch(/^roll size: hd/)
   const n0 = asks.length
   const started = await say($, 'convert roll faithful 320')
-  expect(started).toMatch(/^rolling all 2 paintings into a clip, faithful, 320x180 MP4, about 9 s long, into \/home\/t\/zilo\/spark-paintings: each laid down, held with its title, then crossfaded into the next\. No tokens\./)
+  expect(started).toMatch(/^rolling all 2 paintings into a clip, faithful, 320x180 MP4, about 9 s long, into \/home\/t\/zilo\/spark-paintings: each laid down, held with its title, then crossfaded into the next, to music of its own, read from the paintings\. No tokens\./)
   expect(await say($, 'convert roll faithful 320')).toMatch(/^Spark is still converting: \d of 2 \(the roll, faithful\)/)
   await until(() => logs.length >= 1)
   expect(asks.length).toBe(n0) // nothing asked of any model
   expect(spawns[0]).toEqual(['ffmpeg', '-hide_banner', '-version'])
   const helper = spawns.filter((a) => a[0] === 'python3')
-  expect(helper.map((a) => a[2])).toEqual(['segment', 'segment', 'join']) // one painting at a time, then the whole
+  expect(helper.map((a) => a[2])).toEqual(['segment', 'segment', 'music', 'join']) // one painting at a time, its music, then the whole
   const work = helper[0]![3]!
   expect(work).toMatch(/^\/home\/t\/zilo\/spark-paintings\/\.spark-roll-\d{4}-\d\d-\d\d-\d{4}$/)
   expect(helper[0]!.slice(4)).toEqual(['0', '24', '320', '180', '1', '12', '3']) // 24 frames laid down at 12 a second, then held 3 s
-  expect(helper[2]!.slice(4)).toEqual(['2', helper[2]![5]!, '5', '0.6'])
-  expect(helper[2]![5]).toMatch(/\/spark-paintings\/spark-roll-\d{4}-\d\d-\d\d-\d{4}-faithful\.mp4$/)
+  // the music: a score read from the paintings, played into a WAV, laid under the clip
+  const score = JSON.parse(files.get(`${work}/score.json`)!)
+  expect(score.key).toMatch(/^[A-G][b#]? (major|dorian|aeolian)$/)
+  expect(Math.abs(score.total - 9.4)).toBeLessThan(1e-6)
+  expect(score.events.filter((e: { v: string }) => e.v === 'pad')).toHaveLength(2) // a chord for each painting
+  expect(helper[2]!.slice(3)).toEqual([`${work}/score.json`, `${work}/music.wav`])
+  expect(helper[3]!.slice(4)).toEqual(['2', helper[3]![5]!, '5', '0.6', `${work}/music.wav`])
+  expect(helper[3]![5]).toMatch(/\/spark-paintings\/spark-roll-\d{4}-\d\d-\d\d-\d{4}-faithful\.mp4$/)
   // the frames: 24 a painting, the whole frame as base64 text
-  const frames = [...files.keys()].filter((f) => f.startsWith(work + '/'))
+  const frames = [...files.keys()].filter((f) => f.startsWith(work + '/') && f.includes('.b64.'))
   expect(frames).toHaveLength(48)
   const last = files.get(`${work}/f000-023.b64.0`)!
   expect(last.length).toBe(Math.ceil((320 * 180 * 3) / 3) * 4)
@@ -409,7 +416,7 @@ test('/spark convert roll: every painting laid down, held and crossfaded into a 
   let differ = 0
   for (let i = 0; i < first.length; i++) if (first[i] !== rgb[i]) differ++
   expect(differ).toBeGreaterThan(1000) // laid down mark by mark: the first frame is not the last
-  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings \(faithful\) into \/home\/t\/zilo\/spark-paintings\/spark-roll-.*-faithful\.mp4 \(320x180 MP4, 9 s\), and the gallery page$/)
+  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings \(faithful\) into \/home\/t\/zilo\/spark-paintings\/spark-roll-.*-faithful\.mp4 \(320x180 MP4, with its own music in [A-G][b#]? (major|dorian|aeolian), 9 s\), and the gallery page$/)
   expect(toasts.at(-1)).toBe('Spark: the roll is ready (2 paintings, faithful)')
   expect(files.get('/home/t/zilo/spark-paintings/index.html')).toMatch(/<video src="spark-roll-.*-faithful\.mp4" controls loop muted playsinline><\/video>/)
   await cmd($, 'paint off')
@@ -449,6 +456,7 @@ test('the roll in any way: asked which (each with its cost), layered laid down i
   await until(() => logs.length >= 3)
   helper = spawns.filter((a) => a[0] === 'python3')
   expect(helper.filter((a) => a[2] === 'join')).toHaveLength(3)
+  expect(helper.filter((a) => a[2] === 'music')).toHaveLength(3) // music for every roll
   expect([...files.keys()].filter((f) => f.includes('.spark-roll-')).length).toBeGreaterThan(0)
   await cmd($, 'paint off')
 })
@@ -463,4 +471,49 @@ test('without ffmpeg the roll is a smaller animated PNG, and Spark says how to g
   expect(helper[0]!.slice(4, 12)).toEqual(['1', '8', '640', '360', '1', '250', '2600', '3'])
   expect(logs.at(-1)).toMatch(/^Spark: rolled 1 painting \(faithful\) into .*spark-roll-.*\.png \(640x360 animated PNG: ffmpeg was not found, so a smaller one that plays in any browser \(sudo apt install ffmpeg for the MP4\), 9 s\)/)
   await cmd($, 'paint off')
+})
+
+test('the roll without music: the setting off makes a silent clip', { options: { rollMusic: false } }, async ($, on) => {
+  const { spawns, logs } = engine(on)
+  await cmd($, 'paint'); await settle()
+  expect(await say($, 'convert roll faithful 320')).not.toMatch(/music/)
+  await until(() => logs.length >= 1)
+  const helper = spawns.filter((a) => a[0] === 'python3')
+  expect(helper.map((a) => a[2])).toEqual(['segment', 'join'])
+  expect(helper[1]).toHaveLength(8) // python3, the helper, join and its five: no music to lay under it
+  expect(logs.at(-1)).not.toMatch(/music/)
+  await cmd($, 'paint off')
+})
+
+test('the music is read from the paintings: colour picks the key and mode, each painting a chord, each mark laid a note in time, every instrument in its range', () => {
+  const warm = parsePainting(JSON.stringify({ title: 'warm', marks: [
+    { k: 'fill', pts: [[0, 0], [1, 0], [1, 1], [0, 1]], c: '#ffb070', c2: '#ffd090', grad: 0.25, a: 1 },
+    { k: 'glow', x: 0.5, y: 0.5, r: 0.3, c: '#ff9050', a: 0.8 },
+    ...Array.from({ length: 30 }, (_, i) => ({ k: 'dot', x: i / 30, y: (i % 7) / 7, r: 0.01, c: '#fff0d0', a: 1 })),
+    { k: 'line', pts: [[0.1, 0.9], [0.9, 0.9]], w: 0.01, c: '#ffe0a0', a: 1 },
+  ] }))!
+  const cool = parsePainting(JSON.stringify({ title: 'cool', marks: [
+    { k: 'fill', pts: [[0, 0], [1, 0], [1, 1], [0, 1]], c: '#0a1430', c2: '#102050', grad: 0.25, a: 1 },
+    { k: 'spray', x: 0.5, y: 0.3, r: 0.4, n: 40, s: 0.004, c: '#4060a0', a: 0.8 },
+    { k: 'ring', x: 0.3, y: 0.2, r: 0.1, w: 0.01, c: '#3050a0', a: 0.8 },
+  ] }))!
+  expect(colourOf(warm).warm).toBeGreaterThan(0.5)
+  expect(colourOf(cool).warm).toBeLessThan(-0.3)
+  expect(rollScore([warm, warm]).mode).toBe('major')
+  expect(rollScore([cool, cool]).mode).toBe('aeolian')
+  const s = rollScore([warm, cool, warm], { reveal: 2, hold: 3, fade: 0.6, maxNotes: 14 })
+  expect(Math.abs(s.total - (3 * 5 - 2 * 0.6))).toBeLessThan(1e-6)
+  expect(s.chords.map((c) => c.t)).toEqual([0, 4.4, 8.8])
+  expect(s.chords[0]!.degree).not.toBe(s.chords[1]!.degree) // a new painting, a new chord
+  const notes = s.events.filter((e) => !['pad', 'bass'].includes(e.v))
+  const first = notes.filter((e) => e.t < 4.4)
+  expect(first.filter((e) => e.v !== 'sparkle').length).toBeLessThanOrEqual(14)
+  for (const e of first) { expect(e.t).toBeGreaterThan(0); expect(e.t).toBeLessThanOrEqual(2.3) } // as the marks are laid, in the first two seconds
+  const range: Record<string, [number, number]> = { bell: [64, 88], pluck: [52, 76], sparkle: [76, 96], swell: [55, 72], pad: [36, 72], bass: [24, 48] }
+  for (const e of s.events) for (const m of e.midi) { expect(m).toBeGreaterThanOrEqual(range[e.v]![0]); expect(m).toBeLessThanOrEqual(range[e.v]![1]) }
+  expect(new Set(notes.map((e) => e.v))).toEqual(new Set(['bell', 'pluck', 'swell', 'sparkle']))
+  for (const e of notes) { expect(e.pan).toBeGreaterThanOrEqual(-1); expect(e.pan).toBeLessThanOrEqual(1) }
+  // the notes are of the key: every one in its scale
+  const steps = { major: [0, 2, 4, 5, 7, 9, 11], dorian: [0, 2, 3, 5, 7, 9, 10], aeolian: [0, 2, 3, 5, 7, 8, 10] }[s.mode]!
+  for (const e of s.events) for (const m of e.midi) expect(steps).toContain((((m - s.root) % 12) + 12) % 12)
 })
