@@ -31,7 +31,7 @@
 
 import type { EngineInterface, Register } from 'claude-code'
 import { buildScene, createPresence, laneFor, PAINT_TOWARD, PALETTE_NAMES } from './core.js'
-import { base64, createRaster, toHalfBlocks, toQuadrants, toRGB8, toRGBA8 } from './render-raster.js'
+import { base64, base64Async, createRaster, toHalfBlocks, toQuadrants, toRGB8Async, toRGBA8 } from './render-raster.js'
 import { eyeColumns, eyeRaster } from './eye.js'
 import { layeredFloor, layeredRaster, layeredScenes, layeredStepper } from './layered.js'
 import { rollScore, sessionColour } from './music.js'
@@ -40,8 +40,8 @@ import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet
 import { KEEPER, PRISM } from './link-marks.js'
 import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
-import { motion, motionFor } from './motion.js'
-import { canvasFor, captionLines, captionStrip, galleryHTML, titleCard, HD_MARKS, markFloor, revisitRequest, rollLayout, rollSize, sceneSVG, SIZES, slug, withCaption } from './convert.js'
+import { motion, motionFor, WIDTH as MOTION_W } from './motion.js'
+import { canvasFor, captionLines, captionStrip, galleryHTML, titleCardAsync, HD_MARKS, markFloor, revisitRequest, rollLayout, rollSize, sceneSVG, SIZES, slug, withCaption } from './convert.js'
 
 const PANE = 'cyclops-spark'
 const T0 = Date.now()
@@ -280,11 +280,13 @@ function paneFrame(): { f: any; label: string; said: Said } {
 // CLAUDE'S OWN LINE, above Spark's: the builder's breath while a turn really runs, in Claude's colour, beside the word the
 // chat's spinner shows. A ring that fills and empties: slow while thinking, quicker while writing or calling tools.
 // Only while a turn runs; never in the replay
-// Claude's breath: four small motions (hooks/motion.js), one for what the turn is doing right now
-function voiceLine(f: any): string {
-  if (replay || turnBegan < 0) return ''
-  return motion(motionFor(f), now()) + ' ' + (spinnerWord || 'Working') + '…'
+// Claude's breath: small motions (hooks/motion.js), one for what the turn is doing right now, each exactly MOTION_W cells,
+// so the word beside it always starts in the same column (drawn in a slot of its own, so nothing can push it along)
+function voiceParts(f: any): [string, string] | null {
+  if (replay || turnBegan < 0) return null
+  return [motion(motionFor(f), now()), (spinnerWord || 'Working') + '…']
 }
+function voiceLine(f: any): string { const v = voiceParts(f); return v ? v[0] + ' ' + v[1] : '' }
 
 const statusText = (f: any) => f.glyph + ' ' + String(f.hover).replace(/^Spark · /, '')
 function pushStatus($: EngineInterface) {
@@ -628,10 +630,10 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
         }
         written.push(`${name}.svg`)
         // the PNG: the pixels flattened onto the ground the same way her cells are, handed to the python helper as text
-        const flat = toRGB8(px as never, ground())
+        const flat = await toRGB8Async(px as never, ground(), pause)
         const { rgb, H: fullH } = caption ? withCaption(flat, W, H, caption, ground(), { light: theme === 'light' }) : { rgb: flat, H }
         // in parts of at most 3 MB of text each: one write may carry 4 MiB, and a 4k picture is far more than that
-        const b64 = base64(rgb), PART = 3_000_000, parts = Math.ceil(b64.length / PART)
+        const b64 = await base64Async(rgb, pause), PART = 3_000_000, parts = Math.ceil(b64.length / PART)
         const b64Path = `${folder}/${name}.rgb.b64`
         for (let k = 0; k < parts; k++) await $.fs.write(`${b64Path}.${k}`, b64.slice(k * PART, (k + 1) * PART))
         let png = false
@@ -759,7 +761,7 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
             if (whole > laid) { await base.drawAsync(paintingScene({ ...p, marks: p.marks.slice(laid, whole) }, L.pw, L.ph, { reveal: 1, theme }), theme, { floor, keep: true }, pause); laid = whole }
             if (q - whole > 0.001 && whole < nm) {
               shot.px.set(base.px)
-              shot.draw(paintingScene({ ...p, marks: [p.marks[whole]!] }, L.pw, L.ph, { reveal: q - whole, theme }), theme, { floor, keep: true })
+              await shot.drawAsync(paintingScene({ ...p, marks: [p.marks[whole]!] }, L.pw, L.ph, { reveal: q - whole, theme }), theme, { floor, keep: true }, pause)
               return shot
             }
             return base
@@ -768,9 +770,9 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
         for (let f = 1; f <= frames; f++) {
           await pause() // let everything else run
           const shown = await next((f / frames) * nm)
-          const rgb = toRGB8({ W: L.pw, H: L.ph, px: shown.px } as never, g)
+          const rgb = await toRGB8Async({ W: L.pw, H: L.ph, px: shown.px } as never, g, pause)
           for (let y = 0; y < L.ph; y++) frame.set(rgb.subarray(y * L.pw * 3, (y + 1) * L.pw * 3), ((L.oy + y) * W + L.ox) * 3)
-          const b64 = base64(frame)
+          const b64 = await base64Async(frame, pause)
           for (let k = 0; k < parts; k++) await $.fs.write(`${work}/f${String(seq).padStart(3, '0')}-${String(f - 1).padStart(3, '0')}.b64.${k}`, b64.slice(k * PART, (k + 1) * PART))
         }
         if (video) { // this painting's part of the clip, now, so its frames are gone before the next is drawn
@@ -789,13 +791,18 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
         const sub = `Spark · ${when} · ${plural(n)}${video && rollMusic ? ` · music in ${score.key}` : ''}`
         const glow = sessionColour(rolled)
         const tf = video ? TITLE.fadeFrames : frames
-        const full = titleCard({ W, H, title, sub, ground: g, light, glow }) // drawn once; each frame brings it up out of the ground
+        const full = await titleCardAsync({ W, H, title, sub, ground: g, light, glow }, pause) // drawn once; each frame brings it up out of the ground
         const card = new Uint8Array(full.length)
         for (let f = 1; f <= tf; f++) {
           await pause()
           const a = Math.min(1, f / tf)
-          for (let k = 0; k < full.length; k += 3) for (let c = 0; c < 3; c++) card[k + c] = Math.round(full[k + c]! * a + gb[c]! * (1 - a))
-          const b64 = base64(card)
+          const band = W * 3 * 64 // a band of rows at a time, handing over between bands
+          for (let b0 = 0; b0 < full.length; b0 += band) {
+            const end = Math.min(full.length, b0 + band)
+            for (let k = b0; k < end; k += 3) for (let c = 0; c < 3; c++) card[k + c] = Math.round(full[k + c]! * a + gb[c]! * (1 - a))
+            await pause()
+          }
+          const b64 = await base64Async(card, pause)
           for (let k = 0; k < parts; k++) await $.fs.write(`${work}/f000-${String(f - 1).padStart(3, '0')}.b64.${k}`, b64.slice(k * PART, (k + 1) * PART))
         }
         if (video) {
@@ -1460,7 +1467,9 @@ export const register: Register = (on, options) => {
     }
     $.ui.invalidate('ui.render')
     return { text }
-  })
+  }).catch(($, e, next) => ({ // anything that goes wrong in /spark is said, and Spark stays loaded (her command with her)
+    text: 'Spark: that did not finish (' + String(next.error?.message || next.error?.kind || 'unknown').slice(0, 120) + '); /spark is still here, try again',
+  }))
 
   on('ui.close', { id: PANE }, async ($, e, next) => {
     const res = await next(e)
@@ -1517,8 +1526,13 @@ export const register: Register = (on, options) => {
       ]
       const textRows = (width: number) => heldRows(width, lines.reduce((n, [t]) => n + wrapRows(t, width), 0))
       // her lines in a box of the rows held for them, so whatever sits below never moves when they change
+      // Claude's breath: its motion in a slot MOTION_W wide, then the word, always in the same column
+      const parts = voiceParts(f)
+      const breath = parts ? Box({ flexDirection: 'row', children: [
+        Box({ width: MOTION_W + 1, flexShrink: 0, children: [Text({ children: [parts[0]], wrap: 'truncate-end', color: 'claude' })] }),
+        Text({ children: [parts[1]], wrap: 'wrap', color: 'claude' })] }) : null
       const sparkText = (width: number) => [Box({ flexDirection: 'column', width, height: textRows(width),
-        children: lines.map(([t, style]) => Text({ children: [t], wrap: 'wrap', ...style })) })]
+        children: lines.map(([t, style], i) => i === 0 && breath && width > MOTION_W + 4 ? breath : Text({ children: [t], wrap: 'wrap', ...style })) })]
       const draw = (cols: number, rws: number) => {
         const site = siteFor(PANE, e.surface, cols, rws, 'panel', kitty)
         const fr = frameFor(site, f, true)

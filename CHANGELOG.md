@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.7.7
+
+- **`/spark` no longer disappears after a convert.** All of a session's plugin hooks share one worker, and the engine
+  checks on it with a heartbeat: a worker that leaves one unanswered is taken as wedged (a hook spinning without
+  yielding), replaced, and the plugin running in it unloaded until the next launch, its `/spark` command with it. A
+  layered convert at 1920 wide spent over a second at a time inside its blurs, shadows and bloom without handing over
+  (several at 4k), long enough on a busy machine to miss a beat. Every large loop is now made a stretch at a time and
+  hands over every ~20 ms: the layered steps (each blur pass, the shadow, the bloom, a row or column at a time),
+  the drawing of a mark (row by row, and its pixels laid 65,536 at a time), the flattening to RGB, the PNG's text, and
+  the roll's title card and its fade. The longest stretch is now about 40 ms at 1920 (about 100 at 4k), and the
+  pictures are exactly the same, pixel for pixel.
+- **Less memory for layered.** Its buffers are made once and reused frame after frame (the shadow keeps only its
+  cover, a quarter of the size, and the whole picture is composed straight onto the finished layers), so a long roll
+  asks no more than its first frame.
+- **If anything in `/spark` ever does fail, it says so and stays loaded**, rather than taking the command with it.
+- **Claude's breath keeps its word in one place.** The motion beside the chat's word (Gitifying…, Swirling…) was 7
+  cells while thinking and 1 cell otherwise, so the word jumped left and right as the turn moved between them. Every
+  motion is now exactly 5 cells, drawn in a slot of its own, so the word always starts in the same column. The thinking
+  rail is shorter (5 cells, 2 s there and back), and the orbit and pulse are centred in the slot.
+- **New motions.** While a turn waits on you (a permission ask), an eye watches and blinks now and then (`‹◉›`).
+  While the conversation compacts, beads gather in from the edges and let go. And the waiting pulse sends a small
+  ripple out at its fullest.
+
 ## 1.7.6
 
 - **No more blue specks around Spark in HD.** Where both sides of a quarter-block cell were too faint to keep, the cell

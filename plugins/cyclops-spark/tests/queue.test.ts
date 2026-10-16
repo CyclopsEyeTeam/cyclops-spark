@@ -2,7 +2,7 @@
 // to her core. Both only from real events (the prompt typed mid-turn, the queued_command the engine appends).
 import { expect, mock, test } from 'claude-code/testing'
 import { buildScene, createPresence, LOOKS } from '../hooks/core.js'
-import { motion, motionFor } from '../hooks/motion.js'
+import { motion, motionFor, WIDTH } from '../hooks/motion.js'
 
 type Ev = Record<string, unknown>
 const loose = <T>(v: unknown) => v as T
@@ -155,28 +155,46 @@ test('a waiting message taken in as a prompt row of its own (not only a queued_c
   expect(await state()).not.toMatch(/waiting$/)
 })
 
-test('Claude\'s breath has a motion for each thing the turn is doing: a spark swaying while thinking, a wave while writing, an orbit while a call is out, a pulse otherwise; all steady, never random', async () => {
-  // sway: one head on a 7-cell rail, going right then back left, a trail behind it
-  const heads = Array.from({ length: 48 }, (_, i) => motion('sway', i * 0.05).indexOf('●'))
+test('Claude\'s breath has a motion for each thing the turn is doing: a spark swaying while thinking, a wave while writing, an orbit while a call is out, a blink while it asks you, a gather while compacting, a pulse otherwise; all steady, never random', async () => {
+  // sway: one head on a 5-cell rail, going right then back left, a trail behind it
+  const heads = Array.from({ length: 40 }, (_, i) => motion('sway', i * 0.05).indexOf('●'))
   expect(Math.min(...heads)).toBe(0)
-  expect(Math.max(...heads)).toBe(6)
-  expect(heads.slice(0, 24).every((h, i, a) => i === 0 || h >= a[i - 1]!)).toBe(true) // out
-  expect(heads.slice(24).every((h, i, a) => i === 0 || h <= a[i - 1]!)).toBe(true)   // and back
-  expect(motion('sway', 0.6)).toMatch(/·●|●·/) // the trail
+  expect(Math.max(...heads)).toBe(WIDTH - 1)
+  expect(heads.slice(0, 20).every((h, i, a) => i === 0 || h >= a[i - 1]!)).toBe(true) // out
+  expect(heads.slice(20).every((h, i, a) => i === 0 || h <= a[i - 1]!)).toBe(true)   // and back
+  expect(motion('sway', 0.5)).toMatch(/·●|●·/) // the trail
   expect(motion('sway', 1)).toBe(motion('sway', 1)) // steady: the same at the same moment
-  expect(motion('sway', 1)).toHaveLength(7)
   // wave: the crest moves along
   expect(motion('wave', 0)).not.toBe(motion('wave', 0.2))
-  expect(motion('wave', 0)).toHaveLength(5)
   expect(new Set(Array.from({ length: 10 }, (_, i) => motion('wave', i / 6))).size).toBe(5)
-  // orbit and pulse: one glyph each, turning
-  expect('◐◓◑◒').toContain(motion('orbit', 0.3))
+  // orbit: the moon turns, its satellite passing round
+  expect(motion('orbit', 0.1)).toContain('◐')
   expect(motion('orbit', 0)).not.toBe(motion('orbit', 0.25))
-  expect('·∘○◎◉●').toContain(motion('pulse', 0.3))
+  // pulse: the ring fills and empties, a ripple at its fullest
+  expect(motion('pulse', 0.3).trim().length).toBeGreaterThan(0)
+  expect(new Set(Array.from({ length: 10 }, (_, i) => motion('pulse', i / 8))).size).toBeGreaterThanOrEqual(6)
+  // blink: open most of the time, shut for a moment
+  expect(motion('blink', 0.5)).toContain('◉')
+  expect(motion('blink', 2.9)).toContain('─')
+  // gather: in to the middle and out again
+  expect(motion('gather', 0)).not.toBe(motion('gather', 0.6))
   // which motion for what
   expect(motionFor({ mode: 'thinking', lanes: [] })).toBe('sway')
   expect(motionFor({ mode: 'writing', lanes: [] })).toBe('wave')
   expect(motionFor({ mode: 'running', lanes: [{ inflight: 1, family: 'shell' }] })).toBe('orbit')
   expect(motionFor({ mode: 'Processing', lanes: [{ inflight: 1, family: 'paint' }] })).toBe('pulse') // her painter is not the turn's call
   expect(motionFor({ mode: 'waiting for the model', lanes: [] })).toBe('pulse')
+  expect(motionFor({ mode: 'waiting on you', lanes: [{ inflight: 1, family: 'shell' }] })).toBe('blink')
+  expect(motionFor({ mode: 'compacting', lanes: [] })).toBe('gather')
+})
+
+test('the word beside Claude\'s breath never moves: every motion, at every moment of its beat, is exactly the same width', async () => {
+  for (const kind of ['sway', 'wave', 'orbit', 'blink', 'gather', 'pulse']) {
+    for (let i = 0; i < 120; i++) {
+      const m = motion(kind, i * 0.037)
+      expect([...m].length).toBe(WIDTH)
+      expect(m.trim().length).toBeGreaterThan(0) // always something moving
+    }
+  }
+  expect(WIDTH).toBeLessThan(7) // shorter than the old rail
 })
