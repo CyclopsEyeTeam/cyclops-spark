@@ -5,9 +5,9 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { parsePainting, paintingScene } from '../hooks/painter.js'
 import { canvasFor, captionHeight, captionLines, captionStrip, flattenRGBA, galleryHTML, revisitRequest, sceneSVG, slug, titleCard, titleCardAsync, withCaption } from '../hooks/convert.js'
-import { base64, base64Async, createRaster, toQuadrants, toRGB8, toRGB8Async } from '../hooks/render-raster.js'
+import { base64, base64Async, createRaster, spill, toQuadrants, toQuadrantsClassic, toRGB8, toRGB8Async } from '../hooks/render-raster.js'
 import { blur, layeredRaster, layeredStepper, layersOf } from '../hooks/layered.js'
-import { colourOf, rollScore } from '../hooks/music.js'
+import { BEAT, colourOf, rollHolds, rollScore } from '../hooks/music.js'
 
 const loose = <T>(v: unknown) => v as T
 const cmd = ($: Engine, args: string) => $.command.run(loose({ command: 'spark', args, origin: { kind: 'person' }, presentation: {} }))
@@ -118,7 +118,7 @@ test('refined and interpretive ask the painter once, with its own program, and m
 test('all converts every painting of the session faithfully, in order; a size word is checked; without python3 the SVG still comes and it says so', async ($, on) => {
   const { files, spawns, logs } = engine(on, { python: false })
   await cmd($, 'paint'); await say($, 'paint'); await settle()
-  expect(await say($, 'convert sideways')).toMatch(/^convert takes: faithful/)
+  expect(await say($, 'convert sideways')).toMatch(/^convert takes: truest \| faithful/)
   expect(await say($, 'convert faithful huge')).toMatch(/^convert size: hd/)
   expect(await say($, 'convert all faithful 256')).toMatch(/^converting all 2 paintings, faithful, 256 wide, into .*: no tokens\. It goes on beside the work/) // more than one picture: beside the work, so the command never runs past its time
   await until(() => logs.length >= 1)
@@ -212,8 +212,8 @@ test('a bare /spark convert asks what, then which way, in Claude Code\'s own dia
   expect(asked[0]!.labels[1]).toMatch(/^Every way, this painting · about \d+(\.\d)?k tokens$/)
   expect(asked[0]!.labels.slice(2)).toEqual(['All 1 painting…', 'The roll: all 1 as a clip…'])
   expect(asked[1]!.question).toBe('Which way, this painting?')
-  expect(asked[1]!.labels[0]).toBe('Faithful · no tokens')
-  expect(asked[1]!.labels[1]).toBe('Layered · no tokens')
+  expect(asked[1]!.labels[0]).toBe('Truest · no tokens')
+  expect(asked[1]!.labels[1]).toBe('Faithful · no tokens')
   expect(asked[1]!.labels[2]).toMatch(/^Refined · about \d+(\.\d)?k tokens$/)
   expect(asked[1]!.labels[3]).toMatch(/^Interpretive · about \d+(\.\d)?k tokens$/)
   expect(out).toMatch(/^converted \(refined, 1920 wide\)/)
@@ -304,7 +304,7 @@ test('all paintings, every way, and the costs: what then which way; anything wit
   expect(await say($, 'convert 256')).toMatch(/^converting this painting every way, 256 wide, into \/home\/t\/zilo\/spark-paintings: 2 painter calls, about \d+(\.\d)?k tokens/)
   await until(() => logs.length >= 2)
   expect(asks.length).toBe(n0 + 2)
-  for (const w of ['faithful', 'layered', 'refined', 'interpretive']) expect([...files.keys()].some((f) => f.endsWith(`-${w}.svg`))).toBe(true)
+  for (const w of ['truest', 'faithful', 'refined', 'interpretive']) expect([...files.keys()].some((f) => f.endsWith(`-${w}.svg`))).toBe(true)
   expect(logs.at(-1)).toMatch(/^Spark: converted \(every way, 256 wide\)/)
   expect(toasts.at(-1)).toBe('Spark: converted this painting every way')
   // now the costs are from what those calls really used: 900 + 700 tokens each, as the mock answers
@@ -326,19 +326,19 @@ test('all paintings, every way, and the costs: what then which way; anything wit
   await until(() => logs.length >= 4)
   expect(await say($, 'convert three 256')).toMatch(/^converting this painting every way/)
   await until(() => logs.length >= 5)
-  expect(await say($, 'convert sideways')).toMatch(/^convert takes: faithful \| layered/)
+  expect(await say($, 'convert sideways')).toMatch(/^convert takes: truest \| faithful/)
   await cmd($, 'paint off')
 })
 
-test('layered: the same marks in depth, as the terminal shows them; the far layers softened, shadows, the bloom; no tokens, beside the work', async ($, on) => {
+test('truest (was layered): the same marks as Spark sees them, each with the weight a terminal cell gives it, in depth; the far layers softened, shadows, the bloom; no tokens, beside the work', async ($, on) => {
   const { files, spawns, logs, asks } = engine(on)
   await cmd($, 'paint'); await settle()
   const n0 = asks.length
-  expect(await say($, 'convert layered 320')).toMatch(/^converting this painting, layered, 320 wide, into .*: no tokens\. It goes on beside the work/)
+  expect(await say($, 'convert truest 320')).toMatch(/^converting this painting, truest, 320 wide, into .*: no tokens\. It goes on beside the work/)
   await until(() => logs.length >= 1)
   expect(asks.length).toBe(n0)
-  expect(logs.at(-1)).toMatch(/^Spark: converted \(layered, 320 wide\) into .*01-a-fox-under-three-moons-layered\.svg, 01-a-fox-under-three-moons-layered\.png, index\.html$/)
-  const svg = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-layered.svg')!
+  expect(logs.at(-1)).toMatch(/^Spark: converted \(truest, 320 wide\) into .*01-a-fox-under-three-moons-truest\.svg, 01-a-fox-under-three-moons-truest\.png, index\.html$/)
+  const svg = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-truest.svg')!
   expect(svg).toContain('<filter id="shadow"')
   expect(svg).toContain('<filter id="soft0"') // the farthest layer softened
   expect(svg).toContain('<filter id="bloom"')
@@ -394,7 +394,9 @@ test('/spark convert roll: every painting laid down, held and crossfaded into a 
   expect(await say($, 'convert roll huge')).toMatch(/^roll size: hd/)
   const n0 = asks.length
   const started = await say($, 'convert roll faithful 320')
-  expect(started).toMatch(/^rolling all 2 paintings into a clip, faithful, 320x180 MP4, about 12 s long, into \/home\/t\/zilo\/spark-paintings: opening with a title card, “zilo”, then each laid down, held with its title, then crossfaded into the next, to music of its own, read from the paintings\. No tokens\./) // the title: the project's folder
+  const holds = rollHolds([parsePainting(PAINTING)!, parsePainting(PAINTING)!]) // each painting's own hold, set by the music
+  expect(holds[1]!).toBeGreaterThan(holds[0]!) // the last held longest
+  expect(started).toMatch(new RegExp(`^rolling all 2 paintings into a clip, faithful, 320x180 MP4, about ${Math.round(3.5 - 0.6 + 4 + holds[0]! + holds[1]! - 0.6)} s long, into /home/t/zilo/spark-paintings: opening with a title card, “zilo”, then each laid down, held with its title for a bar or two of its own \\(the last longest\\), then crossfaded into the next, to music of its own, read from the paintings\\. No tokens\\.`)) // the title: the project's folder
   expect(await say($, 'convert roll faithful 320')).toMatch(/^Spark is still converting: \d of 2 \(the roll, faithful\)/)
   await until(() => logs.length >= 1)
   expect(asks.length).toBe(n0) // nothing asked of any model
@@ -403,16 +405,16 @@ test('/spark convert roll: every painting laid down, held and crossfaded into a 
   expect(helper.map((a) => a[2])).toEqual(['segment', 'segment', 'segment', 'music', 'join']) // one painting at a time, the title card, its music, then the whole
   const work = helper[0]![3]!
   expect(work).toMatch(/^\/home\/t\/zilo\/spark-paintings\/\.spark-roll-\d{4}-\d\d-\d\d-\d{4}$/)
-  expect(helper[0]!.slice(4)).toEqual(['1', '24', '320', '180', '1', '12', '3']) // 24 frames laid down at 12 a second, then held 3 s; the first painting second in the clip
+  expect(helper[0]!.slice(4)).toEqual(['1', '24', '320', '180', '1', '12', String(holds[0])]) // 24 frames laid down at 12 a second, then held for its own time; the first painting second in the clip
   expect(helper[2]!.slice(4)).toEqual(['0', '12', '320', '180', '1', '12', '2.5']) // the title card: up over 12 frames, then held, first in the clip
   // the music: a score read from the paintings, played into a WAV, laid under the clip
   const score = JSON.parse(files.get(`${work}/score.json`)!)
   expect(score.key).toMatch(/^[A-G][b#]? (major|dorian|aeolian)$/)
-  expect(Math.abs(score.total - (3.5 + 9.4 - 0.6))).toBeLessThan(1e-6) // the title's 3.5 s, then the paintings
+  expect(Math.abs(score.total - (3.5 - 0.6 + (2 + holds[0]!) + (2 + holds[1]!) - 0.6))).toBeLessThan(1e-6) // the title's 3.5 s, then the paintings, each for its own time
   expect(score.events.filter((e: { v: string }) => e.v === 'pad')).toHaveLength(3) // the opening's home chord, then a chord for each painting
   expect(Math.abs(score.chords[0].t - 2.9)).toBeLessThan(1e-6) // the first painting's chord as it comes in
   expect(helper[3]!.slice(3)).toEqual([`${work}/score.json`, `${work}/music.wav`])
-  expect(helper[4]!.slice(4)).toEqual(['3', helper[4]![5]!, '3.5,5,5', '0.6', `${work}/music.wav`]) // a length for each part
+  expect(helper[4]!.slice(4)).toEqual(['3', helper[4]![5]!, [3.5, 2 + holds[0]!, 2 + holds[1]!].join(','), '0.6', `${work}/music.wav`]) // a length for each part
   expect(helper[4]![5]).toMatch(/\/spark-paintings\/spark-roll-\d{4}-\d\d-\d\d-\d{4}-faithful\.mp4$/)
   // the frames: 24 a painting, the whole frame as base64 text
   const frames = [...files.keys()].filter((f) => f.startsWith(work + '/') && f.includes('.b64.'))
@@ -441,7 +443,7 @@ test('/spark convert roll: every painting laid down, held and crossfaded into a 
   await cmd($, 'paint off')
 })
 
-test('the roll in any way: asked which (each with its cost), layered laid down in depth, refined with the painter revisiting each first', { timeoutMs: 30000 }, async ($, on) => {
+test('the roll in any way: asked which (each with its cost), truest laid down in depth, refined with the painter revisiting each first', { timeoutMs: 30000 }, async ($, on) => {
   const { files, spawns, logs, asks } = engine(on)
   const answers: string[] = []
   const asked: Array<{ question: string; labels: string[] }> = []
@@ -454,15 +456,15 @@ test('the roll in any way: asked which (each with its cost), layered laid down i
     return loose({ result: { questions: q, answers: { [q[0]!.question]: label } } })
   })
   await cmd($, 'paint'); await say($, 'paint'); await settle()
-  // from the menus: the roll, then layered
-  answers.push('The roll', 'Layered')
-  expect(await say($, 'convert 320')).toMatch(/^rolling all 2 paintings into a clip, layered, 320x180 MP4/)
+  // from the menus: the roll, then truest
+  answers.push('The roll', 'Truest')
+  expect(await say($, 'convert 320')).toMatch(/^rolling all 2 paintings into a clip, truest, 320x180 MP4/)
   expect(asked[1]!.question).toBe('The roll of all 2 paintings: which way?')
   expect(asked[1]!.labels[3]).toMatch(/^Interpretive · about \d+(\.\d)?k tokens$/)
   await until(() => logs.length >= 1)
   let helper = spawns.filter((a) => a[0] === 'python3')
-  expect(helper[0]!.slice(4)).toEqual(['1', '16', '320', '180', '1', '8', '3']) // layered: 16 frames at 8 a second, smoothed the same
-  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings \(layered\), opening with “zilo”, into .*-layered\.mp4/)
+  expect(helper[0]!.slice(4, 10)).toEqual(['1', '16', '320', '180', '1', '8']) // truest: 16 frames at 8 a second, smoothed the same
+  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings \(truest\), opening with “zilo”, into .*-truest\.mp4/)
   // typed: refined, the painter revisiting each painting first
   const n0 = asks.length
   expect(await say($, 'convert roll refined 320')).toMatch(/^rolling all 2 paintings into a clip, refined, .*2 painter calls, about \d+(\.\d)?k tokens/)
@@ -561,7 +563,7 @@ test('without a title card the roll starts with its first painting', { options: 
   const helper = spawns.filter((a) => a[0] === 'python3')
   expect(helper.map((a) => a[2])).toEqual(['segment', 'music', 'join'])
   expect(helper[0]!.slice(4, 5)).toEqual(['0'])
-  expect(helper[2]!.slice(4)).toEqual(['1', helper[2]![5]!, '5', '0.6', helper[2]![8]!])
+  expect(helper[2]!.slice(4)).toEqual(['1', helper[2]![5]!, String(2 + rollHolds([parsePainting(PAINTING)!])[0]!), '0.6', helper[2]![8]!]) // one painting: a bar, and the last bar longer
   await cmd($, 'paint off')
 })
 
@@ -607,4 +609,68 @@ test('a layered roll keeps its buffers: frame after frame asks no new picture-si
   const whole = await layeredRaster(p, 320, 160, { theme: 'dark' })
   expect(Array.from(frames.at(-1)!)).toEqual(Array.from(whole.px))
   expect(await st.frame(p.marks.length)).toBe(frames.at(-1)!) // asked again, the same picture, not composed twice
+})
+
+// Colour depth: what keeps a painting's colours as they meet and as it shrinks into cells
+test('light past full keeps its hue: under full nothing changes, a hot core still goes white, a halo stays amber, pink over violet stays pink', () => {
+  const o = [0, 0, 0]
+  expect(spill(0.4, 0.2, 0.9, o)).toEqual([0.4, 0.2, 0.9]) // at or under full: untouched
+  const core = spill(3, 2.1, 0.9, [0, 0, 0])
+  expect(Math.min(...core)).toBeGreaterThan(0.99) // far past full: white
+  const halo = spill(1.3, 0.91, 0.39, [0, 0, 0])
+  expect(halo[0]!).toBe(1); expect(halo[0]! - halo[2]!).toBeGreaterThan(0.4) // a little past: still amber, not yellow-white
+  const pink = spill(1.0 + 0.3, 0.69 + 0.2, 0.75 + 0.3, [0, 0, 0]) // a pink line added over a violet ground
+  expect(pink[0]! - pink[1]!).toBeGreaterThan(0.2) // still pink (cut off at full it was 1, 0.89, 1: nearly white)
+})
+
+test('HD cells keep the colours that stand out: a pink and a mint trail over violet stay two colours, where the first encoder washed both pale; the first encoder is kept to measure against', () => {
+  const W = 40, H = 40
+  const r = createRaster(W, H)
+  const trails = parsePainting(JSON.stringify({ title: 'two trails', marks: [
+    { k: 'fill', pts: [[0, 0], [1, 0], [1, 1], [0, 1]], c: '#4d3352', a: 1 },
+    { k: 'line', pts: [[0.25, 0], [0.25, 1]], w: 0.03, c: '#ffb0c0', a: 0.9 },
+    { k: 'line', pts: [[0.75, 0], [0.75, 1]], w: 0.03, c: '#a8e0c0', a: 0.9 },
+  ] }))!
+  r.draw(paintingScene(trails, W, H, { reveal: 1, theme: 'dark' }), 'dark', { res: 2 })
+  const g = [0.12, 0.13, 0.15]
+  const cellAt = (words: Uint32Array, cx: number, cy: number) => { const i = (cy * (W / 2) + cx) * 3; return { fg: words[i + 1]!, bg: words[i + 2]! } }
+  const rgb = (v: number) => [(v >> 16) & 255, (v >> 8) & 255, v & 255]
+  const brightest = (c: { fg: number; bg: number }) => [rgb(c.fg), rgb(c.bg)].sort((a, b) => b[0]! + b[1]! + b[2]! - a[0]! - a[1]! - a[2]!)[0]!
+  const now = toQuadrants(r, g), before = toQuadrantsClassic(r, g)
+  const pinkNow = brightest(cellAt(now, 5, 5)), mintNow = brightest(cellAt(now, 15, 5))
+  const pinkBefore = brightest(cellAt(before, 5, 5))
+  expect(pinkNow[0]! - pinkNow[1]!).toBeGreaterThan(pinkBefore[0]! - pinkBefore[1]!) // pinker than before
+  expect(pinkNow[0]!).toBeGreaterThan(pinkNow[1]!) // pink: red over green
+  expect(mintNow[1]!).toBeGreaterThan(mintNow[0]!) // mint: green over red
+  // and still never a glyph in the terminal's text colour
+  for (let i = 0; i < now.length; i += 3) if (now[i] !== 0x20) expect(now[i + 1]).not.toBe(0x01000000)
+})
+
+test('truest gives each mark the weight a terminal cell gives it: a speck large as the cell it fills beside the conversation', async () => {
+  const p = parsePainting(JSON.stringify({ title: 'one speck', marks: [{ k: 'dot', x: 0.5, y: 0.5, r: 0.004, c: '#ffffff', a: 1 }, { k: 'dot', x: 0.2, y: 0.2, r: 0.004, c: '#ffffff', a: 1 }, { k: 'dot', x: 0.8, y: 0.8, r: 0.004, c: '#ffffff', a: 1 }, { k: 'dot', x: 0.2, y: 0.8, r: 0.004, c: '#ffffff', a: 1 }, { k: 'dot', x: 0.8, y: 0.2, r: 0.004, c: '#ffffff', a: 1 }, { k: 'dot', x: 0.5, y: 0.2, r: 0.004, c: '#ffffff', a: 1 }] }))!
+  const lit = (px: Float32Array) => { let n = 0; for (let i = 3; i < px.length; i += 4) if (px[i]! > 0.5) n++; return n }
+  const fine = lit((await layeredRaster(p, 400, 400)).px)
+  const truest = lit((await layeredRaster(p, 400, 400, { res: 400 / 40 })).px) // drawn 40 columns wide in the terminal
+  expect(truest).toBeGreaterThan(fine * 4)
+})
+
+test('the roll breathes: each painting held a bar or two by the music (a busier one, or one that turns the colour, longer), the last a bar longer, settling home', () => {
+  const quiet = parsePainting(JSON.stringify({ title: 'quiet', marks: Array.from({ length: 6 }, (_, i) => ({ k: 'dot', x: 0.1 + i * 0.1, y: 0.5, r: 0.02, c: '#9ef2b8', a: 0.6 })) }))!
+  const busy = parsePainting(JSON.stringify({ title: 'busy', marks: Array.from({ length: 60 }, (_, i) => ({ k: 'dot', x: (i % 10) / 10, y: Math.floor(i / 10) / 6, r: 0.02, c: '#ff4060', a: 0.9 })) }))!
+  const holds = rollHolds([quiet, quiet, busy, quiet])
+  for (const h of holds) expect(Math.abs(h / BEAT - Math.round(h / BEAT))).toBeLessThan(0.01) // whole beats of its pulse
+  expect(holds[1]!).toBeLessThan(holds[2]!) // the same again: a bar; busy and a new colour: longer
+  expect(Math.round(holds[1]! / BEAT)).toBe(4)
+  expect(holds[3]!).toBeGreaterThan(holds[1]!) // the last, a bar longer
+  const score = rollScore([quiet, quiet, busy, quiet], { reveal: 2, fade: 0.6, holds })
+  expect(score.chords.map((c) => Math.round(c.t * 1000) / 1000)).toEqual([0, 2 + holds[0]! - 0.6, 2 * 2 + holds[0]! + holds[1]! - 1.2, 3 * 2 + holds[0]! + holds[1]! + holds[2]! - 1.8].map((t) => Math.round(t * 1000) / 1000)) // each chord as its painting comes in
+  expect(score.chords.at(-1)!.degree).toBe(0) // home under the last
+})
+
+test('the old word still works: convert layered is truest', async ($, on) => {
+  const { logs } = engine(on)
+  await cmd($, 'paint'); await settle()
+  expect(await say($, 'convert layered 320')).toMatch(/^converting this painting, truest, 320 wide/)
+  await until(() => logs.length >= 1)
+  await cmd($, 'paint off')
 })
