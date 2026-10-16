@@ -27,7 +27,7 @@ const PAINTING = JSON.stringify({
 const REFINED = JSON.stringify({ title: 'the fox, closer', spark: 'bloom', marks: Array.from({ length: 150 }, (_, i) => ({ k: 'dot', x: (i % 15) / 15, y: Math.floor(i / 15) / 10, r: 0.02, c: '#ffbc75', a: 0.8 })) })
 
 type Ask = { system: string; prompt: string }
-function engine(on: On, { python = true, revisit = REFINED }: { python?: boolean; revisit?: string } = {}) {
+function engine(on: On, { python = true, revisit = REFINED, ffmpeg = true }: { python?: boolean; revisit?: string; ffmpeg?: boolean } = {}) {
   mock.store(on)
   mock.clock(on)
   const asks: Ask[] = []
@@ -42,9 +42,11 @@ function engine(on: On, { python = true, revisit = REFINED }: { python?: boolean
   on('fs.write', async (_$, e) => { const { path, text } = e as { path: string; text: string }; files.set(path, text); return loose({ value: undefined }) })
   on('session.root', async () => loose({ value: '/home/t/zilo' }))
   on('process.spawn', async function* (_$, e) {
-    spawns.push([...(e as { argv: readonly string[] }).argv])
-    if (!python) { yield { stream: 'stderr' as const, text: 'env: python3: No such file or directory\n' }; return loose({ value: { code: 127, signal: null } }) }
-    yield { stream: 'stdout' as const, text: 'ok\n' }
+    const argv = [...(e as { argv: readonly string[] }).argv]
+    spawns.push(argv)
+    if (!python || (!ffmpeg && argv[0] === 'ffmpeg')) { yield { stream: 'stderr' as const, text: `env: ${argv[0]}: No such file or directory\n` }; return loose({ value: { code: 127, signal: null } }) }
+    // the roll's helper says where the clip went and how long it is
+    yield { stream: 'stdout' as const, text: argv[2] === 'join' ? `ok ${argv[5]} 9.4\n` : argv[2] === 'apng' ? `ok ${argv[12]} 8.7\n` : 'ok\n' }
     return loose({ value: { code: 0, signal: null } })
   })
   on('ui.open', async () => loose({ value: { isPlaced: true } }))
@@ -333,5 +335,57 @@ test('one picture larger than HD goes beside the work too (a command has ten sec
   r.draw([{ k: 'poly', pts: [[-2 * u, -2 * u], [2.5 * u, -2 * u], [2.5 * u, 1 * u], [-2 * u, 1 * u]], c0: [1, 1, 1], a: 1 }], 'dark') // x 2..6.5, y 2..5
   const cov = (x: number, y: number) => r.px[(y * 8 + x) * 4 + 3]!
   expect(cov(3, 3)).toBe(1); expect(cov(6, 3)).toBe(0.5); expect(cov(7, 3)).toBe(0); expect(cov(3, 5)).toBe(0); expect(cov(1, 3)).toBe(0)
+  await cmd($, 'paint off')
+})
+
+test('/spark convert roll: every painting laid down, held and crossfaded into a clip; frames by Spark, the MP4 by ffmpeg, beside the work; no tokens', async ($, on) => {
+  const { files, spawns, logs, toasts, asks } = engine(on)
+  expect(await say($, 'convert roll')).toMatch(/^no paintings yet this session/)
+  await cmd($, 'paint'); await say($, 'paint'); await settle()
+  expect(await say($, 'convert roll huge')).toMatch(/^roll size: hd/)
+  const n0 = asks.length
+  const started = await say($, 'convert roll 320')
+  expect(started).toMatch(/^rolling all 2 paintings into a clip, 320x180 MP4, about 9 s long, into \/home\/t\/zilo\/spark-paintings: each laid down, held with its title, then crossfaded into the next\. No tokens\./)
+  expect(await say($, 'convert roll 320')).toMatch(/^Spark is still converting: \d of 2 \(the roll\)/)
+  await until(() => logs.length >= 1)
+  expect(asks.length).toBe(n0) // nothing asked of any model
+  expect(spawns[0]).toEqual(['ffmpeg', '-hide_banner', '-version'])
+  const helper = spawns.filter((a) => a[0] === 'python3')
+  expect(helper.map((a) => a[2])).toEqual(['segment', 'segment', 'join']) // one painting at a time, then the whole
+  const work = helper[0]![3]!
+  expect(work).toMatch(/^\/home\/t\/zilo\/spark-paintings\/\.spark-roll-\d{4}-\d\d-\d\d-\d{4}$/)
+  expect(helper[0]!.slice(4)).toEqual(['0', '24', '320', '180', '1', '12', '3']) // 24 frames laid down at 12 a second, then held 3 s
+  expect(helper[2]!.slice(4)).toEqual(['2', helper[2]![5]!, '5', '0.6'])
+  expect(helper[2]![5]).toMatch(/\/spark-paintings\/spark-roll-\d{4}-\d\d-\d\d-\d{4}\.mp4$/)
+  // the frames: 24 a painting, the whole frame as base64 text
+  const frames = [...files.keys()].filter((f) => f.startsWith(work + '/'))
+  expect(frames).toHaveLength(48)
+  const last = files.get(`${work}/f000-023.b64.0`)!
+  expect(last.length).toBe(Math.ceil((320 * 180 * 3) / 3) * 4)
+  const rgb = Uint8Array.from(atob(last), (c) => c.charCodeAt(0))
+  const at = (x: number, y: number) => [rgb[(y * 320 + x) * 3]!, rgb[(y * 320 + x) * 3 + 1]!, rgb[(y * 320 + x) * 3 + 2]!]
+  expect(at(0, 0)).toEqual([18, 18, 20]) // the ground beside a wide painting... or the painting itself: either way a real colour
+  const lit = (y0: number, y1: number) => { let n = 0; for (let y = y0; y < y1; y++) for (let x = 0; x < 320; x++) { const [r, g, b] = at(x, y); if (r + g + b > 200) n++ } return n }
+  expect(lit(0, 120)).toBeGreaterThan(50) // the painting, laid down whole by the last frame
+  expect(lit(150, 180)).toBeGreaterThan(20) // its title under it
+  const first = Uint8Array.from(atob(files.get(`${work}/f000-000.b64.0`)!), (c) => c.charCodeAt(0))
+  let differ = 0
+  for (let i = 0; i < first.length; i++) if (first[i] !== rgb[i]) differ++
+  expect(differ).toBeGreaterThan(1000) // laid down mark by mark: the first frame is not the last
+  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings into \/home\/t\/zilo\/spark-paintings\/spark-roll-.*\.mp4 \(320x180 MP4, 9 s\), and the gallery page$/)
+  expect(toasts.at(-1)).toBe('Spark: the roll is ready (2 paintings)')
+  expect(files.get('/home/t/zilo/spark-paintings/index.html')).toMatch(/<video src="spark-roll-.*\.mp4" controls loop muted playsinline><\/video>/)
+  await cmd($, 'paint off')
+})
+
+test('without ffmpeg the roll is a smaller animated PNG, and Spark says how to get the MP4', { timeoutMs: 20000 }, async ($, on) => {
+  const { spawns, logs } = engine(on, { ffmpeg: false })
+  await cmd($, 'paint'); await settle()
+  expect(await say($, 'convert roll')).toMatch(/^rolling all 1 painting into a clip, 640x360 animated PNG \(ffmpeg was not found: sudo apt install ffmpeg for an MP4\)/)
+  await until(() => logs.length >= 1)
+  const helper = spawns.filter((a) => a[0] === 'python3')
+  expect(helper.map((a) => a[2])).toEqual(['apng'])
+  expect(helper[0]!.slice(4, 12)).toEqual(['1', '8', '640', '360', '1', '250', '2600', '3'])
+  expect(logs.at(-1)).toMatch(/^Spark: rolled 1 painting into .*spark-roll-.*\.png \(640x360 animated PNG: ffmpeg was not found, so a smaller one that plays in any browser \(sudo apt install ffmpeg for the MP4\), 9 s\)/)
   await cmd($, 'paint off')
 })
