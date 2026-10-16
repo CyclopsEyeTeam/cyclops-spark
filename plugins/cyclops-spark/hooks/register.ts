@@ -40,7 +40,7 @@ import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet
 import { KEEPER, PRISM } from './link-marks.js'
 import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
-import { motion, motionFor } from './motion.js'
+import { motion, motionFor, WIDTH as MOTION_W } from './motion.js'
 import { canvasFor, captionLines, captionStrip, galleryHTML, titleCard, HD_MARKS, markFloor, revisitRequest, rollLayout, rollSize, sceneSVG, SIZES, slug, withCaption } from './convert.js'
 
 const PANE = 'cyclops-spark'
@@ -280,11 +280,13 @@ function paneFrame(): { f: any; label: string; said: Said } {
 // CLAUDE'S OWN LINE, above Spark's: the builder's breath while a turn really runs, in Claude's colour, beside the word the
 // chat's spinner shows. A ring that fills and empties: slow while thinking, quicker while writing or calling tools.
 // Only while a turn runs; never in the replay
-// Claude's breath: four small motions (hooks/motion.js), one for what the turn is doing right now
-function voiceLine(f: any): string {
-  if (replay || turnBegan < 0) return ''
-  return motion(motionFor(f), now()) + ' ' + (spinnerWord || 'Working') + '…'
+// Claude's breath: small motions (hooks/motion.js), one for what the turn is doing right now, each exactly MOTION_W cells,
+// so the word beside it always starts in the same column (drawn in a slot of its own, so nothing can push it along)
+function voiceParts(f: any): [string, string] | null {
+  if (replay || turnBegan < 0) return null
+  return [motion(motionFor(f), now()), (spinnerWord || 'Working') + '…']
 }
+function voiceLine(f: any): string { const v = voiceParts(f); return v ? v[0] + ' ' + v[1] : '' }
 
 const statusText = (f: any) => f.glyph + ' ' + String(f.hover).replace(/^Spark · /, '')
 function pushStatus($: EngineInterface) {
@@ -1517,8 +1519,13 @@ export const register: Register = (on, options) => {
       ]
       const textRows = (width: number) => heldRows(width, lines.reduce((n, [t]) => n + wrapRows(t, width), 0))
       // her lines in a box of the rows held for them, so whatever sits below never moves when they change
+      // Claude's breath: its motion in a slot MOTION_W wide, then the word, always in the same column
+      const parts = voiceParts(f)
+      const breath = parts ? Box({ flexDirection: 'row', children: [
+        Box({ width: MOTION_W + 1, flexShrink: 0, children: [Text({ children: [parts[0]], wrap: 'truncate-end', color: 'claude' })] }),
+        Text({ children: [parts[1]], wrap: 'wrap', color: 'claude' })] }) : null
       const sparkText = (width: number) => [Box({ flexDirection: 'column', width, height: textRows(width),
-        children: lines.map(([t, style]) => Text({ children: [t], wrap: 'wrap', ...style })) })]
+        children: lines.map(([t, style], i) => i === 0 && breath && width > MOTION_W + 4 ? breath : Text({ children: [t], wrap: 'wrap', ...style })) })]
       const draw = (cols: number, rws: number) => {
         const site = siteFor(PANE, e.surface, cols, rws, 'panel', kitty)
         const fr = frameFor(site, f, true)

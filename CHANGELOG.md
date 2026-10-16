@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.7
+
+- **Claude's breath keeps its word in one place.** The motion beside the chat's word (Gitifying…, Swirling…) was 7
+  cells while thinking and 1 cell otherwise, so the word jumped left and right as the turn moved between them. Every
+  motion is now exactly 5 cells, drawn in a slot of its own, so the word always starts in the same column. The thinking
+  rail is shorter (5 cells, 2 s there and back), and the orbit and pulse are centred in the slot.
+- **New motions.** While a turn waits on you (a permission ask), an eye watches and blinks now and then (`‹◉›`).
+  While the conversation compacts, beads gather in from the edges and let go. And the waiting pulse sends a small
+  ripple out at its fullest.
+
 ## 1.7.6
 
 - **No more blue specks around Spark in HD.** Where both sides of a quarter-block cell were too faint to keep, the cell

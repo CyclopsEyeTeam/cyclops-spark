@@ -434,14 +434,16 @@ test('steady: a longer state line never moves the painting; the rows her lines n
     const spark = await term.find({ type: 'Raster', key: 'spark' })
     const label = await term.find({ type: 'Text', text: /^Spark · / })
     const effort = await term.find({ type: 'Text', text: /^xhigh effort$/ })
-    const voice = await term.find({ type: 'Text', text: /^[·∘○◎◉●◐◓◑◒ ]+ \S+…$/ })
+    const voice = await term.find({ type: 'Text', text: /^\S+…$/ }) // the word beside Claude's breath
+    const breath = await term.find({ type: 'Text', text: /^[·∘○◎◉●◐◓◑◒‹›◡─ ]{5}$/ }) // its motion, five cells
     await term.unmount()
     const boxes: any[] = []
     const walk = (n: any) => { if (!n || typeof n !== 'object') return; if (Array.isArray(n)) { n.forEach(walk); return } if (n.type === 'Box' && n.props?.height && JSON.stringify(n).includes('Spark · ')) boxes.push(n); walk(n.children); walk(n.props?.children) }
     walk(tree)
     const held = boxes.at(-1)?.props?.height
-    const order = (boxes.at(-1)?.children ?? boxes.at(-1)?.props?.children ?? []).map((c: any) => String(c.text ?? c.props?.children?.[0] ?? c.children?.[0] ?? ''))
-    return { rows: (spark?.props.rows ?? 0) + held, held, lines: wrapRows(String(label?.text), 30), effort: effort?.props, voice: voice?.props, order }
+    const textOf = (c: any): string => typeof c === 'string' ? c : !c || typeof c !== 'object' ? '' : c.type === 'Text' ? String(c.text ?? c.props?.children?.[0] ?? c.children?.[0] ?? '') : (c.children ?? c.props?.children ?? []).map(textOf).join('')
+    const order = (boxes.at(-1)?.children ?? boxes.at(-1)?.props?.children ?? []).map(textOf)
+    return { rows: (spark?.props.rows ?? 0) + held, held, lines: wrapRows(String(label?.text), 30), effort: effort?.props, voice: voice?.props, breath: breath?.props, order }
   }
   const before = await above()
   await $.turn.start(loose({ text: 'go', turnId: 's1' }))
@@ -453,6 +455,7 @@ test('steady: a longer state line never moves the painting; the rows her lines n
   expect(during.effort).toBeDefined() // the effort on a line of its own, at the bottom
   expect(during.effort?.dimColor).toBe(true)
   expect(during.voice?.color).toBe('claude') // and Claude's own breath above her line while the turn runs
+  expect(during.breath?.color).toBe('claude') // its motion in a slot of its own, so the word never moves
   expect(before.voice).toBeUndefined()
   expect(during.rows).toBe(before.rows) // the painting starts on the same row
   expect(after.rows).toBe(during.rows) // and a shorter line does not pull it back up
