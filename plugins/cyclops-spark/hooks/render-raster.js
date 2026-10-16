@@ -55,13 +55,14 @@ export function createRaster(W, H, { fill = false } = {}) {
   // its specks and lines visible with a floor of its own)
   // `res`: how many of this raster's pixels make one of the terminal's half-block pixels (2 for HD): the thinnest marks
   // keep the weight they have in the terminal, drawn at the finer grid
-  function draw(scene, theme, { over = false, floor = 0.6, res = 1 } = {}) {
+  function* drawing(scene, theme, { over = false, floor = 0.6, res = 1 } = {}) {
     const fl = Math.max(0.6 * res, floor), fw = Math.max(0.45 * res, floor * 0.75), fp = Math.max(0.5 * res, floor * 0.75) // dots, rings and arcs, paths
     px.fill(0)
     stamp.fill(-1)
     const additive = theme !== 'light' && !over
     let pid = 0
     for (const p of scene) {
+      yield // between marks: drawAsync may let other work in here
       pid++
       if (p.k === 'glow') {
         const r = Math.max(1, p.r * scale * 1.6), [cx, cy] = P(p.x, p.y)
@@ -155,18 +156,32 @@ export function createRaster(W, H, { fill = false } = {}) {
         for (const [x, y] of pts) { if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y }
         const x0 = Math.max(0, Math.floor(minx)), x1 = Math.min(W - 1, Math.ceil(maxx))
         const y0 = Math.max(0, Math.floor(miny)), y1 = Math.min(H - 1, Math.ceil(maxy))
-        const inside = (qx, qy) => { // even-odd
-          let hit = false
-          for (let i = 0, j = n - 1; i < n; j = i++) {
-            const [xi, yi] = pts[i], [xj, yj] = pts[j]
-            if ((yi > qy) !== (yj > qy) && qx < ((xj - xi) * (qy - yi)) / (yj - yi) + xi) hit = !hit
+        // even-odd, 2×2 subsamples a pixel (a soft edge), by scanlines: on each subsample row the edges it crosses, sorted;
+        // a subsample is inside between the 1st and 2nd crossing, the 3rd and 4th, ... (the same rule, point by point, as
+        // counting crossings to its right, but each row costs its edges once instead of every pixel costing them all)
+        const ex = new Float64Array(n), ey = new Float64Array(n)
+        for (let i = 0; i < n; i++) { ex[i] = pts[i][0]; ey[i] = pts[i][1] }
+        const span = x1 - x0 + 1, row = new Float32Array(span), xs = new Float64Array(n)
+        for (let y = y0; y <= y1; y++) {
+          row.fill(0)
+          for (const sy of [0.25, 0.75]) {
+            const qy = y + sy
+            let m = 0
+            for (let i = 0, j = n - 1; i < n; j = i++) {
+              const yi = ey[i], yj = ey[j]
+              if ((yi > qy) !== (yj > qy)) xs[m++] = ((ex[j] - ex[i]) * (qy - yi)) / (yj - yi) + ex[i]
+            }
+            if (m < 2) continue
+            const cross = xs.subarray(0, m).sort()
+            for (let k = 0; k + 1 < m; k += 2) {
+              const a = cross[k], b = cross[k + 1]
+              for (const sx of [0.25, 0.75]) { // pixel x holds this subsample when a <= x + sx < b
+                const from = Math.max(x0, Math.ceil(a - sx)), to = Math.min(x1, Math.ceil(b - sx) - 1)
+                for (let x = from; x <= to; x++) row[x - x0] += 0.25
+              }
+            }
           }
-          return hit
-        }
-        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-          let c = 0 // 2×2 subsamples: a soft edge
-          for (const [sx, sy] of [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]) if (inside(x + sx, y + sy)) c += 0.25
-          if (c > 0) touch(y * W + x, pid, c)
+          for (let i = 0; i < span; i++) if (row[i] > 0) touch(y * W + x0 + i, pid, row[i])
         }
         const c0 = p.c0, c1 = p.c1 || p.c0
         const same = c0[0] === c1[0] && c0[1] === c1[1] && c0[2] === c1[2]
@@ -197,7 +212,25 @@ export function createRaster(W, H, { fill = false } = {}) {
     }
     return px
   }
-  return { W, H, px, draw }
+  // the whole scene at once (what a frame does)
+  function draw(scene, theme, opts) {
+    const g = drawing(scene, theme, opts)
+    let r = g.next()
+    while (!r.done) r = g.next()
+    return r.value
+  }
+  // the same, handing over to `pause` (awaited) whenever it has run for `every` ms, so a large picture (a conversion)
+  // never holds everything else up for long
+  async function drawAsync(scene, theme, opts, pause, every = 25) {
+    const g = drawing(scene, theme, opts)
+    let since = Date.now(), r = g.next()
+    while (!r.done) {
+      if (Date.now() - since > every) { await pause(); since = Date.now() }
+      r = g.next()
+    }
+    return r.value
+  }
+  return { W, H, px, draw, drawAsync }
 }
 
 // Keeper's own colours, from keeper.svg (rim --keeper-accent, inner ring --keeper-main, pupil); deepened on light grounds
@@ -287,11 +320,12 @@ export function base64(bytes) {
 // those ways, so a cell is never worse than before: a fine line can now be half a cell wide and keep its full light.
 // Empty quarters stay the terminal's own background, as in toHalfBlocks.
 const QUAD = [0x20, 0x2598, 0x259d, 0x2580, 0x2596, 0x258c, 0x259e, 0x259b, 0x2597, 0x259a, 0x2590, 0x259c, 0x2584, 0x2599, 0x259f, 0x2588] // by mask: 1 top-left, 2 top-right, 4 bottom-left, 8 bottom-right
+const FAINT = 1 / 3
 export function toQuadrants(r, ground) {
   const { W, H, px } = r
   const cols = Math.floor(W / 2), rows = Math.floor(H / 4)
   const words = new Uint32Array(cols * rows * 3)
-  const qr = new Float64Array(4), qg = new Float64Array(4), qb = new Float64Array(4), empty = [false, false, false, false]
+  const qr = new Float64Array(4), qg = new Float64Array(4), qb = new Float64Array(4), qa = new Float64Array(4), empty = [false, false, false, false]
   const g0 = ground[0], g1 = ground[1], g2 = ground[2]
   let w = 0
   for (let cy = 0; cy < rows; cy++) {
@@ -302,7 +336,7 @@ export function toQuadrants(r, ground) {
         const k0 = (y * W + x) * 4, k1 = ((y + 1) * W + x) * 4
         const a = Math.min(1, (Math.min(1, px[k0 + 3]) + Math.min(1, px[k1 + 3])) / 2)
         const pr = (px[k0] + px[k1]) / 2, pg = (px[k0 + 1] + px[k1 + 1]) / 2, pb = (px[k0 + 2] + px[k1 + 2]) / 2
-        empty[q] = a < 0.05
+        empty[q] = a < 0.05; qa[q] = a
         // premultiplied colour over the assumed ground (what the eye sees)
         qr[q] = Math.min(1, pr + g0 * (1 - a)); qg[q] = Math.min(1, pg + g1 * (1 - a)); qb[q] = Math.min(1, pb + g2 * (1 - a))
         if (!empty[q]) lit++
@@ -321,11 +355,13 @@ export function toQuadrants(r, ground) {
         }
         if (err < bestErr - 1e-9) { bestErr = err; best = m }
       }
-      // each side's colour, or the terminal's own background where a side holds only empty quarters
+      // each side's colour, or the terminal's own background where a side is mostly empty: its colour is mixed over an
+      // assumed ground, so a faint side drawn as a colour would show that ground (near black) on whatever the terminal
+      // really is, as dark marks around her edges; below a third of cover it is left to the terminal instead
       const colour = (side) => {
-        let n = 0, sr = 0, sg = 0, sb = 0, anyLit = false
-        for (let q = 0; q < 4; q++) if (side & (1 << q)) { n++; sr += qr[q]; sg += qg[q]; sb += qb[q]; if (!empty[q]) anyLit = true }
-        if (!n || !anyLit) return DEFAULT
+        let n = 0, sr = 0, sg = 0, sb = 0, sa = 0
+        for (let q = 0; q < 4; q++) if (side & (1 << q)) { n++; sr += qr[q]; sg += qg[q]; sb += qb[q]; sa += empty[q] ? 0 : qa[q] }
+        if (!n || sa / n < FAINT) return DEFAULT
         return (to8(sr / n) << 16) | (to8(sg / n) << 8) | to8(sb / n)
       }
       let fgMask = best, fg = colour(best), bg = colour(15 ^ best)

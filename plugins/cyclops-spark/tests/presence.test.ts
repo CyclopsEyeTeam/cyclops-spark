@@ -142,7 +142,7 @@ test('HD by default: four pixels to a cell from the quadrant blocks, with the sa
   expect(await say($, 'hd off')).toMatch(/^hd off: two pixels to a cell/)
   const half = await look()
   for (const g of half.glyphs) expect([0x20, 0x2580, 0x2584].includes(g)).toBe(true)
-  expect(fine.light).toBeGreaterThan(half.light * 0.9) // the finer drawing keeps her light (never dimmer for being sharper)
+  expect(fine.light).toBeGreaterThan(half.light * 0.8) // the finer drawing keeps her light (the little it gives up is the faint fringe the half blocks mix over a near-black ground)
   expect(fine.light).toBeLessThan(half.light * 1.15)
   expect(await say($, 'hd')).toMatch(/^hd on:/)
   expect(await say($, 'hd maybe')).toBe('hd takes: on | off')
@@ -280,6 +280,7 @@ test('calm removes the ambient motion from the drawing, and palette and theme re
   engine(on)
   const cells = async () => { const ui = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...PANE }); const c = String((await ui.find({ type: 'Raster', key: 'spark' }))?.props.cells); await ui.unmount(); return c }
   const later = async () => { const t0 = Date.now(); while (Date.now() - t0 < 400) await Promise.resolve() } // real time passes (the drawing reads the wall clock)
+  await cmd($, 'hd off') // the ground is read from faint pixels mixed over it, which only the half blocks keep (HD leaves them to the terminal)
   await cmd($, 'calm on')
   const still = await cells(); await later()
   expect(await cells()).toBe(still) // nothing real happened, and nothing ambient moves: the same drawing
@@ -462,6 +463,7 @@ test('theme auto follows the host theme (and a host that says plain auto, or say
   on('config.set', async (_$, e) => loose({ value: String(e.value) }))
   on('command.register', async () => loose({ value: undefined }))
   on('session.start', async () => loose({ cwd: '/' }))
+  await cmd($, 'hd off') // the ground is read from faint pixels mixed over it, which only the half blocks keep
   await cmd($, 'calm on')
   const lightish = async () => { const ui = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...PANE }); const c = (await ui.find({ type: 'Raster', key: 'spark' }))?.props.cells; await ui.unmount(); return lightGround(c) }
   await $.session.start(loose({ cwd: '/', surface: 'terminal', isInteractive: true }))

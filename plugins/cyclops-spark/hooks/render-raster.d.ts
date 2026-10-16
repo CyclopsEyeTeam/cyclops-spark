@@ -1,5 +1,5 @@
 export const DEFAULT: number
-export type Raster = { W: number; H: number; px: Float32Array; draw(scene: any[], theme: string, o?: { over?: boolean; floor?: number; res?: number }): Float32Array }
+export type Raster = { W: number; H: number; px: Float32Array; draw(scene: any[], theme: string, o?: { over?: boolean; floor?: number; res?: number }): Float32Array; drawAsync(scene: any[], theme: string, o: { over?: boolean; floor?: number; res?: number } | undefined, pause: () => Promise<unknown>, every?: number): Promise<Float32Array> }
 export function createRaster(W: number, H: number, opts?: { fill?: boolean }): Raster
 export type Pixels = Pick<Raster, "W" | "H" | "px">
 export function toHalfBlocks(r: Pixels, ground: number[]): Uint32Array
