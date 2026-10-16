@@ -7,3 +7,5 @@ export function toQuadrants(r: Pixels, ground: number[]): Uint32Array
 export function toRGBA8(r: Raster): Uint8Array
 export function toRGB8(r: Raster, ground: number[]): Uint8Array
 export function base64(bytes: Uint8Array): string
+export function base64Async(bytes: Uint8Array, pause: () => Promise<unknown>, slice?: number): Promise<string>
+export function toRGB8Async(r: Raster, ground: number[], pause: () => Promise<unknown>, rows?: number): Promise<Uint8Array>

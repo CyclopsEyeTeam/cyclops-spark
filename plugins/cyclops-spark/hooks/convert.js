@@ -10,7 +10,8 @@
 
 import { REACTIONS } from './core.js'
 import { FONT, FONT_H } from './font.js'
-import { eyeRaster } from './eye.js'
+import { eyeRastering } from './eye.js'
+import { drain, drainAsync } from './steps.js'
 
 export const SIZES = { hd: 1920, '4k': 3840 }
 export const HD_MARKS = 240
@@ -286,7 +287,9 @@ export function rollSize(word) {
 // The first thing in the roll: the Cyclops eye over a soft glow in the session's own colour, the title (the name you gave
 // the conversation, or the project's) large in the bitmap font, and under it a dim line (Spark, the date, how many
 // paintings, the music's key). `alpha` (0..1) brings it all up out of the ground, for its fade in
-export function titleCard({ W, H, title, sub, ground, light = false, glow = [0.8, 0.5, 0.7], alpha = 1 }) {
+export function titleCard(o) { return drain(titleCarding(o)) }
+// the same, a row at a time, for titleCardAsync
+export function* titleCarding({ W, H, title, sub, ground, light = false, glow = [0.8, 0.5, 0.7], alpha = 1 }) {
   const rgb = new Uint8Array(W * H * 3)
   const g = ground.map((v) => Math.round(v * 255))
   const cx = W / 2, cy = H * 0.36
@@ -295,10 +298,11 @@ export function titleCard({ W, H, title, sub, ground, light = false, glow = [0.8
     const d2 = ((x - cx) / (W * 0.42)) ** 2 + ((y - cy) / (H * 0.42)) ** 2
     const k = (y * W + x) * 3, gl = Math.exp(-2.6 * d2) * 0.28 * alpha
     for (let c = 0; c < 3; c++) rgb[k + c] = Math.min(255, Math.round(light ? g[c] * (1 - gl * 0.5) + glow[c] * 255 * gl * 0.5 : g[c] + glow[c] * 255 * gl))
+    if (x === W - 1) yield
   }
   // the eye
   const eh = Math.round(H * 0.34), ew = Math.round((eh * 64) / 30)
-  const eye = eyeRaster(ew, eh, { light })
+  const eye = yield* eyeRastering(ew, eh, { light })
   const ex = Math.round(cx - ew / 2), ey = Math.round(cy - eh / 2)
   for (let y = 0; y < eh; y++) for (let x = 0; x < ew; x++) {
     const px = ex + x, py = ey + y
@@ -308,6 +312,7 @@ export function titleCard({ W, H, title, sub, ground, light = false, glow = [0.8
     const k = (py * W + px) * 3
     for (let c = 0; c < 3; c++) rgb[k + c] = Math.round(Math.min(1, eye.px[i + c] / Math.max(eye.px[i + 3], 1e-6)) * 255 * a + rgb[k + c] * (1 - a))
   }
+  yield
   // the title, as large as fits, and the line under it
   const inks = light ? [[40, 36, 48], [110, 102, 120]] : [[240, 232, 244], [150, 140, 162]]
   const tw = Math.max(1, textWidth(title))
@@ -318,3 +323,4 @@ export function titleCard({ W, H, title, sub, ground, light = false, glow = [0.8
   drawText(rgb, W, H, sub, Math.round(cx - (textWidth(sub) * ss) / 2), ty + FONT_H * s + s * 4, ss, inks[1], alpha)
   return rgb
 }
+export const titleCardAsync = (o, pause) => drainAsync(titleCarding(o), pause)

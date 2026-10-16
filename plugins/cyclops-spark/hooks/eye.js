@@ -5,6 +5,8 @@
 // with four twinkling crosses. Anything not part of the eye or a star is left empty, so the terminal's own background
 // shows through. Each pixel is the average of 3 x 3 samples, so the edges are smooth.
 
+import { drain } from './steps.js'
+
 const GW = 64, GH = 30
 const CX = GW / 2, CY = GH / 2, EW = 26, EH = 11
 const lid = (x) => { const t = (x - CX) / EW; return Math.abs(t) < 1 ? EH * (1 - t * t) : -1 }
@@ -52,7 +54,9 @@ function at(X, Y) {
 
 // A raster of the eye, W x H pixels (the shape of the banner: about 2.13 wide to 1 tall), premultiplied as
 // render-raster's are, for toQuadrants or toHalfBlocks
-export function eyeRaster(W, H, { light = false } = {}) {
+export function eyeRaster(W, H, o = {}) { return drain(eyeRastering(W, H, o)) }
+// the same, a row at a time (for a large eye: the roll's title card)
+export function* eyeRastering(W, H, { light = false } = {}) {
   const px = new Float32Array(W * H * 4)
   const { dots, crosses } = sky(light)
   const S = 3
@@ -64,6 +68,7 @@ export function eyeRaster(W, H, { light = false } = {}) {
     }
     const k = (y * W + x) * 4, n = S * S
     px[k] = r / n; px[k + 1] = g / n; px[k + 2] = b / n; px[k + 3] = a / n
+    if (x === W - 1) yield
   }
   // the sky, only where the eye is not
   const put = (x, y, c) => {

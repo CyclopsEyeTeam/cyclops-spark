@@ -4,8 +4,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { parsePainting, paintingScene } from '../hooks/painter.js'
-import { canvasFor, captionHeight, captionLines, captionStrip, flattenRGBA, galleryHTML, revisitRequest, sceneSVG, slug, withCaption } from '../hooks/convert.js'
-import { createRaster, toQuadrants, toRGB8 } from '../hooks/render-raster.js'
+import { canvasFor, captionHeight, captionLines, captionStrip, flattenRGBA, galleryHTML, revisitRequest, sceneSVG, slug, titleCard, titleCardAsync, withCaption } from '../hooks/convert.js'
+import { base64, base64Async, createRaster, toQuadrants, toRGB8, toRGB8Async } from '../hooks/render-raster.js'
 import { blur, layeredRaster, layeredStepper, layersOf } from '../hooks/layered.js'
 import { colourOf, rollScore } from '../hooks/music.js'
 
@@ -563,4 +563,48 @@ test('without a title card the roll starts with its first painting', { options: 
   expect(helper[0]!.slice(4, 5)).toEqual(['0'])
   expect(helper[2]!.slice(4)).toEqual(['1', helper[2]![5]!, '5', '0.6', helper[2]![8]!])
   await cmd($, 'paint off')
+})
+
+// Spark's hooks share one worker with the engine, which replaces it (and unloads the plugin, /spark with it, until it
+// reloads) when a heartbeat goes unanswered: a stretch of work that never hands over. Every large picture is made a
+// stretch at a time, handing over (awaiting `pause`) every few milliseconds
+test('a large picture never holds the worker: layered, faithful, the flattening, the text and the title card all hand over often', { timeoutMs: 60000 }, async () => {
+  const marks: Array<Record<string, unknown>> = [{ k: 'fill', pts: [[0, 0], [1, 0], [1, 1], [0, 1]], c: '#0b0a1e', c2: '#2a1850', grad: 0.25, a: 1 }]
+  for (let i = 0; i < 60; i++) marks.push({ k: ['glow', 'curve', 'dot', 'ring', 'spray', 'line', 'arc', 'fill'][i % 8], x: (i * 37 % 100) / 100, y: (i * 53 % 100) / 100, r: 0.3, w: 0.01, n: 12, s: 0.006, a0: 0, a1: 2, pts: [[0.1, 0.2], [0.8, 0.3], [0.5, 0.9], [0.2, 0.7]], c: '#ffbc75', c2: '#9ef2b8', a: 0.8 })
+  const p = parsePainting(JSON.stringify({ title: 'a long held breath', marks }))!
+  const W = 1920, H = 960
+  let last = Date.now(), worst = 0, pauses = 0
+  const pause = async () => { worst = Math.max(worst, Date.now() - last); pauses++; await Promise.resolve(); last = Date.now() }
+  const begin = () => { last = Date.now(); worst = 0; pauses = 0 }
+  begin()
+  const px = await layeredRaster(p, W, H, { theme: 'dark', pause })
+  worst = Math.max(worst, Date.now() - last)
+  expect(pauses).toBeGreaterThan(50)
+  expect(worst).toBeLessThan(400) // it was over a second at this size, with nothing handed over inside a blur
+  begin()
+  const r = createRaster(W, H)
+  await r.drawAsync(paintingScene(p, W, H, { reveal: 1, theme: 'dark' }), 'dark', { floor: 3 }, pause)
+  worst = Math.max(worst, Date.now() - last)
+  expect(worst).toBeLessThan(400) // a mark as large as the canvas hands over inside itself, row by row
+  // the stretch-at-a-time versions make exactly what the whole ones do
+  const g = [0.04, 0.04, 0.06]
+  const flat = await toRGB8Async(px as never, g, pause)
+  expect(flat).toEqual(toRGB8(px as never, g))
+  const odd = flat.subarray(0, 3 * 262144 * 2 + 7) // a tail that is no whole slice, nor a whole group of three
+  expect(await base64Async(odd, pause, 3 * 262144)).toBe(base64(odd))
+  const card = { W: 640, H: 360, title: 'musical-understanding-bridge-design', sub: 'Spark · 16 Oct 2026 · 3 paintings', ground: g, glow: [0.6, 0.5, 0.8] }
+  begin()
+  expect(await titleCardAsync(card, pause)).toEqual(titleCard(card))
+  expect(pauses).toBeGreaterThan(0)
+})
+
+test('a layered roll keeps its buffers: frame after frame asks no new picture-sized memory, and the last frame is the whole picture', { timeoutMs: 30000 }, async () => {
+  const p = parsePainting(PAINTING)!
+  const st = layeredStepper(p, 320, 160, { theme: 'dark' })
+  const frames: Float32Array[] = []
+  for (let f = 1; f <= 8; f++) frames.push(await st.frame((f / 8) * p.marks.length - (f < 8 ? 0.5 : 0)))
+  expect(new Set(frames.slice(0, -1)).size).toBe(1) // one frame buffer, reused
+  const whole = await layeredRaster(p, 320, 160, { theme: 'dark' })
+  expect(Array.from(frames.at(-1)!)).toEqual(Array.from(whole.px))
+  expect(await st.frame(p.marks.length)).toBe(frames.at(-1)!) // asked again, the same picture, not composed twice
 })

@@ -49,6 +49,27 @@ export function createRaster(W, H, { fill = false } = {}) {
     }
     nt = 0
   }
+  // the same, handing over every 65536 pixels: a mark that covers a 4k canvas touches millions
+  function* flushing(col, a, additive, colAt) {
+    const all = nt
+    for (let i0 = 0; i0 < all; i0 += 65536) {
+      const end = Math.min(all, i0 + 65536)
+      for (let i = i0; i < end; i++) {
+        const p = touched[i], k = p * 4
+        const c = colAt ? colAt(p) : col
+        const al = cov[p] * a
+        if (additive) {
+          px[k] += c[0] * al; px[k + 1] += c[1] * al; px[k + 2] += c[2] * al
+          px[k + 3] = 1 - (1 - px[k + 3]) * (1 - al)
+        } else {
+          px[k] = c[0] * al + px[k] * (1 - al); px[k + 1] = c[1] * al + px[k + 1] * (1 - al); px[k + 2] = c[2] * al + px[k + 2] * (1 - al)
+          px[k + 3] = al + px[k + 3] * (1 - al)
+        }
+      }
+      yield
+    }
+    nt = 0
+  }
 
   // `over`: paint each mark over the last (as paper does) instead of adding its light, on any ground
   // `floor`: the thinnest a mark is drawn, in pixels (a speck is a whole cell in the terminal; a large picture keeps
@@ -70,33 +91,33 @@ export function createRaster(W, H, { fill = false } = {}) {
         const r = Math.max(1, p.r * scale * 1.6), [cx, cy] = P(p.x, p.y)
         const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(W - 1, Math.ceil(cx + r))
         const y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(H - 1, Math.ceil(cy + r))
-        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        for (let y = y0; y <= y1; y++, yield) for (let x = x0; x <= x1; x++) {
           const d2 = ((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2) / (r * r)
           if (d2 < 1) touch(y * W + x, pid, Math.exp(-4.2 * d2) * (1 - d2))
         }
-        flush(p.c, p.a * (additive ? 0.9 : 0.5), true)
+        yield* flushing(p.c, p.a * (additive ? 0.9 : 0.5), true)
       } else if (p.k === 'dot') {
         const r = Math.max(fl, p.r * scale), [cx, cy] = P(p.x, p.y)
         const x0 = Math.max(0, Math.floor(cx - r - 1)), x1 = Math.min(W - 1, Math.ceil(cx + r + 1))
         const y0 = Math.max(0, Math.floor(cy - r - 1)), y1 = Math.min(H - 1, Math.ceil(cy + r + 1))
-        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        for (let y = y0; y <= y1; y++, yield) for (let x = x0; x <= x1; x++) {
           const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy)
           const c = Math.max(0, Math.min(1, r + 0.5 - d))
           if (c > 0) touch(y * W + x, pid, c)
         }
-        flush(p.c, p.a, additive)
+        yield* flushing(p.c, p.a, additive)
       } else if (p.k === 'ring') {
         const r = p.r * scale, hw = Math.max(fw, (p.w * scale) / 2), [cx, cy] = P(p.x, p.y)
         const x0 = Math.max(0, Math.floor(cx - r - 2)), x1 = Math.min(W - 1, Math.ceil(cx + r + 2))
         const y0 = Math.max(0, Math.floor(cy - r - 2)), y1 = Math.min(H - 1, Math.ceil(cy + r + 2))
-        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        for (let y = y0; y <= y1; y++, yield) for (let x = x0; x <= x1; x++) {
           const dx = x + 0.5 - cx, dy = y + 0.5 - cy
           const d = Math.abs(Math.hypot(dx, dy) - r)
           let c = Math.max(0, Math.min(1, hw + 0.5 - d))
           if (c > 0 && p.dash && Math.sin(Math.atan2(dy, dx) * 14) < 0) c *= 0.15
           if (c > 0) touch(y * W + x, pid, c)
         }
-        flush(p.c, p.a, additive)
+        yield* flushing(p.c, p.a, additive)
       } else if (p.k === 'slot') {
         // Keeper's slot: his own mark, never Spark's. The single eye from cyclops-keeper's keeper.svg (GPT's design):
         // a dark aperture in a lavender rim, a pale-gold inner ring and a slit pupil, in his own colours, not Spark's.
@@ -118,23 +139,23 @@ export function createRaster(W, H, { fill = false } = {}) {
         }
         // the aperture itself: dark glass, so the rim and pupil read as an eye on any ground
         pid++
-        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        for (let y = y0; y <= y1; y++, yield) for (let x = x0; x <= x1; x++) {
           const c = Math.max(0, Math.min(1, R + 0.5 - Math.hypot(x + 0.5 - cx, y + 0.5 - cy)))
           if (c > 0) touch(y * W + x, pid, c)
         }
-        flush(K.glass, 0.85 * a, false)
+        yield* flushing(K.glass, 0.85 * a, false)
         ringAt(R, Math.max(0.45, R * 0.07), K.rim, a)            // rim (lavender)
         ringAt(R * 0.67, Math.max(0.4, R * 0.045), K.ring, 0.8 * a) // inner ring (pale gold)
         // the slit pupil: a vesica, tall and narrow; narrower still while he waits on you
         const hh = R * 0.4, hw = R * (p.asking ? 0.08 : 0.17)
         pid++
-        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        for (let y = y0; y <= y1; y++, yield) for (let x = x0; x <= x1; x++) {
           const dy = (y + 0.5 - cy) / hh
           if (Math.abs(dy) >= 1) continue
           const c = Math.max(0, Math.min(1, Math.max(0.5, hw * (1 - dy * dy)) + 0.5 - Math.abs(x + 0.5 - cx)))
           if (c > 0) touch(y * W + x, pid, c * (1 - dy * dy * 0.5))
         }
-        flush(K.pupil, a, false)
+        yield* flushing(K.pupil, a, false)
       } else if (p.k === 'arc') {
         // part of a ring, from angle a0 to a1 (radians, clockwise on screen), the ends rounded by the stroke's width
         const r = p.r * scale, hw = Math.max(fw, (p.w * scale) / 2), [cx, cy] = P(p.x, p.y)
@@ -142,14 +163,14 @@ export function createRaster(W, H, { fill = false } = {}) {
         const x0 = Math.max(0, Math.floor(cx - r - hw - 2)), x1 = Math.min(W - 1, Math.ceil(cx + r + hw + 2))
         const y0 = Math.max(0, Math.floor(cy - r - hw - 2)), y1 = Math.min(H - 1, Math.ceil(cy + r + hw + 2))
         const ex = [cx + r * Math.cos(a0), cy + r * Math.sin(a0)], ey = [cx + r * Math.cos(a0 + span), cy + r * Math.sin(a0 + span)]
-        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        for (let y = y0; y <= y1; y++, yield) for (let x = x0; x <= x1; x++) {
           const dx = x + 0.5 - cx, dy = y + 0.5 - cy
           const at = ((Math.atan2(dy, dx) - a0) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2)
           let d = at <= span ? Math.abs(Math.hypot(dx, dy) - r) : Math.min(Math.hypot(x + 0.5 - ex[0], y + 0.5 - ex[1]), Math.hypot(x + 0.5 - ey[0], y + 0.5 - ey[1]))
           const c = Math.max(0, Math.min(1, hw + 0.5 - d))
           if (c > 0) touch(y * W + x, pid, c)
         }
-        flush(p.c, p.a, additive)
+        yield* flushing(p.c, p.a, additive)
       } else if (p.k === 'poly') {
         // a filled shape: its points in order, closed; the colour runs from c0 to c1 along `grad` (an angle) when they differ
         const pts = p.pts.map(([x, y]) => P(x, y)), n = pts.length
@@ -164,7 +185,7 @@ export function createRaster(W, H, { fill = false } = {}) {
         const ex = new Float64Array(n), ey = new Float64Array(n)
         for (let i = 0; i < n; i++) { ex[i] = pts[i][0]; ey[i] = pts[i][1] }
         const span = x1 - x0 + 1, row = new Float32Array(span), xs = new Float64Array(n)
-        for (let y = y0; y <= y1; y++) {
+        for (let y = y0; y <= y1; y++, yield) {
           row.fill(0)
           for (const sy of [0.25, 0.75]) {
             const qy = y + sy
@@ -189,7 +210,7 @@ export function createRaster(W, H, { fill = false } = {}) {
         const same = c0[0] === c1[0] && c0[1] === c1[1] && c0[2] === c1[2]
         const gx = Math.cos(p.grad || 0), gy = Math.sin(p.grad || 0)
         const lo = Math.min(...pts.map(([x, y]) => x * gx + y * gy)), hi = Math.max(...pts.map(([x, y]) => x * gx + y * gy))
-        flush(c0, p.a, additive, same ? null : (q) => { const u = hi > lo ? (((q % W) + 0.5) * gx + (Math.floor(q / W) + 0.5) * gy - lo) / (hi - lo) : 0; return [c0[0] + (c1[0] - c0[0]) * u, c0[1] + (c1[1] - c0[1]) * u, c0[2] + (c1[2] - c0[2]) * u] })
+        yield* flushing(c0, p.a, additive, same ? null : (q) => { const u = hi > lo ? (((q % W) + 0.5) * gx + (Math.floor(q / W) + 0.5) * gy - lo) / (hi - lo) : 0; return [c0[0] + (c1[0] - c0[0]) * u, c0[1] + (c1[1] - c0[1]) * u, c0[2] + (c1[2] - c0[2]) * u] })
       } else if (p.k === 'path') {
         const pts = p.pts.map(([x, y]) => P(x, y)), n = pts.length
         const hw = Math.max(fp, (p.w * scale) / 2)
@@ -199,7 +220,7 @@ export function createRaster(W, H, { fill = false } = {}) {
           const x0 = Math.max(0, Math.floor(Math.min(ax, bx) - hw - 1)), x1 = Math.min(W - 1, Math.ceil(Math.max(ax, bx) + hw + 1))
           const y0 = Math.max(0, Math.floor(Math.min(ay, by) - hw - 1)), y1 = Math.min(H - 1, Math.ceil(Math.max(ay, by) + hw + 1))
           const vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy || 1e-6
-          for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+          for (let y = y0; y <= y1; y++, yield) for (let x = x0; x <= x1; x++) {
             const qx = x + 0.5 - ax, qy = y + 0.5 - ay
             const u = Math.max(0, Math.min(1, (qx * vx + qy * vy) / L2))
             const d = Math.hypot(qx - u * vx, qy - u * vy)
@@ -209,7 +230,7 @@ export function createRaster(W, H, { fill = false } = {}) {
         }
         const c0 = p.c0, c1 = p.c1
         const same = c0[0] === c1[0] && c0[1] === c1[1] && c0[2] === c1[2]
-        flush(c0, p.a, additive, same ? null : (q) => { const u = segOf.get(q) || 0; return [c0[0] + (c1[0] - c0[0]) * u, c0[1] + (c1[1] - c0[1]) * u, c0[2] + (c1[2] - c0[2]) * u] })
+        yield* flushing(c0, p.a, additive, same ? null : (q) => { const u = segOf.get(q) || 0; return [c0[0] + (c1[0] - c0[0]) * u, c0[1] + (c1[1] - c0[1]) * u, c0[2] + (c1[2] - c0[2]) * u] })
       }
     }
     return px
@@ -266,6 +287,22 @@ export function toRGB8(r, ground) {
   return out
 }
 
+// the same, a band of rows at a time, awaiting `pause` between bands: a 4k picture is millions of pixels, and Spark's
+// hooks share one worker that must keep answering (a stretch of work that never hands over gets the worker replaced)
+export async function toRGB8Async(r, ground, pause, rows = 64) {
+  const { W, H, px } = r
+  const out = new Uint8Array(W * H * 3)
+  for (let y0 = 0; y0 < H; y0 += rows) {
+    const end = Math.min(H, y0 + rows) * W
+    for (let i = y0 * W; i < end; i++) {
+      const k = i * 4, a = Math.min(1, px[k + 3])
+      out[i * 3] = to8(px[k] + ground[0] * (1 - a)); out[i * 3 + 1] = to8(px[k + 1] + ground[1] * (1 - a)); out[i * 3 + 2] = to8(px[k + 2] + ground[2] * (1 - a))
+    }
+    await pause()
+  }
+  return out
+}
+
 // any terminal: Raster cells [codePoint, fg, bg] — '▀' top pixel as fg, bottom as bg; the terminal's own default
 // background where a pixel is (nearly) empty, so the entity sits on whatever the terminal's ground is.
 export const DEFAULT = 0x01000000
@@ -311,6 +348,14 @@ export function base64(bytes) {
   if (typeof TextDecoder !== 'undefined') return new TextDecoder().decode(out)
   let s = ''
   for (let k = 0; k < out.length; k += 0x8000) s += String.fromCharCode.apply(null, out.subarray(k, k + 0x8000))
+  return s
+}
+
+// the same, a slice at a time, awaiting `pause` between slices (each slice a whole number of 3-byte groups, so the
+// pieces join into exactly the one string)
+export async function base64Async(bytes, pause, slice = 3 * 262144) {
+  let s = ''
+  for (let i = 0; i < bytes.length; i += slice) { s += base64(bytes.subarray(i, Math.min(bytes.length, i + slice))); await pause() }
   return s
 }
 

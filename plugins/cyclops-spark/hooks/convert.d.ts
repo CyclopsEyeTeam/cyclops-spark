@@ -18,3 +18,4 @@ export function galleryHTML(items: Array<{ file: string; title: string; when: st
 export function drawText(rgb: Uint8Array, W: number, H: number, text: string, x0: number, y0: number, s: number, ink: number[], alpha?: number): number
 export function textWidth(text: string): number
 export function titleCard(o: { W: number; H: number; title: string; sub: string; ground: number[]; light?: boolean; glow?: number[]; alpha?: number }): Uint8Array
+export function titleCardAsync(o: { W: number; H: number; title: string; sub: string; ground: number[]; light?: boolean; glow?: number[]; alpha?: number }, pause: () => Promise<unknown>): Promise<Uint8Array>
