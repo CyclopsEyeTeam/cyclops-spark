@@ -34,6 +34,7 @@ import { buildScene, createPresence, laneFor, PAINT_TOWARD, PALETTE_NAMES } from
 import { base64, createRaster, toHalfBlocks, toQuadrants, toRGB8, toRGBA8 } from './render-raster.js'
 import { eyeColumns, eyeRaster } from './eye.js'
 import { layeredFloor, layeredRaster, layeredScenes, layeredStepper } from './layered.js'
+import { rollScore } from './music.js'
 import { buildTrace, replayAt } from './trace.js'
 import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
 import { KEEPER, PRISM } from './link-marks.js'
@@ -62,6 +63,7 @@ let kitty = false
 let welcomeOn = true
 let welcome = false
 let welcomeArt: { key: string; cells: string } | null = null
+let rollMusic = true // the roll's own music, read from its paintings (hooks/music.js); the rollMusic setting turns it off
 let hd = true // HD cells: four pixels to a cell (quadrant blocks) instead of two, in any terminal; /spark hd off returns to half blocks
 // /spark focus. Presentation only: it never touches the presence (no event, no restart). Spark gets a large pane beside the
 // conversation, which is never hidden or changed: the work keeps rolling, readable, and the prompt keeps the keyboard.
@@ -715,12 +717,14 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string): Pr
   const est = jobsEstimate(list.map((source) => ({ source, way })))
   convertProgress = { done: 0, total: n, what: `the roll, ${way}` }
   const notes: string[] = []
+  const rolled: Array<Painting & { shape: string }> = [] // the paintings as rolled (revisited ones as the painter gave them back): the music is read from these
   const run = async (): Promise<string> => {
     try {
       const gb = g.map((v) => Math.round(v * 255))
       for (let i = 0; i < n; i++) {
         let p: Painting & { shape: string } = list[i]!
         if (revisits(way)) { const r = await revisitPainting($, p, way as 'refined' | 'interpretive'); p = r.p; if (!r.ok && !notes.length) notes.push(r.note.replace(/^the painter/, 'for some paintings the painter')) }
+        rolled.push(p)
         const lines = captionLines(p.title, `${i + 1} of ${n}`, when)
         const L = rollLayout(p.shape, W, H, lines.length)
         // the frame: the ground, the caption strip at the bottom (the same for all this painting's frames), the painting
@@ -765,15 +769,24 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string): Pr
         logRecent('roll ' + (i + 1))
       }
       const out = `${folder}/${name}`
+      // the music: read from the paintings as rolled, played by the helper into a WAV the join lays under the clip
+      let music = '', key = ''
+      if (video && rollMusic) {
+        const score = rollScore(rolled, { reveal: ROLL.reveal, hold: ROLL.hold, fade: ROLL.fade })
+        await $.fs.write(`${work}/score.json`, JSON.stringify(score))
+        const played = await runHelper($, ['music', `${work}/score.json`, `${work}/music.wav`])
+        if (played.ok) { music = `${work}/music.wav`; key = score.key }
+        else notes.push('no music: ' + (played.err.trim().slice(-120) || 'the helper could not play it'))
+      }
       const made = video
-        ? await runHelper($, ['join', work, String(n), out, String(ROLL.reveal + ROLL.hold), String(ROLL.fade)])
+        ? await runHelper($, ['join', work, String(n), out, String(ROLL.reveal + ROLL.hold), String(ROLL.fade), ...(music ? [music] : [])])
         : await runHelper($, ['apng', work, String(n), String(frames), String(W), String(H), String(parts), '250', '2600', '3', out])
       if (!made.ok) return 'no roll: ' + (/No such file|not found|ENOENT/i.test(made.err) && !made.out ? 'python3 was not found (the roll needs it)' : made.err.trim().slice(-160) || 'the helper could not make it')
       const secs = Number(made.out.trim().split(/\s+/)[2]) || 0
       converted.push({ file: name, title: `the roll · ${plural(n)}`, when: d.toTimeString().slice(0, 5), mode: `roll, ${way}${video ? '' : ', animated PNG'}` })
       await $.fs.write(`${folder}/index.html`, galleryHTML(converted))
       const long = secs >= 60 ? `${Math.floor(secs / 60)} min ${Math.round(secs % 60)} s` : `${Math.round(secs)} s`
-      return `rolled ${plural(n)} (${way}) into ${out} (${video ? `${W}x${H} MP4` : `${W}x${H} animated PNG: ffmpeg was not found, so a smaller one that plays in any browser (sudo apt install ffmpeg for the MP4)`}, ${long}), and the gallery page` + (notes.length ? '. ' + notes[0] : '')
+      return `rolled ${plural(n)} (${way}) into ${out} (${video ? `${W}x${H} MP4${key ? `, with its own music in ${key}` : ''}` : `${W}x${H} animated PNG: ffmpeg was not found, so a smaller one that plays in any browser (sudo apt install ffmpeg for the MP4)`}, ${long}), and the gallery page` + (notes.length ? '. ' + notes[0] : '')
     } catch (err) {
       return 'no roll: ' + String((err as Error)?.message || err).slice(0, 120)
     } finally {
@@ -787,7 +800,7 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string): Pr
     await quietly(() => $.ui.log('Spark: ' + text))
     await quietly(() => $.ui.toast(text.startsWith('rolled') ? `Spark: the roll is ready (${plural(n)}, ${way})` : 'Spark: ' + text))
   })
-  return `rolling all ${plural(n)} into a clip, ${way}, ${video ? `${W}x${H} MP4, about ${Math.round(length)} s long` : `${W}x${H} animated PNG (ffmpeg was not found: sudo apt install ffmpeg for an MP4)`}, into ${folder}: each laid down, held with its title, then crossfaded into the next. ${calls ? `${calls} painter ${calls === 1 ? 'call' : 'calls'}, about ${kilo(est)} tokens` : 'No tokens'}. It goes on beside the work; Spark says when it is done (/spark state shows how far)`
+  return `rolling all ${plural(n)} into a clip, ${way}, ${video ? `${W}x${H} MP4, about ${Math.round(length)} s long` : `${W}x${H} animated PNG (ffmpeg was not found: sudo apt install ffmpeg for an MP4)`}, into ${folder}: each laid down, held with its title, then crossfaded into the next${video && rollMusic ? ', to music of its own, read from the paintings' : ''}. ${calls ? `${calls} painter ${calls === 1 ? 'call' : 'calls'}, about ${kilo(est)} tokens` : 'No tokens'}. It goes on beside the work; Spark says when it is done (/spark state shows how far)`
 }
 
 // A live painting, if the turn has run long enough since the last one and this is a moment (or she has waited enough)
@@ -1129,6 +1142,7 @@ export const register: Register = (on, options) => {
   if (SOUNDS.includes(o.sound as Sound)) sound = o.sound as Sound
   if (typeof o.calm === 'boolean') calm = o.calm
   if (typeof o.hd === 'boolean') hd = o.hd
+  if (typeof o.rollMusic === 'boolean') rollMusic = o.rollMusic
   if (typeof o.welcome === 'boolean') welcomeOn = o.welcome
   if (typeof o.statusLine === 'boolean') statusOn = o.statusLine
   if (typeof o.murmur === 'boolean') murmurOn = o.murmur
