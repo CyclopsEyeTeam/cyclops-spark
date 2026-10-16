@@ -618,6 +618,7 @@ test('focus: Spark large beside the conversation, which is never hidden; the pro
   expect(await draw('AssistantMessage', 'The build is green.')).toBe('reply row')
   expect(await draw('PromptHint', '')).toBe('hint')
   expect(await settings($)).toMatch(/status on/) // focus leaves the status entry alone too
+
   expect((await focus('focus')).text).toBe('focus off: back to your view')
   expect(closes).toContain('cyclops-spark') // the pane was closed before focus, so it closes again
   expect(await settings($)).toMatch(/status on/)
