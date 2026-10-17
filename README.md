@@ -112,6 +112,7 @@ This is separate from the plugin: installing Spark any other way does not add it
 | `/spark convert roll short` | The roll upright, 1080 x 1920, for YouTube Shorts and phones: each painting large with its caption right under it, the title card upright too (`-short.mp4`). Spark says if it runs past the 3 minutes a Short can be. |
 | `/spark convert roll` | Every painting of the session as a clip, in any of the four ways: each laid down mark by mark, held with its title for a bar or two of its own, crossfaded into the next (MP4 with ffmpeg; `roll truest hd` for 1080p). |
 | `/spark copy` | What you last said to Spark and her answer, whole, onto your clipboard (or press ⧉ copy under her answer). A terminal's own selection copies screen rows, so beside the conversation it takes half of each. |
+| `/spark prism` | Painting with Prism: what is linked; `off`, `on`, or a folder. Her paintings this session join the story, converts and rolls, credited to her, and Spark's are shared with her. |
 | `/spark help` | This list. |
 
 The defaults for palette, theme, calm, sound, chime threshold, status line, murmur, the top strip, Cyclops Link, the
@@ -154,6 +155,14 @@ a halo stays amber, a pink trail over a violet ground stays pink (it used to be 
 all of those pale). In HD, a cell's quarters are averaged in linear light and its two colours chosen by how different
 they look (Oklab), so the colours that give a painting its character stay apart as it shrinks into cells. The first HD
 encoder is kept in the code (`toQuadrantsClassic`) as the reference the new one is measured against.
+
+**Painting with Prism.** Prism, the Cyclops Eye Team's Gemini presence, paints with the same brush and keeps her
+paintings as JSON files of the same marks in `prism-paintings` in the project. The ones she paints during your session
+join Spark's story in the order they were painted, marked `· Prism’s`. Converting one of hers credits her on the
+picture, and the roll is the two of them, with "Spark & Prism" on its title card. Her files are only read. While her
+folder is there, Spark shares hers the same way: each new painting is also written as `NN-title.json` into
+`spark-paintings`, containing only the painting, never the work. `/spark prism` shows what is linked; `/spark prism off`,
+`on`, or `/spark prism <folder>` changes it, as does the Prism's paintings setting.
 
 **Her opening.** The first painting of a conversation is not of the work: at the start there is next to nothing to
 paint from, so the first is hers, an opening made before the work has a shape. The painter is told nothing of the
