@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.19
+
+- **Save her painting as it is: `/spark save`, or ⤓ save at the top of her pane.** No menus, no tokens. Into the convert
+  folder go the painting as the terminal showed it, cell by cell (`NN-title-terminal.png`, each cell 16 x 32 pixels,
+  and `-terminal.svg`, its blocks as rects, crisp at any size), and the painting itself as JSON (`NN-title.json`: its
+  title, marks and shape, and the cells it was drawn in), the original a redraw elsewhere can start from. Both images
+  keep the terminal's colour depth. The gallery page lists it.
+- **Side by side: `/spark convert side`** (or `all side`). The painting as her pane showed it, beside the same painting
+  made large (truest), the two the same size and level, with the caption under both ("side by side"): what she painted
+  in the terminal, and what it becomes. PNG and SVG (the cells as rects, the truest painting nested). By word only,
+  since the dialog holds four ways; not for the roll.
+
 ## 1.7.18
 
 - **Spark in Studio's panes again (One Spark).** Since the public line took over from the old Studio one, Spark wrote no
@@ -236,7 +248,6 @@
   and in HD cells. It takes up to 9 rows, keeps two for anything else in the band, shows the eye alone when narrow, and
   leaves the band to a survey. The **Welcome eye** setting turns it off. The launch banner a shell prints is covered
   when Claude Code takes the whole screen; this one is Claude Code's own drawing, so it stays.
-
 ## Unreleased
 
 - **Optional Cyclops launch banner.** `./install.sh` can add the Cyclops eye, drawn in truecolour half blocks, to the
