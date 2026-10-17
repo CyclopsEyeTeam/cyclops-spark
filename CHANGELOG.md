@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.16
+
+- **Her tools are back in a tall pane.** Whether the story, convert and roll buttons fit was still worked out from
+  Spark's full height, from before she learned to share her rows with the painting, so in some panes (74 x 48, say)
+  they vanished though there was room. They now count the rows Spark really keeps.
+
 ## 1.7.15
 
 - **Spark sits higher and her painting is larger.** In a side pane she used to take all the rows her width gave her and
