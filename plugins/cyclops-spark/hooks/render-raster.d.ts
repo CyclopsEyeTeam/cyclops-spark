@@ -13,3 +13,4 @@ export function base64(bytes: Uint8Array): string
 export function posterize(rgb: Uint8Array, levels: number): Uint8Array
 export function base64Async(bytes: Uint8Array, pause: () => Promise<unknown>, slice?: number): Promise<string>
 export function toRGB8Async(r: Raster, ground: number[], pause: () => Promise<unknown>, rows?: number): Promise<Uint8Array>
+export function cellsToRGB(words: Uint32Array, cols: number, rows: number, cw: number, ch: number, ground: number[], levels?: number): Uint8Array

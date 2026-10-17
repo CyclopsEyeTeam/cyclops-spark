@@ -20,3 +20,6 @@ export function textWidth(text: string): number
 export function titleCard(o: { W: number; H: number; title: string; sub: string; ground: number[]; light?: boolean; glow?: number[]; alpha?: number }): Uint8Array
 export function titleCardAsync(o: { W: number; H: number; title: string; sub: string; ground: number[]; light?: boolean; glow?: number[]; alpha?: number }, pause: () => Promise<unknown>): Promise<Uint8Array>
 export const SHORT_MAX_S: number
+export function sideLayout(shape: string, width: number): { W: number; H: number; gap: number; pw: number; ph: number; lx: number; rx: number; y: number }
+export function cellsSVG(words: Uint32Array, cols: number, rows: number, x: number, y: number, cw: number, ch: number, ground: number[], levels?: number): string
+export function sideSVG(o: { layout: ReturnType<typeof sideLayout>; cells: Uint32Array; cols: number; rows: number; cw: number; ch: number; truest: string; theme?: string; title?: string; caption?: unknown; ground: number[]; levels?: number }): string
