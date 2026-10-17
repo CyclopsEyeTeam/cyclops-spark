@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.7.11
+
+- **Spark's adventures as Shorts.** `/spark convert roll short` (also `shorts` or `vertical`, with any way:
+  `/spark convert roll truest short`) makes the roll upright, 1080 x 1920, for YouTube Shorts and phones. Each painting
+  is as large as the frame allows, with its caption larger and right under it, the two together a little above the
+  middle. The eye's title card fits the upright frame too. The file ends in `-short.mp4`. If a long session runs past
+  the 3 minutes a Short can be, Spark says so when the roll starts.
+- **The progress bar no longer goes stale.** A still Spark (idle, resting) only redraws when something asks it to, so
+  the bar sat at its first moment (1%) and stayed there after the work was done. Each move of a convert or roll now
+  asks for a redraw (at most every 200 ms), and the end always does, so the bar goes when the work is done.
+
 ## 1.7.10
 
 - **A progress bar under her tools.** While Spark converts or makes a roll beside your work, a second row appears under
