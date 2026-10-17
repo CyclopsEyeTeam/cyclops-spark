@@ -134,7 +134,7 @@ test('an answer that is not a painting, or a failed call, draws nothing new and 
   await cmd($, 'paint off')
 })
 
-test('Spark shares her room: the painting gets the rows it needs to be as large as the width allows, she keeps at least 45% and never grows; a small room gives just the title, then waits', async ($, on) => {
+test('Spark shares her room: the painting gets the rows it needs to be as large as the width allows, she keeps at least half and never grows; a small room gives just the title, then waits', async ($, on) => {
   engine(on)
   const sparkRows = async (cols: number, rows: number) => {
     const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(cols, rows) })
@@ -154,7 +154,7 @@ test('Spark shares her room: the painting gets the rows it needs to be as large 
     const [c, r] = sizes[i]!
     const got = await sparkRows(c, r)
     expect(got.spark!).toBeLessThanOrEqual(without[i]!.spark) // never larger for the painting,
-    expect(got.spark!).toBeGreaterThanOrEqual(Math.min(without[i]!.spark, Math.max(8, Math.round((r - 4) * 0.45)))) // and never less than her share
+    expect(got.spark!).toBeGreaterThanOrEqual(Math.min(without[i]!.spark, Math.max(8, Math.round((r - 4) * 0.5)))) // and never less than her share
     expect(got.label).toBe(true)
     const free = r - got.spark! - 3 // her lines keep three rows held, so nothing below them moves when they grow
     if (free < 1) { expect(got.title).toBe(false); expect(got.art).toBeUndefined() }
@@ -286,6 +286,43 @@ test('a wide, short room (above the prompt on a narrow terminal): Spark and her 
     expect(art!.props.rows).toBeLessThan(r)
     expect(spark!.props.columns + art!.props.columns).toBeLessThanOrEqual(c)
     await term.unmount()
+  }
+  await cmd($, 'paint off')
+})
+
+test('a side pane pulled wide: the painting beside Spark is lowered so its middle meets hers, not left at the top of its column', async ($, on) => {
+  engine(on)
+  await cmd($, 'paint off'); await cmd($, 'paint')
+  for (const [c, r] of [[212, 49], [160, 40]] as Array<[number, number]>) {
+    const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(c, r) })
+    const spark = await term.find({ type: 'Raster', key: 'spark' })
+    const art = await term.find({ type: 'Raster', key: 'painting' })
+    const lower = await term.find({ key: 'painting-lower' })
+    const tools = (await term.find({ key: 'spark-tool-convert' })) ? 1 : 0
+    expect(spark && art && lower).toBeTruthy()
+    const paintMid = tools + lower!.props.height + art!.props.rows / 2
+    expect(Math.abs(paintMid - spark!.props.rows / 2)).toBeLessThanOrEqual(1)
+    await term.unmount()
+  }
+  await cmd($, 'paint off')
+})
+
+test('as a pane widens Spark grows smoothly: no small Spark in a wide column then a jump to a big one beside the painting', async ($, on) => {
+  engine(on)
+  await cmd($, 'paint off'); await cmd($, 'paint')
+  for (const r of [49, 30]) {
+    const seen: number[] = []
+    for (const c of [56, 72, 90, 100, 110, 116, 122, 130, 140, 160, 212]) {
+      const t = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(c, r) })
+      seen.push((await t.find({ type: 'Raster', key: 'spark' }))!.props.rows)
+      expect(await t.find({ type: 'Raster', key: 'painting' })).toBeDefined()
+      await t.unmount()
+    }
+    for (let i = 1; i < seen.length; i++) {
+      expect(seen[i]!).toBeGreaterThanOrEqual(seen[i - 1]! - 3) // never more than a small step down,
+      expect(seen[i]! - seen[i - 1]!).toBeLessThanOrEqual(11) // nor a leap up
+    }
+    expect(seen[seen.length - 1]!).toBeGreaterThan(seen[0]!) // and larger in the widest pane
   }
   await cmd($, 'paint off')
 })
