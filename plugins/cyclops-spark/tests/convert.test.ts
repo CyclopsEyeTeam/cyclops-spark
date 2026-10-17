@@ -28,6 +28,12 @@ const PAINTING = JSON.stringify({
 })
 const REFINED = JSON.stringify({ title: 'the fox, closer', spark: 'bloom', marks: Array.from({ length: 150 }, (_, i) => ({ k: 'dot', x: (i % 15) / 15, y: Math.floor(i / 15) / 10, r: 0.02, c: '#ffbc75', a: 0.8 })) })
 
+const pane = (bodyColumns: number, bodyRows: number) => ({
+  component: 'Pane', requestId: 'cyclops-spark',
+  props: { title: 'Spark', isFocused: false, bodyColumns, placement: 'dock', scroll: { offset: 0, bodyRows }, view: {} },
+  viewport: { columns: 160, rows: 60 },
+}) as const
+
 type Ask = { system: string; prompt: string }
 function engine(on: On, { python = true, revisit = REFINED, ffmpeg = true }: { python?: boolean; revisit?: string; ffmpeg?: boolean } = {}) {
   mock.store(on)
@@ -672,5 +678,29 @@ test('the old word still works: convert layered is truest', async ($, on) => {
   await cmd($, 'paint'); await settle()
   expect(await say($, 'convert layered 320')).toMatch(/^converting this painting, truest, 320 wide/)
   await until(() => logs.length >= 1)
+  await cmd($, 'paint off')
+})
+
+test('while a roll is made, a bar under her tools says how far she has got and what she is doing; gone when it is done', async ($, on) => {
+  const { logs } = engine(on)
+  await cmd($, 'paint'); await say($, 'paint'); await settle()
+  const look = async () => {
+    const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(60, 70) })
+    const bar = await term.find({ key: 'spark-progress' })
+    const words = JSON.stringify(bar ?? null)
+    await term.unmount()
+    return { bar, words }
+  }
+  expect((await look()).bar).toBeUndefined() // nothing being made: the tools alone
+  expect(await say($, 'convert roll faithful 320')).toMatch(/^rolling all 2 paintings/)
+  const seen: string[] = []
+  for (let i = 0; i < 400 && !logs.length; i++) { const l = await look(); if (l.bar) seen.push(l.words); await settle() }
+  expect(seen.length).toBeGreaterThan(0)
+  expect(seen.some((w) => /laying down “a fox under three…” · [12]\/2/.test(w))).toBe(true) // what she is doing, in her own words
+  expect(seen.some((w) => /▕[█▏▎▍▌▋▊▉ ]+▏/.test(w))).toBe(true) // the bar
+  const pcts = seen.map((w) => Number(/(\d+)%/.exec(w)?.[1] ?? -1)).filter((n) => n >= 0)
+  expect(pcts.every((n, i) => i === 0 || n >= pcts[i - 1]!)).toBe(true) // it only moves on
+  await until(() => logs.length >= 1)
+  expect((await look()).bar).toBeUndefined() // done: gone
   await cmd($, 'paint off')
 })

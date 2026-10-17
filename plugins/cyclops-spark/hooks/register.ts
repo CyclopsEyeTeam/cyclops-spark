@@ -545,7 +545,19 @@ function jobsEstimate(jobs: Job[]): number {
   return Math.round(n)
 }
 const costText = (jobs: Job[]) => { const t = jobsEstimate(jobs); return t ? 'about ' + kilo(t) + ' tokens' : 'no tokens' }
-let convertProgress: { done: number; total: number; what: string } | null = null // a conversion beside the work: how far it has got
+// a conversion beside the work: how far it has got. `frac` (0..1) is the whole job, finer than pictures done (the roll
+// moves it frame by frame, then through its title card, music and join), `stage` what it is doing now
+let convertProgress: { done: number; total: number; what: string; frac?: number; stage?: string } | null = null
+// a painting's title, short enough for the line under her tools
+const shortTitle = (t: string | undefined, n = 18) => { const s = (t || 'untitled').trim(); return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s }
+// how far, 0..1: the finer measure where there is one
+const progressFrac = () => convertProgress ? Math.max(0, Math.min(1, convertProgress.frac ?? convertProgress.done / Math.max(1, convertProgress.total))) : 0
+// a bar `width` cells wide, in eighths of a cell, so it moves smoothly
+function progressBar(frac: number, width: number): string {
+  const eighths = Math.round(Math.max(0, Math.min(1, frac)) * width * 8)
+  const full = Math.floor(eighths / 8), rest = eighths % 8
+  return '█'.repeat(full) + (rest ? '▏▎▍▌▋▊▉'[rest - 1] : '') + ' '.repeat(Math.max(0, width - full - (rest ? 1 : 0)))
+}
 const plural = (n: number) => `${n} ${n === 1 ? 'painting' : 'paintings'}`
 const busyText = () => convertProgress ? `Spark is still converting: ${convertProgress.done} of ${convertProgress.total} (${convertProgress.what})` : 'Spark is still converting'
 const isSize = (w: string) => w in SIZES || /^\d{3,4}$/.test(w)
@@ -625,11 +637,16 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
   const pause = () => $.clock.now()
   const run = async (): Promise<string> => {
     try {
+      let jobAt = 0
+      const step = (part: number, stage: string) => { if (convertProgress) { convertProgress.frac = Math.min(1, (jobAt + part) / jobs.length); convertProgress.stage = stage } }
       for (const { source, way: w } of jobs) {
         await pause() // between pictures: let everything else run
+        const which = jobs.length > 1 ? ` ${jobAt + 1} of ${jobs.length}` : ''
+        step(0.05, revisits(w) ? `the painter looks again at “${shortTitle(source.title)}”${which}` : `drawing “${shortTitle(source.title)}”${which}`)
         let p: Painting & { shape: string } = source
         let tag: string = w
         if (revisits(w)) { const r = await revisitPainting($, source, w as 'refined' | 'interpretive'); p = r.p; if (!r.ok) { note = r.note; tag = 'faithful' } }
+        if (revisits(w)) step(0.3, `drawing “${shortTitle(p.title)}”${which}`)
         const [W, H] = canvasFor(p.shape, width)
         const n = converted.length + 1
         const name = slug(p.title, n) + '-' + tag
@@ -648,6 +665,7 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
           px = raster
         }
         written.push(`${name}.svg`)
+        step(0.75, `setting it in a PNG${which}`)
         // the PNG: the pixels flattened onto the ground the same way her cells are, handed to the python helper as text
         const flat = await toRGB8Async(px as never, ground(), pause)
         const { rgb, H: fullH } = caption ? withCaption(flat, W, H, caption, ground(), { light: theme === 'light' }) : { rgb: flat, H }
@@ -667,6 +685,8 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
         converted.push({ file: png ? `${name}.png` : `${name}.svg`, title: p.title || 'untitled', when: new Date().toTimeString().slice(0, 5), mode: tag })
         logRecent('convert ' + tag)
         if (convertProgress) convertProgress.done++
+        jobAt++
+        step(0, `next: ${Math.min(jobAt + 1, jobs.length)} of ${jobs.length}`)
       }
       await $.fs.write(`${folder}/index.html`, galleryHTML(converted))
       written.push('index.html')
@@ -684,7 +704,7 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
   const calls = jobs.filter((j) => revisits(j.way)).length
   if (calls >= 2 || jobs.length >= 2 || width > SIZES.hd! || jobs.some((j) => j.way === 'truest')) {
     const est = jobsEstimate(jobs)
-    convertProgress = { done: 0, total: jobs.length, what: said }
+    convertProgress = { done: 0, total: jobs.length, what: said, stage: 'converting' }
     const what = mode === 'every' ? 'this painting every way' : mode === 'all' ? `all ${plural(jobs.length)}, ${way}` : `this painting, ${way}`
     void quietly(async () => {
       const text = await run()
@@ -748,13 +768,18 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
   const parts = Math.ceil(Math.ceil((W * H * 3) / 3) * 4 / PART)
   const calls = revisits(way) ? n : 0
   const est = jobsEstimate(list.map((source) => ({ source, way })))
-  convertProgress = { done: 0, total: n, what: `the roll, ${way}` }
+  convertProgress = { done: 0, total: n, what: `the roll, ${way}`, frac: 0, stage: 'rolling' }
   const notes: string[] = []
   const rolled: Array<Painting & { shape: string }> = [] // the paintings as rolled (revisited ones as the painter gave them back): the music is read from these
+  // the whole job in units, for the bar: a painting one (its frames most of it, its part of the clip the rest), the
+  // title card half, the music half, the join one
+  const units = n + (lead ? 0.5 : 0) + (video && rollMusic ? 0.5 : 0) + 1
+  const progress = (at: number, stage: string) => { if (convertProgress) { convertProgress.frac = Math.min(1, at / units); convertProgress.stage = stage } }
   const run = async (): Promise<string> => {
     try {
       const gb = g.map((v) => Math.round(v * 255))
       for (let i = 0; i < n; i++) {
+        progress(i, `laying down “${shortTitle(list[i]!.title)}” · ${i + 1}/${n}`)
         let p: Painting & { shape: string } = list[i]!
         if (revisits(way)) { const r = await revisitPainting($, p, way as 'refined' | 'interpretive'); p = r.p; if (!r.ok && !notes.length) notes.push(r.note.replace(/^the painter/, 'for some paintings the painter')) }
         rolled.push(p)
@@ -794,12 +819,14 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
           for (let y = 0; y < L.ph; y++) frame.set(rgb.subarray(y * L.pw * 3, (y + 1) * L.pw * 3), ((L.oy + y) * W + L.ox) * 3)
           const b64 = await base64Async(frame, pause)
           for (let k = 0; k < parts; k++) await $.fs.write(`${work}/f${String(seq).padStart(3, '0')}-${String(f - 1).padStart(3, '0')}.b64.${k}`, b64.slice(k * PART, (k + 1) * PART))
+          progress(i + 0.8 * (f / frames), `laying down “${shortTitle(p.title)}” · ${i + 1}/${n}`)
         }
         if (video) { // this painting's part of the clip, now, so its frames are gone before the next is drawn
           const seg = await runHelper($, ['segment', work, String(seq), String(frames), String(W), String(H), String(parts), String(fps), String(holds[i])])
           if (!seg.ok) return 'no roll: ' + (/No such file|not found|ENOENT|code 127/i.test(seg.err) && !seg.out ? 'python3 was not found (the roll needs it, with ffmpeg)' : seg.err.trim().slice(-160) || 'the helper could not make it')
         }
         if (convertProgress) convertProgress.done++
+        progress(i + 1, `${i + 1}/${n} laid down`)
         logRecent('roll ' + (i + 1))
       }
       const out = `${folder}/${name}`
@@ -807,7 +834,9 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
       let music = '', key = ''
       const score = rollScore(rolled, { reveal: ROLL.reveal, hold: ROLL.hold, holds, fade: ROLL.fade, lead: lead && video ? titleSecs - ROLL.fade : 0 })
       // the title card, made last so it can name the music's key, but first in the clip
+      let at = n
       if (lead) {
+        progress(at, `raising the title, “${shortTitle(title, 16)}”`)
         const sub = `Spark · ${when} · ${plural(n)}${video && rollMusic ? ` · music in ${score.key}` : ''}`
         const glow = sessionColour(rolled)
         const tf = video ? TITLE.fadeFrames : frames
@@ -815,6 +844,7 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
         const card = new Uint8Array(full.length)
         for (let f = 1; f <= tf; f++) {
           await pause()
+          progress(at + 0.4 * (f / tf), `raising the title, “${shortTitle(title, 16)}”`)
           const a = Math.min(1, f / tf)
           const band = W * 3 * 64 // a band of rows at a time, handing over between bands
           for (let b0 = 0; b0 < full.length; b0 += band) {
@@ -829,13 +859,17 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
           const seg = await runHelper($, ['segment', work, '0', String(TITLE.fadeFrames), String(W), String(H), String(parts), String(TITLE.fps), String(TITLE.hold)])
           if (!seg.ok) return 'no roll: ' + (seg.err.trim().slice(-160) || 'the helper could not make the title')
         }
+        at += 0.5
       }
       if (video && rollMusic) {
+        progress(at, `finding its music, in ${score.key}`)
         await $.fs.write(`${work}/score.json`, JSON.stringify(score))
         const played = await runHelper($, ['music', `${work}/score.json`, `${work}/music.wav`])
         if (played.ok) { music = `${work}/music.wav`; key = score.key }
         else notes.push('no music: ' + (played.err.trim().slice(-120) || 'the helper could not play it'))
       }
+      if (video && rollMusic) at += 0.5
+      progress(at, video ? 'stitching the roll together' : 'putting it together')
       const made = video
         ? await runHelper($, ['join', work, String(n + lead), out, [...(lead ? [titleSecs] : []), ...holds.map((h) => ROLL.reveal + h)].join(','), String(ROLL.fade), ...(music ? [music] : [])])
         : await runHelper($, ['apng', work, String(n + lead), String(frames), String(W), String(H), String(parts), '250', '2600', '3', out])
@@ -1532,13 +1566,25 @@ export const register: Register = (on, options) => {
       // (each runs /spark as if typed, its menus asked as usual and its answer a line of hers in the conversation)
       const runSpark = (args: string) => pressSpark($, args)
       const tool = (key: string, label: string, args: string) => Button({ key, label, plain: true, dimColor: true, onPress: () => runSpark(args) })
-      const tools = (width: number, spare: number) => paintOn && !replay && !focusMode && story.length > 0 && width >= 28 && spare >= 10 // only where the painting keeps room of its own
-        ? [Box({ flexDirection: 'row', justifyContent: 'flex-end', columnGap: 2, width, children: [
-            tool('spark-tool-story', storyOn ? '■ story' : '▶ story', 'story'),
-            tool('spark-tool-convert', '⇪ convert', 'convert'),
-            tool('spark-tool-roll', '◎ roll', 'convert roll'),
-          ] })]
-        : []
+      // and under them, while Spark converts or rolls beside the work: how far she has got, as a bar the width of the tools,
+      // with what she is doing now
+      const tools = (width: number, spare: number) => {
+        const busy = convertProgress !== null
+        if (!(paintOn && !replay && !focusMode && story.length > 0 && width >= 28 && spare >= (busy ? 11 : 10))) return [] // only where the painting keeps room of its own
+        const row = Box({ flexDirection: 'row', justifyContent: 'flex-end', columnGap: 2, width, children: [
+          tool('spark-tool-story', storyOn ? '■ story' : '▶ story', 'story'),
+          tool('spark-tool-convert', '⇪ convert', 'convert'),
+          tool('spark-tool-roll', '◎ roll', 'convert roll'),
+        ] })
+        if (!busy) return [row]
+        const frac = progressFrac(), pct = `${Math.floor(frac * 100)}%`
+        const barW = Math.max(8, Math.min(24, width - 20)) // as wide as the three tools, less in a narrow pane
+        return [row, Box({ key: 'spark-progress', flexDirection: 'row', justifyContent: 'flex-end', columnGap: 1, width, children: [
+          Box({ flexShrink: 1, children: [Text({ children: [convertProgress!.stage || convertProgress!.what], dimColor: true, wrap: 'truncate-end' })] }), // her words give way first
+          Box({ flexShrink: 0, children: [Text({ children: ['▕' + progressBar(frac, barW - 2) + '▏'], color: 'claude', wrap: 'truncate-end' })] }),
+          Box({ flexShrink: 0, children: [Text({ children: [pct.padStart(4)], dimColor: true, wrap: 'truncate-end' })] }),
+        ] })]
+      }
       let columns = Math.max(16, Math.min(160, W - 1))
       let rows = Math.max(8, Math.min(60, Math.round(columns / 2.1)))
       if (focusMode) {
