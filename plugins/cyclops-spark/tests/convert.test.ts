@@ -696,7 +696,7 @@ test('while a roll is made, a bar under her tools says how far she has got and w
   const seen: string[] = []
   for (let i = 0; i < 400 && !logs.length; i++) { const l = await look(); if (l.bar) seen.push(l.words); await settle() }
   expect(seen.length).toBeGreaterThan(0)
-  expect(seen.some((w) => /painting [12] of 2/.test(w))).toBe(true) // what she is doing
+  expect(seen.some((w) => /laying down “a fox under three…” · [12]\/2/.test(w))).toBe(true) // what she is doing, in her own words
   expect(seen.some((w) => /▕[█▏▎▍▌▋▊▉ ]+▏/.test(w))).toBe(true) // the bar
   const pcts = seen.map((w) => Number(/(\d+)%/.exec(w)?.[1] ?? -1)).filter((n) => n >= 0)
   expect(pcts.every((n, i) => i === 0 || n >= pcts[i - 1]!)).toBe(true) // it only moves on
