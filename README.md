@@ -143,7 +143,8 @@ pane, laid down mark by mark, with a few words of hers underneath.
 
 **Her tools.** Once there is a painting, three small buttons sit at the top of her pane, right-aligned: **▶ story**
 (■ story while it plays, to end it), **⇪ convert** and **◎ roll**. Each runs `/spark` as if typed, its menus asked as
-usual, and its answer is a line of hers in the conversation. They only appear where the painting keeps room of its own.
+usual, and its answer is a line of hers in the conversation. They only appear where the painting keeps room of its own. While a convert or a roll is being made, a bar under them shows how far it has got and what
+Spark is doing (painting 3 of 7, the title card, the music, joining), with the percentage.
 
 **Colour depth.** Marks add their light, so where they meet a colour can pass full strength. Spark keeps such a colour
 at full strength with its hue whole and lets only the light beyond full spill toward white: a hot core still goes white,

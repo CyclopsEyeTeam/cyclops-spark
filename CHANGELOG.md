@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.10
+
+- **A progress bar under her tools.** While Spark converts or makes a roll beside your work, a second row appears under
+  ▶ story ⇪ convert ◎ roll: what she is doing now (painting 3 of 7, the title card, the music, joining; or drawing, the
+  PNG), a bar that fills in eighths of a cell so it moves smoothly, and the percentage. The roll moves it frame by frame.
+  It goes away when the job is done, and only shows where the painting still keeps room of its own.
+
 ## 1.7.9
 
 - **Truest.** Layered is now called **truest**, first in the menu: the painting as Spark sees it beside the
