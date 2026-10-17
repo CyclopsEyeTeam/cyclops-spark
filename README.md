@@ -208,14 +208,14 @@ the words themselves. The last reflection shows in `/spark state`.
   composition intact, asking no model; **refined** gives the painter its own program back and asks for it again with
   finer curves, smoother gradients and more detailed light, the subject and composition kept; **interpretive** lets the
   painter revisit it freely, a new work derived from the original. The last two are one call each, counted in the
-  session's total. The first way in the menu, **truest** (it was called layered, and `layered` still works),
-  is the painting as Spark sees it beside the conversation: there it is laid down mark by mark, the first marks the far
-  ground and the last the nearest light, at a size where a speck is a whole cell and a line a soft band of light; drawn
-  large and crisp, the same marks read flat. Truest gives every mark the weight one of those cells gives it (the cells
-  as wide as her painting was last drawn, so a speck or a line keeps the same share of the picture, large as small),
-  and builds the picture as layers in depth: the marks in their order cut into four layers, the far
-  ones softened as a lens focused on the front would, each nearer layer casting a soft shadow onto what lies behind
-  it, and the brightest light blooming over the whole. The same marks, colours and order; no tokens. The menu asks
+  session's total. The first way in the menu, **truest**, is the painting as you see it beside the conversation. It gives every mark the
+  weight one terminal cell gives it (cells as wide as her painting was last drawn, so a speck or a line keeps the same
+  share of the picture, large as small), draws it flat as the terminal does, and then puts its light in the terminal's
+  colour depth. The terminal shows her painting with 16 levels a channel, which is why a smooth glow or gradient
+  is seen there as bands of tone (the "layers" on a floor). Truest keeps those bands, in the PNG and in the SVG, and adds
+  nothing the terminal does not show: no shadows, no bloom, no softening. The Truest colour depth setting changes the
+  levels (0 for full colour). The depth pass it grew out of (layers softened, shadows cast, a bloom) is kept as
+  `/spark convert layered`, to compare. The same marks, colours and order; no tokens. The menu asks
   **what** first (this painting, this painting **every way**, **all** the session's paintings, or **the roll**), then
   **which way**, each with what it will cost beside it (truest and faithful are free; refined and interpretive are
   one painter call a painting, estimated from what such calls have used this session, or before any from the painting

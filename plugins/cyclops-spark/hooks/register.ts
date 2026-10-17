@@ -31,7 +31,7 @@
 
 import type { EngineInterface, Register } from 'claude-code'
 import { buildScene, createPresence, laneFor, PAINT_TOWARD, PALETTE_NAMES } from './core.js'
-import { base64, base64Async, createRaster, toHalfBlocks, toQuadrants, toRGB8Async, toRGBA8 } from './render-raster.js'
+import { base64, base64Async, createRaster, posterize, toHalfBlocks, toQuadrants, toRGB8Async, toRGBA8 } from './render-raster.js'
 import { eyeColumns, eyeRaster } from './eye.js'
 import { layeredFloor, layeredRaster, layeredScenes, layeredStepper } from './layered.js'
 import { rollHolds, rollScore, sessionColour } from './music.js'
@@ -582,11 +582,15 @@ async function talkTo($: EngineInterface, words: string): Promise<void> {
 // /spark convert: the painting made large (see hooks/convert.js and hooks/layered.js). The one time Spark writes files,
 // and only when you ask. Two menus, every choice with what it costs beside it. The first asks what: this painting, this
 // painting every way, all the session's paintings, or the roll (all of them as a clip); the second asks which way:
-// Truest (the painting as Spark sees it in the terminal: each mark with the weight a terminal cell gives it, in depth),
-// Faithful (the same marks, large and fine), Refined or Interpretive (the painter revisits each: one call a painting).
-// Truest was Layered; the old word still works.
-type Way = 'truest' | 'faithful' | 'refined' | 'interpretive'
-const WAYS: Way[] = ['truest', 'faithful', 'refined', 'interpretive']
+// Truest (the painting as you see it in the terminal: each mark with the weight a terminal cell gives it, its light in
+// the terminal's colour depth, and nothing the terminal does not show), Faithful (the same marks, large and fine),
+// Refined or Interpretive (the painter revisits each: one call a painting). Layered, the depth pass Truest grew out of
+// (its layers softened, shadows, a bloom: the renderer's own reading of depth, not the painting's), is kept as a word,
+// /spark convert layered, for comparing.
+type Way = 'truest' | 'faithful' | 'refined' | 'interpretive' | 'layered'
+const WAYS: Way[] = ['truest', 'faithful', 'refined', 'interpretive'] // the menu's four
+const TYPED_WAYS: Way[] = [...WAYS, 'layered']
+let truestLevels = 16 // the truestLevels setting: the terminal's colour depth, levels a channel (0: full colour)
 const revisits = (w: Way) => w === 'refined' || w === 'interpretive'
 const Cap = (w: string) => w[0]!.toUpperCase() + w.slice(1)
 type Job = { source: Painting & { shape: string }; way: Way }
@@ -658,16 +662,15 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
   let called = ''
   const at = words.indexOf('called')
   if (at >= 0) { called = raw.slice(at + 1).join(' ').replace(/^["']|["']$/g, '').trim().slice(0, 60); words = words.slice(0, at) }
-  words = words.map((w) => w === 'layered' ? 'truest' : w) // the old word for truest
   let [mode = '', next = '', after = ''] = words
   if (mode === 'three') mode = 'every' // the old word
   let way: Way | '' = ''
   let sizeWord = next
-  if (mode && isSize(mode) && !(WAYS as string[]).includes(mode)) { sizeWord = mode; mode = '' } // /spark convert 4k: pick, at that size
-  if ((mode === 'all' || mode === 'roll') && (WAYS as string[]).includes(next)) { way = next as Way; sizeWord = after } // all refined 4k, roll truest hd
-  if ((WAYS as string[]).includes(mode)) { way = mode as Way; mode = 'one' }
+  if (mode && isSize(mode) && !(TYPED_WAYS as string[]).includes(mode)) { sizeWord = mode; mode = '' } // /spark convert 4k: pick, at that size
+  if ((mode === 'all' || mode === 'roll') && (TYPED_WAYS as string[]).includes(next)) { way = next as Way; sizeWord = after } // all refined 4k, roll truest hd
+  if ((TYPED_WAYS as string[]).includes(mode)) { way = mode as Way; mode = 'one' }
   const known = ['', 'one', 'every', 'all', 'roll']
-  if (!known.includes(mode)) return 'convert takes: truest | faithful | refined | interpretive (this painting that way) | every (this painting every way) | all [way] (every painting of the session) | roll [way] (every painting as a clip), then a size: hd (1920 wide, the default) or 4k, for the roll hd (1080p). On its own, /spark convert lets you click'
+  if (!known.includes(mode)) return 'convert takes: truest | faithful | refined | interpretive | layered (this painting that way; layered is the depth pass, kept to compare) | every (this painting every way) | all [way] (every painting of the session) | roll [way] (every painting as a clip), then a size: hd (1920 wide, the default) or 4k, for the roll hd (1080p). On its own, /spark convert lets you click'
   const stillWidth = (w: string) => w === '' ? SIZES.hd! : SIZES[w] ?? (/^\d{3,4}$/.test(w) ? Math.max(256, Math.min(4096, Number(w))) : 0)
   if (mode === 'roll' && !rollSize(sizeWord)) return 'roll size: hd (1080p, 1920 wide), short (upright 1080 x 1920, for YouTube Shorts), or a width (16:9); 720p (1280 wide) when nothing is said'
   if (mode !== 'roll' && !stillWidth(sizeWord)) return 'convert size: hd (1920 wide) or 4k (3840)'
@@ -725,7 +728,13 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
         const when = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
         const caption = convertCaption ? captionLines(p.title, tag, when, whoPainted(source)) : null
         let px: { W: number; H: number; px: Float32Array }
-        if (tag === 'truest') { // as she sees it: the terminal's weight for each mark, in depth (its layers, the far ones softened, shadows, the bloom)
+        if (tag === 'truest') { // as you see it: each mark the weight of a terminal cell, drawn flat as the terminal draws it (nothing added), its light then put in the terminal's colour depth (below)
+          const scene = paintingScene(p, W, H, { reveal: 1, theme })
+          await $.fs.write(`${folder}/${name}.svg`, sceneSVG(scene, W, H, { theme, title: p.title, caption, floor: 0.6 * cellRes(W), levels: truestLevels }))
+          const raster = createRaster(W, H)
+          await raster.drawAsync(scene, theme, { res: cellRes(W), floor: 1 }, pause)
+          px = raster
+        } else if (tag === 'layered') { // the depth pass, kept for comparing: its layers, the far ones softened, shadows, the bloom
           await $.fs.write(`${folder}/${name}.svg`, sceneSVG([], W, H, { theme, title: p.title, caption, floor: Math.max(layeredFloor(W, H), 0.6 * cellRes(W)), layers: layeredScenes(p, W, H, { theme }) }))
           px = await layeredRaster(p, W, H, { theme, pause, res: cellRes(W) })
         } else {
@@ -740,6 +749,7 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
         step(0.75, `setting it in a PNG${which}`)
         // the PNG: the pixels flattened onto the ground the same way her cells are, handed to the python helper as text
         const flat = await toRGB8Async(px as never, ground(), pause)
+        if (tag === 'truest') posterize(flat, truestLevels) // the terminal's colour depth: its bands are what you see
         const { rgb, H: fullH } = caption ? withCaption(flat, W, H, caption, ground(), { light: theme === 'light' }) : { rgb: flat, H }
         // in parts of at most 3 MB of text each: one write may carry 4 MiB, and a 4k picture is far more than that
         const b64 = await base64Async(rgb, pause), PART = 3_000_000, parts = Math.ceil(b64.length / PART)
@@ -775,7 +785,7 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
   // (a command has ten seconds of its own time), and Spark says in the conversation when it is done (/spark state shows
   // how far it has got). One faithful, refined or interpretive picture at HD is quick and comes back at once
   const calls = jobs.filter((j) => revisits(j.way)).length
-  if (calls >= 2 || jobs.length >= 2 || width > SIZES.hd! || jobs.some((j) => j.way === 'truest')) {
+  if (calls >= 2 || jobs.length >= 2 || width > SIZES.hd! || jobs.some((j) => j.way === 'truest' || j.way === 'layered')) {
     const est = jobsEstimate(jobs)
     convertProgress = { done: 0, total: jobs.length, what: said, stage: 'converting' }
     progressRedraw($, true)
@@ -823,7 +833,7 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
   const video = await hasFfmpeg($)
   const upright = asked[1] > asked[0] // a Short
   const [W, H] = video ? asked : upright ? [360, 640] : [640, 360]
-  const fps = way === 'truest' ? ROLL.truestFps : ROLL.fps
+  const fps = way === 'layered' ? ROLL.truestFps : ROLL.fps
   const frames = video ? Math.round(ROLL.reveal * fps) : 8
   const list = story.slice(), n = list.length
   const holds = rollHolds(list) // each painting's own hold, set by the music: breathing room
@@ -870,19 +880,20 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
         // each frame's pixels with f/frames of the marks laid: as she sees it, in depth (truest), or as the terminal draws them, the
         // finished marks kept on a raster of their own and only the one in progress drawn again
         let next: (q: number) => Promise<{ px: Float32Array }>
-        if (way === 'truest') {
+        if (way === 'layered') {
           const st = layeredStepper(p, L.pw, L.ph, { theme, res: cellRes(L.pw) })
           next = async (q) => ({ px: await st.frame(q, pause) })
         } else {
-          const floor = markFloor(L.pw)
+          const truest = way === 'truest'
+          const floor = truest ? 1 : markFloor(L.pw), res = truest ? cellRes(L.pw) : 1
           const base = createRaster(L.pw, L.ph), shot = createRaster(L.pw, L.ph)
           let laid = 0
           next = async (q) => {
             const whole = Math.min(nm, Math.floor(q))
-            if (whole > laid) { await base.drawAsync(paintingScene({ ...p, marks: p.marks.slice(laid, whole) }, L.pw, L.ph, { reveal: 1, theme }), theme, { floor, keep: true }, pause); laid = whole }
+            if (whole > laid) { await base.drawAsync(paintingScene({ ...p, marks: p.marks.slice(laid, whole) }, L.pw, L.ph, { reveal: 1, theme }), theme, { floor, res, keep: true }, pause); laid = whole }
             if (q - whole > 0.001 && whole < nm) {
               shot.px.set(base.px)
-              await shot.drawAsync(paintingScene({ ...p, marks: [p.marks[whole]!] }, L.pw, L.ph, { reveal: q - whole, theme }), theme, { floor, keep: true }, pause)
+              await shot.drawAsync(paintingScene({ ...p, marks: [p.marks[whole]!] }, L.pw, L.ph, { reveal: q - whole, theme }), theme, { floor, res, keep: true }, pause)
               return shot
             }
             return base
@@ -892,6 +903,7 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
           await pause() // let everything else run
           const shown = await next((f / frames) * nm)
           const rgb = await toRGB8Async({ W: L.pw, H: L.ph, px: shown.px } as never, g, pause)
+          if (way === 'truest') posterize(rgb, truestLevels)
           for (let y = 0; y < L.ph; y++) frame.set(rgb.subarray(y * L.pw * 3, (y + 1) * L.pw * 3), ((L.oy + y) * W + L.ox) * 3)
           const b64 = await base64Async(frame, pause)
           for (let k = 0; k < parts; k++) await $.fs.write(`${work}/f${String(seq).padStart(3, '0')}-${String(f - 1).padStart(3, '0')}.b64.${k}`, b64.slice(k * PART, (k + 1) * PART))
@@ -1484,6 +1496,7 @@ export const register: Register = (on, options) => {
   if (typeof o.sideWidth === 'number' && o.sideWidth >= 0) sideWidth = o.sideWidth
   if (typeof o.convertFolder === 'string' && o.convertFolder.trim()) convertFolder = o.convertFolder.trim()
   if (typeof o.convertCaption === 'boolean') convertCaption = o.convertCaption
+  if (typeof o.truestLevels === 'number' && o.truestLevels >= 0) truestLevels = Math.round(o.truestLevels)
   if (typeof o.prismPaintings === 'string') prismFolder = prismSetting = o.prismPaintings.trim() || 'off'
 
   on('session.start', async ($, e, next) => {

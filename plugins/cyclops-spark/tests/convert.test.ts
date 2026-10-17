@@ -336,7 +336,7 @@ test('all paintings, every way, and the costs: what then which way; anything wit
   await cmd($, 'paint off')
 })
 
-test('truest (was layered): the same marks as Spark sees them, each with the weight a terminal cell gives it, in depth; the far layers softened, shadows, the bloom; no tokens, beside the work', async ($, on) => {
+test('truest: the painting as you see it in the terminal: each mark the weight of a terminal cell, drawn flat, its light in the terminal\'s colour depth (16 levels a channel, the bands you see); nothing added; no tokens, beside the work', async ($, on) => {
   const { files, spawns, logs, asks } = engine(on)
   await cmd($, 'paint'); await settle()
   const n0 = asks.length
@@ -345,11 +345,28 @@ test('truest (was layered): the same marks as Spark sees them, each with the wei
   expect(asks.length).toBe(n0)
   expect(logs.at(-1)).toMatch(/^Spark: converted \(truest, 320 wide\) into .*01-a-fox-under-three-moons-truest\.svg, 01-a-fox-under-three-moons-truest\.png, index\.html$/)
   const svg = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-truest.svg')!
+  expect(svg).toContain('<filter id="levels"') // the colour depth, in the SVG too
+  expect(svg).toMatch(/<feFuncR type="discrete" tableValues="0 0\.0667 0\.0667 0\.1333/) // rounding to sixteen levels
+  for (const added of ['<filter id="shadow"', '<filter id="bloom"', '<filter id="soft0"']) expect(svg).not.toContain(added) // no shadows, bloom or softening: the renderer's, not the painting's
+  expect(spawns.at(-1)!.slice(4, 6)).toEqual(['320', String(160 + captionHeight(320))])
+  // the PNG's bytes: the picture (above its caption) wholly on the sixteen levels
+  const b64 = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-truest.rgb.b64.0')!
+  const bin = atob(b64), bytes = Array.from({ length: 320 * 160 * 3 }, (_, i) => bin.charCodeAt(i))
+  expect(bytes.every((v) => v % 17 === 0)).toBe(true)
+  await cmd($, 'paint off')
+})
+
+test('layered, the depth pass truest grew out of, is kept as a word to compare: its layers, the far ones softened, shadows, the bloom', async ($, on) => {
+  const { files, logs } = engine(on)
+  await cmd($, 'paint'); await settle()
+  expect(await say($, 'convert layered 320')).toMatch(/^converting this painting, layered, 320 wide/)
+  await until(() => logs.length >= 1)
+  const svg = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-layered.svg')!
   expect(svg).toContain('<filter id="shadow"')
   expect(svg).toContain('<filter id="soft0"') // the farthest layer softened
   expect(svg).toContain('<filter id="bloom"')
   expect((svg.match(/<g id="layer\d"/g) || []).length).toBeGreaterThanOrEqual(2)
-  expect(spawns.at(-1)!.slice(4, 6)).toEqual(['320', String(160 + captionHeight(320))])
+  expect(svg).not.toContain('<filter id="levels"')
   await cmd($, 'paint off')
 })
 
@@ -469,7 +486,7 @@ test('the roll in any way: asked which (each with its cost), truest laid down in
   expect(asked[1]!.labels[3]).toMatch(/^Interpretive · about \d+(\.\d)?k tokens$/)
   await until(() => logs.length >= 1)
   let helper = spawns.filter((a) => a[0] === 'python3')
-  expect(helper[0]!.slice(4, 10)).toEqual(['1', '16', '320', '180', '1', '8']) // truest: 16 frames at 8 a second, smoothed the same
+  expect(helper[0]!.slice(4, 10)).toEqual(['1', '24', '320', '180', '1', '12']) // truest: drawn flat, so the full 12 a second
   expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings \(truest\), opening with “zilo”, into .*-truest\.mp4/)
   // typed: refined, the painter revisiting each painting first
   const n0 = asks.length
@@ -673,13 +690,6 @@ test('the roll breathes: each painting held a bar or two by the music (a busier 
   expect(score.chords.at(-1)!.degree).toBe(0) // home under the last
 })
 
-test('the old word still works: convert layered is truest', async ($, on) => {
-  const { logs } = engine(on)
-  await cmd($, 'paint'); await settle()
-  expect(await say($, 'convert layered 320')).toMatch(/^converting this painting, truest, 320 wide/)
-  await until(() => logs.length >= 1)
-  await cmd($, 'paint off')
-})
 
 test('while a roll is made, a bar under her tools says how far she has got and what she is doing; gone when it is done', async ($, on) => {
   const { logs } = engine(on)
