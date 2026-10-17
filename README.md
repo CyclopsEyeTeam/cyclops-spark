@@ -107,6 +107,7 @@ This is separate from the plugin: installing Spark any other way does not add it
 | `/spark link [on\|off\|status]` | Cyclops Link: Keeper and Prism beside Spark when they work in the same folder (below). |
 | `/spark paint` | The painter: turns it on and paints one now (opening Spark at the side first if she is not up); from then on a small sub-agent paints Spark's expression of each turn below her (below). It uses tokens. |
 | `/spark paint off` | Stops the painter and empties the room below Spark. |
+| `/spark paint free` / `work` | What she paints: **free**, her own paintings of nothing in the conversation, on a rhythm of her own, one now; or **work**, each turn's expression, as before (below). |
 | `/spark story` | The session's paintings told again, in order, each laid down anew, once through (no tokens). Under the painting: pause, back, next, end; or `/spark story pause \| play \| next \| back \| end`. |
 | `/spark convert` | The painting made large, as SVG and PNG, into the convert folder (below): click what (this painting, every way, all paintings, the roll), then which way (truest, faithful, refined, interpretive), each with its token cost beside it. Or say it: `/spark convert layered 4k`, `every`, `all refined`. |
 | `/spark convert roll short` | The roll upright, 1080 x 1920, for YouTube Shorts and phones: each painting large with its caption right under it, the title card upright too (`-short.mp4`). Spark says if it runs past the 3 minutes a Short can be. |
@@ -143,8 +144,8 @@ With the **Paint when Spark opens** setting on, a plain `/spark` opens Spark wit
 on, when a turn of 3 seconds or more lands, a small sub-agent paints Spark's expression of it in the room below her side
 pane, laid down mark by mark, with a few words of hers underneath.
 
-**Her tools.** Once there is a painting, three small buttons sit at the top of her pane, right-aligned: **▶ story**
-(■ story while it plays, to end it), **⇪ convert** and **◎ roll**. Each runs `/spark` as if typed, its menus asked as
+**Her tools.** Once there is a painting, small buttons sit at the top of her pane, right-aligned: **▶ story**
+(■ story while it plays, to end it), **⇪ convert**, **◎ roll**, and, where there is room, **✦ free** / **◇ work** (what she paints, a press to switch). Each runs `/spark` as if typed, its menus asked as
 usual, and its answer is a line of hers in the conversation. They only appear where the painting keeps room of its own. While a convert or a roll is being made, a bar under them shows how far it has got and what
 Spark is doing, in her own words (laying down “the lamp…” · 3/7, raising the title, finding its music, stitching the
 roll together), with the percentage.
@@ -169,6 +170,16 @@ paint from, so the first is hers, an opening made before the work has a shape. T
 conversation, only the hour and the month where she is (a late-night opening is not a morning one), her colours, and one
 word drawn at random to start from, which it may follow or leave. `/spark story` and the roll name it as her opening.
 Every painting after it is of the work, and `/clear` brings a new opening.
+
+**Free paintings, or the work: you choose.** Like Prism, Spark can paint whatever she likes in that space. With the
+**Paintings** setting on `free`, `/spark paint free`, or a press of her fourth tool (**✦ free** while she paints her own,
+**◇ work** while she paints the work; a press switches), every painting is hers, the way her opening is: the painter is
+told nothing of the conversation, only the hour, the month, a word drawn at random, and the names of her last few
+paintings, so they can run on as a series, answer each other, or break away. She paints them on a rhythm of her own,
+one every **Paint every** minutes (5 by default), while her painting can be seen and you are around (a turn going, or
+something done in the last 30 minutes); left alone, she rests, so no tokens go on paintings nobody is there to see. With
+Paint every at 0 she paints one of her own at the end of each turn instead. The story marks them `· her own`.
+`/spark paint work` goes back to paintings of the work.
 
 **Live paintings in long turns.** A long turn is painted while it is still going too: never sooner than 15 minutes after
 the turn began (or her last painting), at a moment that moves her (a failure mended, a subagent coming back, a long call

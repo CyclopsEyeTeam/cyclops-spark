@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
-import { parsePainting, paintingScene, painterFacts, painterRequest, newTurnFacts, recordTool, shapeFor, MAX_MARKS, PAINT_KINDS, parseTalk, talkRequest, openingRequest, hourWords, OPENING_WORDS } from '../hooks/painter.js'
+import { parsePainting, paintingScene, painterFacts, painterRequest, newTurnFacts, recordTool, shapeFor, MAX_MARKS, PAINT_KINDS, parseTalk, talkRequest, openingRequest, freeRequest, hourWords, OPENING_WORDS } from '../hooks/painter.js'
 import { createRaster, toRGBA8 } from '../hooks/render-raster.js'
 import { wrapRows } from '../hooks/layout.js'
 
@@ -774,4 +774,72 @@ test('the painter is told its whole vocabulary and its freedom', () => {
   expect(req.prompt).toMatch(/any colour is yours/)
   expect(req.system).toMatch(/abstract or figurative/)
   expect(req.system).toMatch(/never settle into one habit/)
+})
+
+// ---------------------------------------------------------------- free paintings: hers, on her own rhythm
+test('the free request: hers like the opening (the hour, the month, a word), the names of her last few, and nothing of the work', () => {
+  const r = freeRequest({ hour: 6, month: 0, word: 'a kite', after: ['one', 'two "quoted"\nline', 'three', 'four'], shape: 'tall' })
+  expect(r.system).toMatch(/one of Spark's free paintings/)
+  expect(r.system).toMatch(/Answer with one JSON object and nothing else/)
+  expect(r.prompt).toMatch(/it is dawn, in January\./)
+  expect(r.prompt).toContain('"a kite"')
+  expect(r.prompt).toContain('Her last 3 paintings were called "two quoted line", "three", "four"') // the last three, made plain
+  expect(r.prompt).toContain('It is about twice as tall as wide; compose for that shape.')
+  expect(r.prompt).toContain('"marks": [')
+  expect(freeRequest({}).prompt).toMatch(/first of her free paintings/)
+})
+
+test('free paintings: no painting at the end of a turn, one on her rhythm while she can be seen, of nothing in the conversation; her ✦ tool and /spark paint work bring the work back', { options: { paintings: 'free', paintEvery: 0.005 } }, async ($, on) => {
+  const { asks } = engine(on)
+  on('ui.log', async () => loose({ value: undefined }))
+  await cmd($, 'paint off')
+  expect(await say($, 'paint')).toMatch(/painted her opening: /) // the first is still her opening
+  expect(await say($, 'state')).toMatch(/paint on · free every 0\.005 min/)
+  await turn($, 'f1', 30) // a turn ends: free paintings do not follow the work
+  expect(asks).toHaveLength(1)
+  await new Promise((r) => setTimeout(r, 400)) // her rhythm comes round (0.3 s here)
+  let term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) }) // she is seen: she paints
+  await term.unmount()
+  for (let i = 0; i < 20 && asks.length < 2; i++) { await new Promise((r) => setTimeout(r, 10)); await settle() }
+  expect(asks).toHaveLength(2)
+  expect(asks[1]!.system).toMatch(/one of Spark's free paintings/)
+  expect(asks[1]!.prompt).toContain('"a long climb, then light"') // seeded by her last
+  expect(asks[1]!.prompt).not.toContain('tempo map') // never the work,
+  expect(asks[1]!.prompt).not.toMatch(/toolCalls|"seconds"/) // nor its shape
+  await settle()
+  expect(await say($, 'story')).toMatch(/story: 2 paintings/)
+  await cmd($, 'story next') // the second page: her free one
+  term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  expect(await term.find({ type: 'Text', text: /^story · 2 of 2 .*· her own/ })).toBeDefined()
+  await cmd($, 'story end')
+  await term.unmount()
+  term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  expect((await term.find({ key: 'spark-tool-way' }))?.props.label).toBe('✦ free')
+  await term.press({ key: 'spark-tool-way' }) // a press: back to the work
+  await settle()
+  await term.unmount()
+  expect(await say($, 'state')).not.toMatch(/· free/)
+  const n = asks.length
+  await turn($, 'f2', 30) // now the turn's end is painted, of the work
+  for (let i = 0; i < 20 && asks.length <= n; i++) { await new Promise((r) => setTimeout(r, 10)); await settle() }
+  expect(asks.length).toBe(n + 1)
+  expect(asks[n]!.prompt).toContain('tempo map')
+  term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
+  expect((await term.find({ key: 'spark-tool-way' }))?.props.label).toBe('◇ work')
+  await term.unmount()
+  expect(await say($, 'paint free')).toMatch(/^free paintings: every painting is hers.*painted one of her own: /) // and free again, one now
+  await cmd($, 'paint work'); await cmd($, 'paint off')
+})
+
+test('free paintings with paintEvery 0: one of her own at the end of each turn instead of a rhythm', { options: { paintings: 'free', paintEvery: 0 } }, async ($, on) => {
+  const { asks } = engine(on)
+  await cmd($, 'paint off')
+  await cmd($, 'paint') // her opening
+  await new Promise((r) => setTimeout(r, 25)) // the 20 s between paintings on their own is the host clock's, mocked; this is only to settle
+  await turn($, 'z1', 30)
+  for (let i = 0; i < 20 && asks.length < 2; i++) { await new Promise((r) => setTimeout(r, 10)); await settle() }
+  expect(asks.length).toBe(2)
+  expect(asks[1]!.system).toMatch(/one of Spark's free paintings/)
+  expect(asks[1]!.prompt).not.toContain('tempo map')
+  await cmd($, 'paint off')
 })

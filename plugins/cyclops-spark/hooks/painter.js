@@ -177,6 +177,33 @@ export function openingRequest({ palette = 'spark', theme = 'dark', shape = 'wid
   return { system, prompt: lines.join('\n') }
 }
 
+// FREE PAINTINGS: with the paintings setting (or /spark paint free) on free, every painting is hers, the way her opening
+// is: of nothing in the conversation, on a rhythm of her own while you are around (as Prism paints), not at the end of
+// each turn. Each is seeded like the opening (the hour, the month, a word drawn at random) and by the names of her last
+// few, so they can run on as a series, answer each other, or break away. Nothing of the work is in it.
+export function freeRequest({ palette = 'spark', theme = 'dark', shape = 'wide', size = null, hour = 12, month = 0, word = OPENING_WORDS[0], after = [] }) {
+  const system = [
+    "You are the painter inside Cyclops Spark, Claude's living presence in the terminal.",
+    "You paint one small picture: one of Spark's free paintings, made in the space beside the work while it goes on.",
+    'It is about nothing in the conversation (you are told nothing of it): it is hers, the way an artist paints in a',
+    'sketchbook between jobs. What you paint is entirely yours: abstract or figurative, a landscape, a creature, a sky, a',
+    'machine, a symbol, a scene, weather, a feeling given a body. Surprise her.',
+    'Answer with one JSON object and nothing else.',
+  ].join(' ')
+  const names = (Array.isArray(after) ? after : []).map((t) => String(t).replace(/["\s]+/g, ' ').trim().slice(0, 60)).filter(Boolean).slice(-3)
+  const lines = [
+    ...canvasLines({ palette, theme, shape, size }),
+    '',
+    `Where Spark is, it is ${hourWords(hour)}, in ${MONTHS[((month % 12) + 12) % 12]}. Let the hour and the time of year colour the light, if you like.`,
+    `A word to start from, drawn at random: "${word}". Follow it, turn it, or leave it.`,
+    names.length
+      ? `Her last ${names.length === 1 ? 'painting was' : names.length + ' paintings were'} called ${names.map((t) => `"${t}"`).join(', ')}. Carry on from ${names.length === 1 ? 'it' : 'them'}, answer ${names.length === 1 ? 'it' : 'them'}, or go somewhere new; never paint the same picture twice.`
+      : 'This is the first of her free paintings since the last one of the work.',
+    "The title is the painting's own name, in her voice.",
+  ]
+  return { system, prompt: lines.join('\n') }
+}
+
 // ---------------------------------------------------------------- talking with Spark
 // Say something to her from her pane and she answers in her own voice, from what she already holds (her state, her
 // last painting, the builder's last reflection, the turn's shape): one short call on the painter's model, never a

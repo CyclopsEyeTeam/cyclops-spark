@@ -23,4 +23,5 @@ export function talkRequest(o: { said: string; mood?: string; title?: string; re
 export function parseTalk(text: string): { say: string; react: string | null } | null
 export const OPENING_WORDS: string[]
 export function hourWords(hour: number): string
+export function freeRequest(o: { palette?: string; theme?: string; shape?: string; size?: [number, number] | null; hour?: number; month?: number; word?: string; after?: string[] }): { system: string; prompt: string }
 export function openingRequest(o: { palette?: string; theme?: string; shape?: string; size?: [number, number] | null; hour?: number; month?: number; word?: string }): { system: string; prompt: string }

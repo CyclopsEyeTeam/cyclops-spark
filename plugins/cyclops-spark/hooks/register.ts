@@ -38,7 +38,7 @@ import { rollHolds, rollScore, sessionColour } from './music.js'
 import { buildTrace, replayAt } from './trace.js'
 import { linkFacts, linkLine, overlay, parseSheet, type LinkView, type MarkSheet } from './link-view.js'
 import { KEEPER, PRISM } from './link-marks.js'
-import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, openingRequest, OPENING_WORDS, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
+import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, openingRequest, freeRequest, OPENING_WORDS, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
 import { motion, motionFor, WIDTH as MOTION_W } from './motion.js'
 import { canvasFor, SHORT_MAX_S, captionLines, captionStrip, galleryHTML, titleCardAsync, HD_MARKS, markFloor, revisitRequest, rollLayout, rollSize, sceneSVG, SIZES, slug, withCaption } from './convert.js'
@@ -115,6 +115,16 @@ const linkSheets: Record<string, MarkSheet | null> = {}
 let paintOn = false
 let paintModel = 'haiku'
 let openPainting = false // the openPainting setting: a bare /spark also turns the painter on. Off by default
+// WHAT SHE PAINTS: 'work', as she always has (her opening, then each turn's expression, and a live one in a long turn), or
+// 'free': every painting hers, of nothing in the conversation, on a rhythm of her own (one every paintEvery minutes) while
+// you are around and can see her, as Prism paints. The paintings setting, or /spark paint free | work (and her ✦ / ◇ tool)
+type PaintWay = 'work' | 'free'
+let paintWay: PaintWay = 'work'
+let paintEvery = 5       // the paintEvery setting: minutes between free paintings (0: one at the end of each turn instead)
+const AROUND_S = 30 * 60 // free paintings rest once nothing has happened for this long: nobody is there to see them
+let lastAround = -1e9    // when you were last here: a prompt typed or sent, a turn going or ending, one of her tools pressed
+let lastFreeAt = -1e9    // when she last began a free painting (or any painting: the rhythm counts from the last one)
+const wayWord = (w: string): PaintWay | null => w === 'free' || w === 'live' || w === 'own' ? 'free' : w === 'work' ? 'work' : null
 const paintSpent = { paintings: 0, calls: 0, tokens: 0 } // what the painter has used this session, shown under its painting
 let painting: (Painting & { at: number; n: number; shape: string; cost: number }) | null = null // cost: what this one painting used, in tokens
 // STEADY: Spark's lines keep the rows they have needed at a width (at least three), so a longer state line ("thinking ·
@@ -129,7 +139,7 @@ function heldRows(width: number, need: number): number {
 }
 // STORY: every painting of this session, in order, kept in memory (never written), to be told again with /spark story
 // `at`: when it was painted (seconds since 1970), `by`: 'prism' for a painting of Prism's (see PAINTING WITH PRISM)
-type StoryEntry = Painting & { shape: string; cost: number; clock: string; live: boolean; opening?: boolean; at?: number; by?: 'prism'; src?: string }
+type StoryEntry = Painting & { shape: string; cost: number; clock: string; live: boolean; opening?: boolean; free?: boolean; at?: number; by?: 'prism'; src?: string }
 const story: StoryEntry[] = []
 const whoPainted = (e: unknown) => (e as { by?: string } | null)?.by === 'prism' ? 'Prism' : 'Spark'
 
@@ -986,20 +996,32 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
 
 // A live painting, if the turn has run long enough since the last one and this is a moment (or she has waited enough)
 async function maybePaintLive($: EngineInterface, moment: boolean) {
-  if (!paintOn || paintBusy || turnBegan < 0 || !turnFacts) return
+  if (!paintOn || paintWay === 'free' || paintBusy || turnBegan < 0 || !turnFacts) return // free paintings keep their own rhythm
   const since = (await hostNow($)) - Math.max(turnBegan, lastPaintAt)
   if (since < LIVE_GAP_S || (!moment && since < LIVE_GAP_S + LIVE_WAIT_S)) return
   lastLiveAt = lastPaintAt = Math.max(turnBegan, lastPaintAt) + since // the turn's end waits its 20 s after it
   void quietly(() => paintNow($, 'live'))
 }
 
+// A free painting, on her rhythm: paintEvery minutes after her last one, while her painting can be seen (this runs as her
+// pane draws, so never when it is closed or hidden) and you are around (a turn going, or something done in the last 30
+// minutes). Left alone, she rests, so no tokens go on paintings nobody is there to see
+function maybePaintFree($: EngineInterface) {
+  if (!paintOn || paintWay !== 'free' || paintEvery <= 0 || paintBusy || replay || focusMode || !paneOpen) return
+  if (turnBegan < 0 && now() - lastAround >= AROUND_S) return
+  if (now() - lastFreeAt < paintEvery * 60) return
+  lastFreeAt = now()
+  void quietly(() => paintNow($, 'free'))
+}
+
 // One painting: of the last turn (or of her waking, before any turn), or, live, of the long turn still going. One at a
 // time; nothing is written anywhere.
-async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Promise<string> {
+async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live' | 'free'): Promise<string> {
   if (paintBusy) return 'Spark is already painting'
   paintBusy = true
   let cost = 0 // what this painting uses: its reflection (live) and the painting itself
   lastPaintAt = await hostNow($).catch(() => lastPaintAt)
+  lastFreeAt = now() // the free rhythm counts from her last painting, whichever it was
   const id = 'paint' + (paintCount + 1) + ':' + now().toFixed(2)
   let ok = false, react: string | null = null
   emit({ type: 'paint.start', id, toward: paintBeside ? PAINT_TOWARD.beside : PAINT_TOWARD.below }, true) // her painter is her own lane
@@ -1010,10 +1032,12 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
     : lastTurn ?? { facts: null, end: { reason: 'answer', durationMs: 0 }, answer: '' }
   // the conversation's first painting is her opening: of nothing in it, only the hour, the month and a word to start from
   const opening = !live && !openingMade
+  // free: hers, like the opening, seeded by the names of her last few so they can run on (never a word of the work)
+  const free = !opening && paintWay === 'free'
   try {
     const facts = painterFacts(turn.facts, { ...turn.end, mood: String(liveFrame().hover).replace(/^Spark · /, ''), turn: live ? turnsSeen + 1 : turnsSeen })
     let words = ''
-    if (live && spoken.trim()) { // the builder's reflection, distilled by the small model from their own last words aloud
+    if (live && !free && spoken.trim()) { // the builder's reflection, distilled by the small model from their own last words aloud
       const rq = reflectRequest(spoken)
       const f = await $.model.complete({ model: paintModel, system: rq.system, prompt: rq.prompt, maxTokens: 200, effort: 'low', timeoutMs: 20000 })
       cost += spend((f as { usage?: Record<string, number> }).usage)
@@ -1025,6 +1049,8 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
     const today = new Date()
     const req = opening
       ? openingRequest({ palette, theme: activeTheme(), shape, size, hour: today.getHours(), month: today.getMonth(), word: OPENING_WORDS[Math.floor(Math.random() * OPENING_WORDS.length)] })
+      : free
+      ? freeRequest({ palette, theme: activeTheme(), shape, size, hour: today.getHours(), month: today.getMonth(), word: OPENING_WORDS[Math.floor(Math.random() * OPENING_WORDS.length)], after: story.filter((x) => x.by !== 'prism').slice(-3).map((x) => x.title) })
       : painterRequest({ facts, palette, theme: activeTheme(), gist: live ? '' : turn.answer, reflection: words, live, shape, size: paintRoom ? [paintRoom.columns, paintRoom.rows * 2] : null })
     const r = await $.model.complete({ model: paintModel, system: req.system, prompt: req.prompt, maxTokens: 3000, effort: 'low', timeoutMs: 40000 })
     cost += spend((r as { usage?: Record<string, number> }).usage) // every arm carries what the call really cost
@@ -1036,7 +1062,7 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
     const p = parsePainting(r.text, palette)
     if (!p) { paintNote = 'the painter answered something that was not a painting'; logRecent('paint ✕'); return 'no painting: ' + paintNote }
     painting = { ...p, at: now(), n: ++paintCount, shape, cost }
-    const entry: StoryEntry = { ...p, shape, cost, clock: new Date().toTimeString().slice(0, 5), live: why === 'live', at: Date.now() / 1000, ...(opening ? { opening: true } : {}) }
+    const entry: StoryEntry = { ...p, shape, cost, clock: new Date().toTimeString().slice(0, 5), live: why === 'live' && !free, at: Date.now() / 1000, ...(opening ? { opening: true } : {}), ...(free ? { free: true } : {}) }
     story.push(entry)
     void quietly(() => sharePainting($, entry, String(liveFrame().hover).replace(/^Spark · /, ''))) // to Prism, when she paints here too
     if (opening) openingMade = true
@@ -1045,8 +1071,8 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
     ok = true; react = p.react
     paintSpent.paintings++
     paintNote = ''
-    logRecent('paint ' + (opening ? 'opening' : why))
-    return 'painted' + (opening ? ' her opening' : '') + (p.title ? ': ' + p.title : '') + (paneOpen && !focusMode ? '' : ' (it shows below Spark at the side: /spark)')
+    logRecent('paint ' + (opening ? 'opening' : free ? 'free' : why))
+    return 'painted' + (opening ? ' her opening' : free ? ' one of her own' : '') + (p.title ? ': ' + p.title : '') + (paneOpen && !focusMode ? '' : ' (it shows below Spark at the side: /spark)')
   } catch (err) {
     paintNote = String((err as Error)?.message || err) // a model the session may not use, for example
     logRecent('paint ✕')
@@ -1083,7 +1109,7 @@ function paintFrame(columns: number, rows: number): PaintSite['frame'] {
 
 // What the painter has used this session, said plainly: shown small (dim) under the painting, in /spark state and when the painter is turned off
 const kilo = (n: number) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n)
-const paintOnText = () => `painting on: the first painting is her opening, of nothing in the conversation (only the hour, the month and a word to start from); after it, after each turn a small painter (${paintModel}) paints Spark's expression of it below her, from the turn's shape and a short excerpt of the reply. Each painting is one short ${paintModel} call through your session and uses tokens; what it has used shows under the painting. /spark paint paints one any time, /spark paint off stops it`
+const paintOnText = () => paintWay === 'free' ? `painting on, free: the first painting is her opening, and every one after it is hers too, of nothing in the conversation, ${paintEvery > 0 ? `one every ${paintEvery} ${paintEvery === 1 ? 'minute' : 'minutes'} while you are around` : 'one at the end of each turn'}. Each is one short ${paintModel} call through your session and uses tokens; what it has used shows under the painting. /spark paint work paints the work instead, /spark paint off stops it` : `painting on: the first painting is her opening, of nothing in the conversation (only the hour, the month and a word to start from); after it, after each turn a small painter (${paintModel}) paints Spark's expression of it below her, from the turn's shape and a short excerpt of the reply. Each painting is one short ${paintModel} call through your session and uses tokens; what it has used shows under the painting. /spark paint paints one any time, /spark paint off stops it`
 const spentText = () => `painter · ${paintSpent.paintings} ${paintSpent.paintings === 1 ? 'painting' : 'paintings'} · ${kilo(paintSpent.tokens)} tokens (${paintModel})`
 
 // What goes in the room it is given, `width` columns by `room` rows: the painting at its own shape (wide, square or tall,
@@ -1117,7 +1143,7 @@ function paintBlock(els: any, width: number, room0: number): any[] {
   // when there is room for it after the title, and never at the cost of the painting itself (it needs at least 3 rows)
   const k = storyIndex()
   const costs = k >= 0
-    ? [`story · ${k + 1} of ${story.length} · ${story[k]!.clock}${story[k]!.by === 'prism' ? ' · Prism’s' : story[k]!.opening ? ' · her opening' : story[k]!.live ? ' · while it worked' : ''}${storyOn!.done ? ' · the end' : storyOn!.paused !== null ? ' · held' : ''}`] // which page of the session's story
+    ? [`story · ${k + 1} of ${story.length} · ${story[k]!.clock}${story[k]!.by === 'prism' ? ' · Prism’s' : story[k]!.opening ? ' · her opening' : story[k]!.free ? ' · her own' : story[k]!.live ? ' · while it worked' : ''}${storyOn!.done ? ' · the end' : storyOn!.paused !== null ? ' · held' : ''}`] // which page of the session's story
     : painting.cost > 0 ? [`this painting · ${kilo(painting.cost)} tokens`, `session · ${spentText().replace(/^painter · /, '')}`] : []
   let spendRows = 0
   const spent: any[] = []
@@ -1254,6 +1280,7 @@ const HELP = [
   '/spark ask Q   a side question: answered beside the work (no tools), mid-turn too',
   '/spark link    on | off | status: Keeper and Prism beside Spark (Cyclops Link, off until you turn it on)',
   '/spark paint   a small painter paints each turn below Spark, and one now (it uses tokens); /spark paint off stops it',
+  '               /spark paint free: her own paintings, of nothing in the conversation, on her rhythm; /spark paint work: of the work again',
   '/spark story   the session\'s paintings told again in order, each laid down anew (no tokens); /spark story again ends it',
   '/spark copy    what you last said to Spark and her answer, whole, onto your clipboard (or ⧉ copy under it)',
   '/spark prism   painting with Prism: her paintings this session join the story, converts and rolls, credited to her; /spark prism off | on | <folder>',
@@ -1402,7 +1429,7 @@ async function sparkRun($: EngineInterface, e: { args: string; presentation?: { 
     }
   }
   else if (word === 'state') {
-    text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · hd ${hd ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${paintOn ? ' · paint on' + (paintSpent.calls ? ` (${spentText()})` : '') : ''}${convertProgress ? ` · converting ${convertProgress.done} of ${convertProgress.total} (${convertProgress.what})` : ''}\n` + (reflection ? `last reflection (sent to the painter): ${reflection}\n` : '') + recent.join('\n')
+    text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · hd ${hd ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${paintOn ? ' · paint on' + (paintWay === 'free' ? ` · free${paintEvery > 0 ? ` every ${paintEvery} min` : ''}` : '') + (paintSpent.calls ? ` (${spentText()})` : '') : ''}${convertProgress ? ` · converting ${convertProgress.done} of ${convertProgress.total} (${convertProgress.what})` : ''}\n` + (reflection ? `last reflection (sent to the painter): ${reflection}\n` : '') + recent.join('\n')
   }
   else if (word === 'link') {
     if (arg === 'on' || arg === 'off') {
@@ -1456,7 +1483,17 @@ async function sparkRun($: EngineInterface, e: { args: string; presentation?: { 
       if (!paneOpen && !focusMode) { band = false; opened = (await openPane($)) + '; ' } // she is not there yet: the painting needs her pane, so open it
       const made = await paintNow($, 'asked')
       text = opened + (turning ? paintOnText() + '. ' + made.replace(/ \(it shows below Spark at the side: \/spark\)$/, '') : made)
-    } else text = '/spark paint turns the painter on and paints one now (it uses tokens); /spark paint off stops it'
+    } else if (wayWord(arg)) { // what she paints: free (hers, on her own rhythm) or work (each turn's expression)
+      const way = wayWord(arg)!, was = paintWay, turning = !paintOn
+      paintWay = way; paintOn = true
+      let opened = ''
+      if (!paneOpen && !focusMode) { band = false; opened = (await openPane($)) + '; ' }
+      const says = way === 'free'
+        ? `free paintings${was === 'free' ? ' (already)' : ''}: every painting is hers, of nothing in the conversation, ${paintEvery > 0 ? `one every ${paintEvery} ${paintEvery === 1 ? 'minute' : 'minutes'} while you are around and she can be seen (she rests after ${AROUND_S / 60} quiet minutes)` : 'one at the end of each turn'}; each a short ${paintModel} call that uses tokens. /spark paint work goes back to paintings of the work`
+        : `paintings of the work${was === 'work' ? ' (already)' : ''}: after each turn she paints its expression (and in a long turn one while it goes). /spark paint free lets her paint her own`
+      text = opened + (turning ? 'painting on; ' : '') + says
+      if (way === 'free') text += '. ' + (await paintNow($, 'asked')).replace(/ \(it shows below Spark at the side: \/spark\)$/, '')
+    } else text = '/spark paint turns the painter on and paints one now (it uses tokens); /spark paint free | work: her own paintings on her rhythm, or paintings of the work; /spark paint off stops it'
   }
   else if (word === 'copy') text = talkText() ? await copyWords($, talkText(), (e as { surface?: string }).surface) : 'nothing to copy yet: say something to Spark under her painting, and /spark copy (or ⧉ copy there) puts her answer on your clipboard'
   else if (word === 'help' || (word !== '' && word !== 'pane')) text = HELP
@@ -1472,7 +1509,7 @@ async function sparkRun($: EngineInterface, e: { args: string; presentation?: { 
   return { text }
 }
 // her tools run /spark through here
-function pressSpark($: EngineInterface, args: string) { void quietly(async () => { const { text } = await sparkRun($, { args }); if (text) await $.ui.log('Spark: ' + text) }) }
+function pressSpark($: EngineInterface, args: string) { lastAround = now(); void quietly(async () => { const { text } = await sparkRun($, { args }); if (text) await $.ui.log('Spark: ' + text) }) }
 
 export const register: Register = (on, options) => {
   // defaults from the plugin's config menu; the commands below change them for this session
@@ -1493,6 +1530,8 @@ export const register: Register = (on, options) => {
   if (typeof o.paint === 'boolean') paintOn = o.paint
   if (typeof o.paintModel === 'string' && MODEL_ID.test(o.paintModel.trim())) paintModel = o.paintModel.trim()
   if (typeof o.openPainting === 'boolean') openPainting = o.openPainting
+  if (typeof o.paintings === 'string' && wayWord(o.paintings.trim().toLowerCase())) paintWay = wayWord(o.paintings.trim().toLowerCase())!
+  if (typeof o.paintEvery === 'number' && o.paintEvery >= 0) paintEvery = Math.min(240, o.paintEvery)
   if (typeof o.sideWidth === 'number' && o.sideWidth >= 0) sideWidth = o.sideWidth
   if (typeof o.convertFolder === 'string' && o.convertFolder.trim()) convertFolder = o.convertFolder.trim()
   if (typeof o.convertCaption === 'boolean') convertCaption = o.convertCaption
@@ -1526,9 +1565,10 @@ export const register: Register = (on, options) => {
   })
 
   // ---------------------------------------------------------------- real events → presence events
-  on('prompt.edit', async ($, e, next) => { emit({ type: 'prompt.edit' }); return next(e) })
+  on('prompt.edit', async ($, e, next) => { lastAround = now(); emit({ type: 'prompt.edit' }); return next(e) })
   on('prompt.submit', async ($, e, next) => {
     // typed (or delivered) while a turn runs: it waits until the model takes it in, at her edge
+    lastAround = now()
     if (e.turnId) queuedMsgs++
     await quietly(() => emit(e.turnId ? { type: 'prompt.queue' } : { type: 'prompt.submit' }))
     return next(e)
@@ -1621,7 +1661,8 @@ export const register: Register = (on, options) => {
         lastTurn = { facts: turnFacts, end: { reason, durationMs: e.durationMs }, answer: typeof e.answer === 'string' ? e.answer : '' }
         // the painter, on its own: a turn worth painting, at most one every 20 s, never in the turn's way
         const sinceLive = (await hostNow($).catch(() => Infinity)) - lastLiveAt
-        if (paintOn && !paintBusy && e.durationMs >= AUTO_MIN_MS && now() - lastAutoPaint >= AUTO_GAP_S && sinceLive >= AUTO_GAP_S) { lastAutoPaint = now(); void quietly(() => paintNow($, 'turn')) }
+        lastAround = now()
+        if (paintOn && !(paintWay === 'free' && paintEvery > 0) && !paintBusy && e.durationMs >= AUTO_MIN_MS && now() - lastAutoPaint >= AUTO_GAP_S && sinceLive >= AUTO_GAP_S) { lastAutoPaint = now(); void quietly(() => paintNow($, 'turn')) }
       }
       turnFacts = null; spoken = ''; spinnerWord = ''
       turnBegan = -1
@@ -1666,6 +1707,7 @@ export const register: Register = (on, options) => {
     const { f, label, said } = paneFrame()
     if (e.surface === 'terminal') {
       paneSeenOnTerminal = true
+      maybePaintFree($) // her own rhythm, when her paintings are free
       const { Box, Text, Raster, Image, Button } = $.ui.resolve(e)
       const W = e.props.bodyColumns ?? 60
       const bodyRows = e.props.scroll?.bodyRows ?? 0
@@ -1682,6 +1724,8 @@ export const register: Register = (on, options) => {
           tool('spark-tool-story', storyOn ? '■ story' : '▶ story', 'story'),
           tool('spark-tool-convert', '⇪ convert', 'convert'),
           tool('spark-tool-roll', '◎ roll', 'convert roll'),
+          // what she paints, and a press to change it: ✦ free (hers, on her rhythm) or ◇ work (each turn's expression)
+          ...(width >= 36 ? [tool('spark-tool-way', paintWay === 'free' ? '✦ free' : '◇ work', paintWay === 'free' ? 'paint work' : 'paint free')] : []),
         ] })
         if (!busy) return [row]
         const frac = progressFrac(), pct = `${Math.floor(frac * 100)}%`
