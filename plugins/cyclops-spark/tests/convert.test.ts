@@ -4,7 +4,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { parsePainting, paintingScene } from '../hooks/painter.js'
-import { canvasFor, captionHeight, captionLines, captionStrip, flattenRGBA, galleryHTML, revisitRequest, sceneSVG, slug, titleCard, titleCardAsync, withCaption } from '../hooks/convert.js'
+import { canvasFor, captionHeight, captionLines, captionStrip, flattenRGBA, galleryHTML, revisitRequest, rollLayout, rollSize, sceneSVG, slug, titleCard, titleCardAsync, withCaption } from '../hooks/convert.js'
 import { base64, base64Async, createRaster, spill, toQuadrants, toQuadrantsClassic, toRGB8, toRGB8Async } from '../hooks/render-raster.js'
 import { blur, layeredRaster, layeredStepper, layersOf } from '../hooks/layered.js'
 import { BEAT, colourOf, rollHolds, rollScore } from '../hooks/music.js'
@@ -683,6 +683,8 @@ test('the old word still works: convert layered is truest', async ($, on) => {
 
 test('while a roll is made, a bar under her tools says how far she has got and what she is doing; gone when it is done', async ($, on) => {
   const { logs } = engine(on)
+  let redraws = 0
+  on('ui.invalidate', async () => { redraws++; return loose({ value: undefined }) })
   await cmd($, 'paint'); await say($, 'paint'); await settle()
   const look = async () => {
     const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(60, 70) })
@@ -701,6 +703,33 @@ test('while a roll is made, a bar under her tools says how far she has got and w
   const pcts = seen.map((w) => Number(/(\d+)%/.exec(w)?.[1] ?? -1)).filter((n) => n >= 0)
   expect(pcts.every((n, i) => i === 0 || n >= pcts[i - 1]!)).toBe(true) // it only moves on
   await until(() => logs.length >= 1)
+  expect(redraws).toBeGreaterThanOrEqual(3) // a still Spark is asked to draw as the bar appears, as it moves, and as it ends (no stale bar left behind)
   expect((await look()).bar).toBeUndefined() // done: gone
+  await cmd($, 'paint off')
+})
+
+test('a Short: /spark convert roll short makes it upright, 1080 x 1920, the painting large with its caption right under it, a little above the middle', { timeoutMs: 90000 }, async ($, on) => {
+  expect(rollSize('short')).toEqual([1080, 1920])
+  expect(rollSize('shorts')).toEqual([1080, 1920])
+  for (const shape of ['wide', 'square', 'tall']) {
+    const L = rollLayout(shape, 1080, 1920, 2)
+    expect(L.big).toBe(true)
+    expect(L.capY).toBe(L.oy + L.ph) // the caption under the painting, not at the foot of the frame
+    expect(L.pw).toBeLessThanOrEqual(1080)
+    expect(L.oy + L.ph / 2).toBeLessThan(1920 / 2) // above the middle
+    expect(L.capY + L.strip).toBeLessThanOrEqual(1920)
+  }
+  expect(rollLayout('wide', 1080, 1920, 2).strip).toBeGreaterThan(captionHeight(1080, 2)) // read on a phone: larger
+  const wide = rollLayout('wide', 1280, 720, 2)
+  expect(wide.capY).toBe(wide.areaH) // a widescreen roll as before
+  const { spawns, logs, files } = engine(on)
+  await cmd($, 'paint'); await settle()
+  expect(await say($, 'convert roll faithful short')).toMatch(/^rolling all 1 painting into a clip, faithful, 1080x1920 MP4 upright, for Shorts, about \d+ s long/)
+  await until(() => logs.length >= 1)
+  expect(logs.at(-1)).toMatch(/-faithful-short\.mp4/)
+  const seg = spawns.find((a) => a[2] === 'segment' && a[4] === '1')!
+  expect(seg.slice(6, 8)).toEqual(['1080', '1920'])
+  const card = [...files.keys()].find((f) => /\/f000-\d{3}\.b64\.0$/.test(f))
+  expect(card).toBeDefined() // the title card, upright too
   await cmd($, 'paint off')
 })

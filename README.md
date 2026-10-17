@@ -109,6 +109,7 @@ This is separate from the plugin: installing Spark any other way does not add it
 | `/spark paint off` | Stops the painter and empties the room below Spark. |
 | `/spark story` | The session's paintings told again, in order, each laid down anew, once through (no tokens). Under the painting: pause, back, next, end; or `/spark story pause \| play \| next \| back \| end`. |
 | `/spark convert` | The painting made large, as SVG and PNG, into the convert folder (below): click what (this painting, every way, all paintings, the roll), then which way (truest, faithful, refined, interpretive), each with its token cost beside it. Or say it: `/spark convert layered 4k`, `every`, `all refined`. |
+| `/spark convert roll short` | The roll upright, 1080 x 1920, for YouTube Shorts and phones: each painting large with its caption right under it, the title card upright too (`-short.mp4`). Spark says if it runs past the 3 minutes a Short can be. |
 | `/spark convert roll` | Every painting of the session as a clip, in any of the four ways: each laid down mark by mark, held with its title for a bar or two of its own, crossfaded into the next (MP4 with ffmpeg; `roll truest hd` for 1080p). |
 | `/spark copy` | What you last said to Spark and her answer, whole, onto your clipboard (or press ⧉ copy under her answer). A terminal's own selection copies screen rows, so beside the conversation it takes half of each. |
 | `/spark help` | This list. |
