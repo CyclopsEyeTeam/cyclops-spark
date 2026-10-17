@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.15
+
+- **Spark sits higher and her painting is larger.** In a side pane she used to take all the rows her width gave her and
+  leave the painting whatever was left, so a wide pane showed a very large Spark over a sliver of painting. Now they
+  share the rows: Spark gives the painting what it needs to be as large as the pane's width allows (with its title,
+  cost lines and the line to talk to her), keeping at least 45% of the room herself. She keeps her width, so her lanes
+  still reach the sides; only her height gives way. In a 72-column pane her painting goes from about 6 rows to 17; in a
+  narrow pane, where the painting was already as wide as it can be, nothing changes.
+
 ## 1.7.14
 
 - **Free paintings: you choose what she paints.** Inspired by how Prism paints, the painter has two ways now:
