@@ -248,6 +248,7 @@
   and in HD cells. It takes up to 9 rows, keeps two for anything else in the band, shows the eye alone when narrow, and
   leaves the band to a survey. The **Welcome eye** setting turns it off. The launch banner a shell prints is covered
   when Claude Code takes the whole screen; this one is Claude Code's own drawing, so it stays.
+
 ## Unreleased
 
 - **Optional Cyclops launch banner.** `./install.sh` can add the Cyclops eye, drawn in truecolour half blocks, to the
