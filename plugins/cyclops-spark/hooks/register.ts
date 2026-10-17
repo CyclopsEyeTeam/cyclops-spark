@@ -1824,13 +1824,20 @@ export const register: Register = (on, options) => {
       // Otherwise a column: Spark, her line, then the painting. Spark gives the painting the rows it needs to be as large
       // as the pane's width lets it, keeping at least SPARK_SHARE of the room herself; she keeps her width (her lanes
       // still reach the sides), only her height, so she sits higher and the painting is large
-      const top = tools(W, bodyRows - Math.min(rows, Math.max(0, bodyRows - textRows(W))) - textRows(W) - 1)
-      const under = textRows(W) + top.length
-      if (bodyRows > under + 2 && rows > bodyRows - under) rows = bodyRows - under
-      if (painted && bodyRows > 0 && e.props.placement !== 'inline') {
-        const avail = bodyRows - under, keep = Math.max(8, Math.round(avail * SPARK_SHARE))
-        if (rows > keep) rows = Math.max(keep, Math.min(rows, avail - paintNeed(columns)))
+      // Spark's rows once she has shared them, with `under` rows taken by her lines (and the tools)
+      const sparkFits = (under: number) => {
+        let r = rows
+        if (bodyRows > under + 2 && r > bodyRows - under) r = bodyRows - under
+        if (painted && bodyRows > 0 && e.props.placement !== 'inline') {
+          const avail = bodyRows - under, keep = Math.max(8, Math.round(avail * SPARK_SHARE))
+          if (r > keep) r = Math.max(keep, Math.min(r, avail - paintNeed(columns)))
+        }
+        return r
       }
+      // the tools ask for the rows left once Spark has shared hers (not her full height: she gives way to the painting)
+      const top = tools(W, bodyRows - sparkFits(textRows(W) + 1) - textRows(W) - 1)
+      const under = textRows(W) + top.length
+      rows = sparkFits(under)
       if (e.props.placement === 'inline' && bodyRows > 0 && bodyRows - under < rows) { rows = Math.max(2, bodyRows - under); columns = Math.min(columns, rows * 2) } // a short inline pane: fit it, never clip it
       const below = (paintOn || storyOn !== null) && !replay && bodyRows > 0 ? paintBlock(els, columns, bodyRows - rows - under) : [] // the painter on: her painting, and a line to talk to her
       return Box({ flexDirection: 'column', width: W, children: [...top, draw(columns, rows), ...sparkText(W), ...below] })

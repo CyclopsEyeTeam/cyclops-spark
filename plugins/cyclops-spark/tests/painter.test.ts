@@ -164,6 +164,11 @@ test('Spark shares her room: the painting gets the rows it needs to be as large 
     expect(got.spark! + 3 + (got.art ?? 0) + (got.title ? 1 : 0) + (got.art && free >= 7 ? 1 : 0)).toBeLessThanOrEqual(r)
     if (r >= 50) expect(got.art).toBe(Math.floor((c - 1) / 4)) // a tall pane: the wide painting as large as the width lets it be
   }
+  for (const [c, r] of [[74, 48], [72, 50], [56, 50], [90, 50]] as Array<[number, number]>) { // her tools stay, however wide
+    const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(c, r) })
+    expect(await term.find({ key: 'spark-tool-convert' })).toBeDefined()
+    await term.unmount()
+  }
   await cmd($, 'paint off')
 })
 
