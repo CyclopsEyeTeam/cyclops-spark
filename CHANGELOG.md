@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.7.13
+
+- **Truest keeps the terminal's colour depth, and adds nothing of its own.** Studying a real truest convert beside the
+  terminal it came from showed that the terminal shows her painting with 16 levels per channel. In the screenshot, 99%
+  of the painting's pixels sit exactly on them (0, 17, 34 … 255), while the conversation's text beside it does not. So a
+  smooth gradient or a wide glow is seen as bands, and where the three channels step at different places the bands
+  change hue (plum to navy to near black). The tonal "layers" on her floor come from that, not from anything she drew.
+  Truest now:
+  - draws each mark flat, with the weight a terminal cell gives it, then rounds its light to those levels (the
+    `truestLevels` setting: 16, or 0 for full colour), in the PNG and in the SVG (a discrete colour transfer);
+  - no longer adds shadows, bloom or the softening of far layers, which were the renderer's own reading of depth and
+    not the painting's.
+  On the real painting, the bands on the floor, the navy and near-black zones and the plum all come back as the terminal
+  showed them. Its rolls are drawn the same way, now at the full 12 frames a second.
+- **The depth pass is kept as `layered`.** `/spark convert layered` (and `all layered`, `roll layered`) still makes the
+  old version, to compare. It is not in the menu.
+
 ## 1.7.12
 
 - **Painting with Prism.** Prism paints with the same brush, saving her paintings as JSON files of the same marks in
