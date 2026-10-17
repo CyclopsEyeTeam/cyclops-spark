@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.17
+
+- **Spark grows smoothly as the pane widens.** The side pane chose between a column (Spark over her painting) and side by
+  side by a fixed rule (three times as wide as tall), so a pane just short of it showed a small Spark over a wide
+  painting, and one just past it a big Spark. Now it picks whichever layout makes Spark and her painting larger together,
+  and in a column Spark keeps at least half the rows. Across a 49-row pane, from 56 to 212 columns, Spark goes 26, 23 …
+  23, then 27, 28, 31, 35, 46 rows, with the painting beside her from about 122 columns.
+- **Beside Spark, the painting meets her middle.** Side by side, the painting sat at the top of its column, under the
+  tools, while Spark was centred lower down. It is now lowered, as far as its room allows, so its middle meets hers.
+
 ## 1.7.16
 
 - **Her tools are back in a tall pane.** Whether the story, convert and roll buttons fit was still worked out from

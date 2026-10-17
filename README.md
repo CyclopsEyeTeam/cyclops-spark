@@ -276,9 +276,10 @@ the words themselves. The last reflection shows in `/spark state`.
   The same by word: `/spark story pause | play | next | back | end`. A new painting arriving steps in front of the
   story. It asks nothing of any model, works with the painter off, and `/clear` lets it go.
 - **It fits the room, on every resize.** In a tall side pane the painting sits under Spark, and they share the rows:
-  Spark gives the painting what it needs to be as large as the pane's width allows, keeping at least 45% of the room
+  Spark gives the painting what it needs to be as large as the pane's width allows, keeping at least half of the room
   herself (her width stays, so her lanes still reach the sides; only her height gives way, so she sits higher). It
-  takes a tall or square shape to fill the room it has. Above the prompt on a small terminal
+  takes a tall or square shape to fill the room it has. Pull the pane wider and, once side by side makes them both
+  larger, Spark and her painting sit next to each other, the painting lowered so its middle meets hers. Above the prompt on a small terminal
   (wide and short) Spark and her painting sit side by side. The painter is told the shape it is painting for; afterwards
   a painting is fitted and centred, never stretched. With only a little room you see its title; with none it waits.
 - **Nothing is cut short.** Spark's state line and the painting's title wrap instead of ending in "…", and the layout
