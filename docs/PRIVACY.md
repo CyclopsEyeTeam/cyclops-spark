@@ -1,25 +1,8 @@
 # Privacy and data
 
 **Spark writes no files and makes no network request of its own.** The test
-*outside Studio Spark writes nothing anywhere, whatever else the environment says* checks this. There are two exceptions:
-Cyclops Link, only while you have it on (below), and her feed for Cyclops Studio, only inside Studio (below).
-
-## Inside Cyclops Studio only: her feed
-
-Only when `CYCLOPS_STUDIO=1` and `CYCLOPS_SESSION_ID` is a plain name (Studio sets both on its own terminals), Spark
-writes the events she receives to `${XDG_STATE_HOME:-~/.local/state}/cyclops-presence/<CYCLOPS_SESSION_ID>/spark/`, so
-Studio can draw her in its panes (Studio's format: `docs/presence-feeds.md` in Studio):
-
-- `live.json` (the last minute, and a heartbeat at least every 5 s) and `durable.json` (what shapes her for longer):
-  event kinds, their times and counts only. A call is written as its lane (for example `shell`, `files`, `Keeper`),
-  never its command, URL or arguments, and its id only as a short hash. No prompt, reply or thinking text.
-- `side.json`: the answers to side questions you ask her from Studio (right-click her there), the last five.
-- `notes.json`: Claude Code's own *You should know* / *Heads up* offers, exactly as shown above your prompt, the last
-  five, so Studio can offer to copy them. Both are emptied when the session ends.
-
-She reads one file there, `studio.json`, which Studio writes: when Studio's Copy took the last reply, and a side
-question you asked from Studio. The tests in `tests/studio-feed.test.ts` check all of this, including that nothing is
-written outside Studio.
+*Spark writes nothing anywhere, whatever the environment says* checks this. The single exception is Cyclops Link, and only
+while you have it on (below).
 
 ## In memory only (gone when Claude Code exits)
 

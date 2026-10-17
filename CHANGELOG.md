@@ -11,6 +11,9 @@
   made large (truest), the two the same size and level, with the caption under both ("side by side"): what she painted
   in the terminal, and what it becomes. PNG and SVG (the cells as rects, the truest painting nested). By word only,
   since the dialog holds four ways; not for the roll.
+- **The Studio feed leaves the public plugin.** 1.7.18's feed for Cyclops Studio's panes is for Studio's own copy of
+  Spark, kept with Studio, not for everyone who installs her. The public Spark is back to writing no files of her own
+  anywhere, whatever the environment says, `CYCLOPS_STUDIO=1` included.
 
 ## 1.7.18
 
