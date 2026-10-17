@@ -298,6 +298,7 @@ async function refreshTheme($: EngineInterface) {
   } catch { /* a host without the row: stay dark */ }
   sites.clear()
 }
+
 const ground = (): number[] => activeTheme() === 'light' ? [0.96, 0.95, 0.94] : [0.07, 0.07, 0.08] // assumed terminal ground for half-transparent pixels
 
 function frameFor(site: Site, f: any, peers = false): { cells?: string; rgba?: string; width?: number; height?: number } {
