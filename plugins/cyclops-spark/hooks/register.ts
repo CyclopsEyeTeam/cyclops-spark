@@ -111,7 +111,7 @@ const linkSheets: Record<string, MarkSheet | null> = {}
 // ---------------------------------------------------------------- the painter (off unless you turn it on)
 // One tool-less completion per painting ($.model.complete, Haiku unless you pick another model), given only the turn's
 // shape (counts and kinds) and a short excerpt of the reply (the gist). Its answer is a small paint
-// program, drawn by Spark's own renderer in the room under her, which she shares: the painting gets the rows it needs, she keeps at least 45%.
+// program, drawn by Spark's own renderer in the room under her, which she shares: the painting gets the rows it needs, she keeps at least half.
 let paintOn = false
 let paintModel = 'haiku'
 let openPainting = false // the openPainting setting: a bare /spark also turns the painter on. Off by default
@@ -1131,9 +1131,19 @@ function paintNeed(width: number): number {
   const a = SHAPES[painting.shape] ?? 2
   return said + lines + spend + 1 + Math.min(60, Math.floor(width / (2 * a)))
 }
-const SPARK_SHARE = 0.45 // with a painting below her, Spark keeps at least this share of the rows (and never more than her own size)
+// The painting's own rows in a room of `room` rows at a width: as large as its shape and the width allow, less what its
+// title, cost lines and the talk line need
+function paintRowsAt(width: number, room: number): number {
+  const p = shownPainting()
+  if (!p) return 0
+  const full = Math.min(60, Math.floor(width / (2 * (SHAPES[p.shape] ?? 2))))
+  return Math.max(0, Math.min(full, room - (paintNeed(width) - full)))
+}
+const SPARK_SHARE = 0.5 // with a painting below her, Spark keeps at least this share of the rows (and never more than her own size)
 
-function paintBlock(els: any, width: number, room0: number): any[] {
+// centreAt: beside Spark, the row (from the top of this block) her drawing is centred on: the painting is lowered, as far
+// as its room allows, so its middle meets hers instead of sitting at the top of its column
+function paintBlock(els: any, width: number, room0: number, centreAt = -1): any[] {
   if (!(paintOn || storyOn) || room0 < 1 || width < 4) return []
   const painting = shownPainting() // in a story, the page it is on
   const { Box, Text, Raster, Image, Input, Button } = els
@@ -1196,7 +1206,9 @@ function paintBlock(els: any, width: number, room0: number): any[] {
     ? Raster({ key: 'painting', columns, rows, cells: fr.cells })
     : Image({ key: 'painting', columns, rows, alt: painting.title || 'a painting', source: { rgba: fr.rgba!, width: fr.width!, height: fr.height! } })
   const centred = Box({ flexDirection: 'row', justifyContent: 'center', width, children: [art] })
-  return [...(gap ? [Text({ children: [' '] })] : []), centred, caption, ...spent, ...talkEls]
+  const spare = room - gap - rows - lines - spendRows
+  const lower = centreAt >= 0 ? Math.max(0, Math.min(spare, Math.round(centreAt - gap - rows / 2))) : 0
+  return [...(gap + lower ? [Box({ key: 'painting-lower', height: gap + lower, children: [Text({ children: [' '] })] })] : []), centred, caption, ...spent, ...talkEls]
 }
 
 // Spark's coarse facts, written for the helper only when they change (at most four times a second)
@@ -1806,25 +1818,7 @@ export const register: Register = (on, options) => {
           : Image({ key: 'spark', columns: cols, rows: rws, alt: label, source: { rgba: fr.rgba!, width: fr.width!, height: fr.height! } })
       }
       const painted = (paintOn || storyOn !== null) && !replay && (shownPainting() !== null || paintBusy)
-      // A wide, short room (above the prompt on a narrow terminal, or a pane dragged wide): Spark and her painting side by
-      // side, so neither has to give way. Spark keeps her own shape (twice as many columns as rows) and the larger share.
-      paintBeside = bodyRows > 0 && W >= 40 && (e.props.placement === 'inline' || W >= bodyRows * 3) // where her painter's lane reaches
-      if (painted && paintBeside) {
-        const left = Math.max(16, Math.floor((W - 2) * 0.45)), right = W - 2 - left
-        const top = tools(right, bodyRows - 1)
-        let rws = Math.max(2, Math.min(60, bodyRows - textRows(left)))
-        let cols = Math.min(left, rws * 2)
-        if (cols < rws * 2) rws = Math.max(2, Math.floor(cols / 2))
-        cols = Math.max(4, cols)
-        return Box({ flexDirection: 'row', columnGap: 2, children: [
-          Box({ flexDirection: 'column', width: left, children: [draw(cols, rws), ...sparkText(left)] }),
-          Box({ flexDirection: 'column', width: right, children: [...top, ...paintBlock(els, right, bodyRows - top.length)] }),
-        ] })
-      }
-      // Otherwise a column: Spark, her line, then the painting. Spark gives the painting the rows it needs to be as large
-      // as the pane's width lets it, keeping at least SPARK_SHARE of the room herself; she keeps her width (her lanes
-      // still reach the sides), only her height, so she sits higher and the painting is large
-      // Spark's rows once she has shared them, with `under` rows taken by her lines (and the tools)
+      // Spark's rows in a column once she has shared them, with `under` rows taken by her lines (and the tools)
       const sparkFits = (under: number) => {
         let r = rows
         if (bodyRows > under + 2 && r > bodyRows - under) r = bodyRows - under
@@ -1834,6 +1828,35 @@ export const register: Register = (on, options) => {
         }
         return r
       }
+      // Side by side: Spark on the left (her own shape, twice as many columns as rows, the larger share), the painting right
+      const left = Math.max(16, Math.floor((W - 2) * 0.45)), right = W - 2 - left
+      const besideSpark = () => {
+        let rws = Math.max(2, Math.min(60, bodyRows - textRows(left)))
+        let cols = Math.min(left, rws * 2)
+        if (cols < rws * 2) rws = Math.max(2, Math.floor(cols / 2))
+        return { rws, cols: Math.max(4, cols) }
+      }
+      // WHICH WAY, by what each gives: a column or side by side, whichever makes Spark and her painting larger together
+      // (the sum of their heights), so as a pane widens Spark grows smoothly into the side-by-side room rather than staying
+      // small in a column and then jumping large. Inline (a wide, short room above the prompt) is always side by side.
+      // With no painting yet, a very wide pane still counts as beside, for where her painter's lane reaches
+      if (bodyRows > 0 && W >= 40 && e.props.placement === 'inline') paintBeside = true
+      else if (bodyRows > 0 && W >= 40 && painted) {
+        const colUnder = textRows(W) + 1, colSpark = sparkFits(colUnder)
+        const b = besideSpark()
+        paintBeside = b.rws + paintRowsAt(right, bodyRows - 1) > colSpark + paintRowsAt(columns, bodyRows - colSpark - colUnder)
+      } else paintBeside = bodyRows > 0 && W >= 40 && W >= bodyRows * 3
+      if (painted && paintBeside) {
+        const top = tools(right, bodyRows - 1)
+        const { rws, cols } = besideSpark()
+        return Box({ flexDirection: 'row', columnGap: 2, children: [
+          Box({ flexDirection: 'column', width: left, children: [draw(cols, rws), ...sparkText(left)] }),
+          Box({ flexDirection: 'column', width: right, children: [...top, ...paintBlock(els, right, bodyRows - top.length, Math.round(rws / 2) - top.length)] }),
+        ] })
+      }
+      // Otherwise a column: Spark, her line, then the painting. Spark gives the painting the rows it needs to be as large
+      // as the pane's width lets it, keeping at least SPARK_SHARE of the room herself; she keeps her width (her lanes
+      // still reach the sides), only her height, so she sits higher and the painting is large
       // the tools ask for the rows left once Spark has shared hers (not her full height: she gives way to the painting)
       const top = tools(W, bodyRows - sparkFits(textRows(W) + 1) - textRows(W) - 1)
       const under = textRows(W) + top.length
