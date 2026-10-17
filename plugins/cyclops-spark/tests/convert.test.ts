@@ -4,8 +4,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 import { parsePainting, paintingScene } from '../hooks/painter.js'
-import { canvasFor, captionHeight, captionLines, captionStrip, flattenRGBA, galleryHTML, revisitRequest, rollLayout, rollSize, sceneSVG, slug, titleCard, titleCardAsync, withCaption } from '../hooks/convert.js'
-import { base64, base64Async, createRaster, spill, toQuadrants, toQuadrantsClassic, toRGB8, toRGB8Async } from '../hooks/render-raster.js'
+import { canvasFor, cellsSVG, sideLayout, captionHeight, captionLines, captionStrip, flattenRGBA, galleryHTML, revisitRequest, rollLayout, rollSize, sceneSVG, slug, titleCard, titleCardAsync, withCaption } from '../hooks/convert.js'
+import { base64, base64Async, cellsToRGB, createRaster, DEFAULT, spill, toQuadrants, toQuadrantsClassic, toRGB8, toRGB8Async } from '../hooks/render-raster.js'
 import { blur, layeredRaster, layeredStepper, layersOf } from '../hooks/layered.js'
 import { BEAT, colourOf, rollHolds, rollScore } from '../hooks/music.js'
 
@@ -813,5 +813,62 @@ test('with no folder of Prism\'s, Spark writes nothing for her', async ($, on) =
   await cmd($, 'paint'); await settle()
   for (let i = 0; i < 20; i++) { await settle(); await new Promise((r) => setTimeout(r, 0)) }
   expect([...files.keys()].some((f) => f.endsWith('.json'))).toBe(false)
+  await cmd($, 'paint off')
+})
+
+// ---------------------------------------------------------------- her terminal look, kept: save and side by side
+test('terminal cells as pixels: each cell a block, its quarters in its two colours by the block character, the terminal default as the ground', () => {
+  const RED = 0xff0000, BLUE = 0x0000ff
+  const words = new Uint32Array([0x2580, RED, BLUE, 0x2598, RED, DEFAULT, 0x20, RED, BLUE]) // upper half, top-left quarter, a blank
+  const rgb = cellsToRGB(words, 3, 1, 4, 8, [0, 0.5, 0])
+  const at = (x: number, y: number) => Array.from(rgb.slice((y * 12 + x) * 3, (y * 12 + x) * 3 + 3))
+  expect(at(1, 1)).toEqual([255, 0, 0]); expect(at(1, 6)).toEqual([0, 0, 255]) // upper half: fg over bg
+  expect(at(4, 1)).toEqual([255, 0, 0]); expect(at(7, 1)).toEqual([0, 128, 0]); expect(at(4, 6)).toEqual([0, 128, 0]) // a quarter, on the ground
+  expect(at(9, 1)).toEqual([0, 0, 255]) // a blank cell is its background
+  expect(Array.from(cellsToRGB(new Uint32Array([0x2588, 0x123456, 0]), 1, 1, 2, 4, [0, 0, 0], 16).slice(0, 3))).toEqual([17, 51, 85]) // the terminal's 16 levels
+  const svg = cellsSVG(words, 3, 1, 0, 0, 4, 8, [0, 0.5, 0])
+  expect(svg).toContain('fill="#ff0000"'); expect(svg).toContain('fill="#008000"')
+  const lay = sideLayout('wide', 1920)
+  expect(lay.rx + lay.pw + lay.gap).toBeLessThanOrEqual(1920)
+  expect(lay.ph).toBe(Math.round(lay.pw / 2))
+})
+
+test('/spark save: the painting showing, kept as the terminal showed it (PNG and a crisp SVG of its cells) and as its marks (JSON); no menus, no tokens', async ($, on) => {
+  const { asks, files, spawns } = engine(on)
+  expect(await say($, 'save')).toMatch(/^no paintings yet this session/)
+  await cmd($, 'paint'); await settle()
+  const n0 = asks.length
+  const out = await say($, 'save')
+  expect(out).toMatch(/^saved “a fox under three moons” as the terminal showed it \(\d+ x \d+ cells, \d+ x \d+\) into \/home\/t\/zilo\/spark-paintings: 01-a-fox-under-three-moons-terminal\.png, 01-a-fox-under-three-moons-terminal\.svg, 01-a-fox-under-three-moons\.json$/)
+  expect(asks.length).toBe(n0) // no tokens
+  const svg = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-terminal.svg')!
+  expect(svg).toMatch(/^<svg [^>]*shape-rendering="crispEdges"/)
+  expect((svg.match(/<rect /g) ?? []).length).toBeGreaterThan(100) // block by block
+  const json = JSON.parse(files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons.json')!)
+  expect(json.title).toBe('a fox under three moons')
+  expect(json.marks.length).toBeGreaterThan(0)
+  expect(json.by).toBe('spark')
+  const png = spawns.find((a) => a[3]?.endsWith('-terminal.png'))!
+  const [cols, rows] = /\((\d+) x (\d+) cells/.exec(out)!.slice(1).map(Number)
+  expect([Number(png[4]), Number(png[5])]).toEqual([cols! * 16, rows! * 32]) // a cell 16 x 32
+  expect(files.get('/home/t/zilo/spark-paintings/index.html')).toContain('01-a-fox-under-three-moons-terminal.png')
+  await cmd($, 'paint off')
+})
+
+test('/spark convert side: her terminal cells beside the painting made large (truest), one picture with the caption under both', async ($, on) => {
+  const { files, spawns, logs } = engine(on)
+  await cmd($, 'paint'); await settle()
+  expect(await say($, 'convert roll side')).toMatch(/^side by side is for a painting or all of them, not the roll/)
+  const out = await say($, 'convert side 960')
+  await until(() => logs.some((l) => /^Spark: converted/.test(l)) || /^converted/.test(out))
+  const svg = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-side.svg')!
+  expect(svg).toBeDefined()
+  expect(svg).toContain('<svg xmlns="http://www.w3.org/2000/svg" x=') // the truest painting, nested on the right
+  expect(svg).toContain('feComponentTransfer') // in the terminal's colour depth
+  expect(svg).toContain('side by side') // the caption says how it was made
+  const png = spawns.find((a) => a[3]?.endsWith('-side.png'))!
+  const lay = sideLayout('wide', 960)
+  expect(Number(png[4])).toBe(960)
+  expect(Number(png[5])).toBeGreaterThan(lay.H) // the picture, and the caption strip under it
   await cmd($, 'paint off')
 })
