@@ -111,7 +111,7 @@ const linkSheets: Record<string, MarkSheet | null> = {}
 // ---------------------------------------------------------------- the painter (off unless you turn it on)
 // One tool-less completion per painting ($.model.complete, Haiku unless you pick another model), given only the turn's
 // shape (counts and kinds) and a short excerpt of the reply (the gist). Its answer is a small paint
-// program, drawn by Spark's own renderer in the room under her: only room she is not using, so she never gets smaller.
+// program, drawn by Spark's own renderer in the room under her, which she shares: the painting gets the rows it needs, she keeps at least 45%.
 let paintOn = false
 let paintModel = 'haiku'
 let openPainting = false // the openPainting setting: a bare /spark also turns the painter on. Off by default
@@ -1115,6 +1115,24 @@ const spentText = () => `painter · ${paintSpent.paintings} ${paintSpent.paintin
 // What goes in the room it is given, `width` columns by `room` rows: the painting at its own shape (wide, square or tall,
 // whichever the room had when it was painted), as large as fits, centred, and its title in full under it. A little room:
 // the title alone. None: nothing (the painting waits for room).
+// The rows her painting block wants at a width: the painting as large as the width lets it be in its own shape, with
+// its title, its cost (or story) lines, the gap above it, and the line to talk to her. Spark gives up rows for it (down
+// to a share of her own, below), so a wide pane no longer leaves her painting a sliver under a very large Spark
+function paintNeed(width: number): number {
+  const painting = shownPainting()
+  let said = 0
+  if (paintOn && sayTo) {
+    const answer = talk ? (talk.busy ? 'Spark is listening…' : 'Spark: ' + talk.reply) : ''
+    said = (talk ? 1 : 0) + (answer ? wrapRows(answer, width) : 0) + 1 + (talkText() && copyTo ? 1 : 0)
+  }
+  if (!painting) return 1 + said
+  const lines = wrapRows('✎ ' + (painting.title || 'untitled') + (paintBusy ? ' · painting…' : ''), width)
+  const spend = storyIndex() >= 0 ? 2 : painting.cost > 0 ? 2 : 0
+  const a = SHAPES[painting.shape] ?? 2
+  return said + lines + spend + 1 + Math.min(60, Math.floor(width / (2 * a)))
+}
+const SPARK_SHARE = 0.45 // with a painting below her, Spark keeps at least this share of the rows (and never more than her own size)
+
 function paintBlock(els: any, width: number, room0: number): any[] {
   if (!(paintOn || storyOn) || room0 < 1 || width < 4) return []
   const painting = shownPainting() // in a story, the page it is on
@@ -1803,10 +1821,16 @@ export const register: Register = (on, options) => {
           Box({ flexDirection: 'column', width: right, children: [...top, ...paintBlock(els, right, bodyRows - top.length)] }),
         ] })
       }
-      // Otherwise a column: Spark, her line, then the painting in the rows she does not use (she never gets smaller for it)
+      // Otherwise a column: Spark, her line, then the painting. Spark gives the painting the rows it needs to be as large
+      // as the pane's width lets it, keeping at least SPARK_SHARE of the room herself; she keeps her width (her lanes
+      // still reach the sides), only her height, so she sits higher and the painting is large
       const top = tools(W, bodyRows - Math.min(rows, Math.max(0, bodyRows - textRows(W))) - textRows(W) - 1)
       const under = textRows(W) + top.length
       if (bodyRows > under + 2 && rows > bodyRows - under) rows = bodyRows - under
+      if (painted && bodyRows > 0 && e.props.placement !== 'inline') {
+        const avail = bodyRows - under, keep = Math.max(8, Math.round(avail * SPARK_SHARE))
+        if (rows > keep) rows = Math.max(keep, Math.min(rows, avail - paintNeed(columns)))
+      }
       if (e.props.placement === 'inline' && bodyRows > 0 && bodyRows - under < rows) { rows = Math.max(2, bodyRows - under); columns = Math.min(columns, rows * 2) } // a short inline pane: fit it, never clip it
       const below = (paintOn || storyOn !== null) && !replay && bodyRows > 0 ? paintBlock(els, columns, bodyRows - rows - under) : [] // the painter on: her painting, and a line to talk to her
       return Box({ flexDirection: 'column', width: W, children: [...top, draw(columns, rows), ...sparkText(W), ...below] })
