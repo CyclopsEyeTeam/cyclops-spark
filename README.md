@@ -283,8 +283,8 @@ the words themselves. The last reflection shows in `/spark state`.
   (wide and short) Spark and her painting sit side by side. The painter is told the shape it is painting for; afterwards
   a painting is fitted and centred, never stretched. With only a little room you see its title; with none it waits.
 - **Nothing is cut short.** Spark's state line and the painting's title wrap instead of ending in "…", and the layout
-  counts their rows first. The painter stays out of focus, the top strip and the replay. Nothing is written anywhere,
-  and `/clear` empties it with the stars.
+  counts their rows first. The painter stays out of focus, the top strip and the replay. Nothing of it is written
+  anywhere, and `/clear` empties it with the stars.
 
 ### From the wall
 
@@ -391,7 +391,9 @@ thinks and soft bubbles while it really writes, stopping on its own within a cou
 ## Privacy
 
 Spark writes no files and makes no network request of its own. Everything it knows is in memory and gone when Claude Code
-exits. The one exception is Cyclops Link, only while you have it on: then Spark's helper writes her coarse state to one
+exits. Inside Cyclops Studio only (`CYCLOPS_STUDIO=1`), she writes her events, as kinds and counts, never content, to a
+small feed Studio draws her from (`~/.local/state/cyclops-presence/<session>/spark/`). The other exception is Cyclops
+Link, only while you have it on: then Spark's helper writes her coarse state to one
 small file other presences on this machine can read. The painter, only while you have it on, makes one short model call
 per painting through your own session, with the turn's shape and a short excerpt of the reply. `/spark convert`, only
 when you run it, writes a painting's SVG and PNG into the convert folder. See [docs/PRIVACY.md](docs/PRIVACY.md).
