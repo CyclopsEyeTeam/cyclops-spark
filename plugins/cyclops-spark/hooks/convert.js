@@ -174,7 +174,8 @@ export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '
 // ---------------------------------------------------------------- the caption, on the picture itself
 // Under a converted painting: its title, then a dim line (Spark · the date · the way it was made), drawn in a small
 // bitmap font scaled to the picture, on a strip of the ground colour. The SVG writes the same lines as text.
-const captionScale = (W) => Math.max(2, Math.round(W / 480))
+// `big`: for a phone held upright (a Short), the caption is read small and from arm's length, so it is drawn larger
+const captionScale = (W, big = false) => big ? Math.max(3, Math.round(W / 270)) : Math.max(2, Math.round(W / 480))
 const CELL = 10
 const MIDDOT = String.fromCharCode(0xb7)
 const ACCENTS = new RegExp('[' + String.fromCharCode(0x300) + '-' + String.fromCharCode(0x36f) + ']', 'g') // combining marks, named by code so none sits in this source
@@ -182,8 +183,8 @@ const glyph = (ch) => FONT[ch] || FONT[ch.normalize('NFD').replace(ACCENTS, '')]
 export function captionLines(title, mode, when) {
   return [{ text: title || 'untitled', dim: false }, { text: `Spark ${MIDDOT} ${when} ${MIDDOT} ${mode}`, dim: true }]
 }
-export function captionHeight(W, lines = 2) {
-  const s = captionScale(W)
+export function captionHeight(W, lines = 2, big = false) {
+  const s = captionScale(W, big)
   return s * 4 + lines * (FONT_H * s + s * 3) + s * 3
 }
 // The strip's RGB (W × captionHeight), the text in the ink colours over the ground
@@ -213,9 +214,9 @@ export function drawText(rgb, W, H, text, x0, y0, s, ink, alpha = 1) {
 // how wide a text is, in font pixels
 export const textWidth = (text) => [...String(text)].reduce((n, ch) => n + glyph(ch)[0], 0)
 
-export function captionStrip(W, lines, ground, { light = false } = {}) {
-  const s = captionScale(W)
-  const H = captionHeight(W, lines.length)
+export function captionStrip(W, lines, ground, { light = false, big = false } = {}) {
+  const s = captionScale(W, big)
+  const H = captionHeight(W, lines.length, big)
   const rgb = new Uint8Array(W * H * 3)
   const g = ground.map((v) => Math.round(v * 255))
   for (let i = 0; i < W * H; i++) { rgb[i * 3] = g[0]; rgb[i * 3 + 1] = g[1]; rgb[i * 3 + 2] = g[2] }
@@ -265,18 +266,27 @@ ${cards}
 // ---------------------------------------------------------------- the roll: the session's paintings as a clip
 // A frame of the roll, W x H: the painting at its own shape (wide, square or tall), as large as fits above the caption
 // strip and centred in it; where it sits, and how big
+// Upright (a Short, taller than wide): the painting as wide as the frame allows and its caption right under it, the two
+// together a little above the middle, where the eye rests on a phone; the caption larger. `capY`: the caption's top row
 export function rollLayout(shape, W, H, lines) {
-  const strip = captionHeight(W, lines)
+  const upright = H > W
+  const strip = captionHeight(W, lines, upright)
   const areaH = H - strip
   const [cw, ch] = canvasFor(shape, 1000)
   const a = cw / ch
+  const room = upright ? Math.round(areaH * 0.82) : areaH
   let pw = W, ph = Math.round(W / a)
-  if (ph > areaH) { ph = areaH; pw = Math.round(areaH * a) }
-  return { pw, ph, ox: Math.floor((W - pw) / 2), oy: Math.floor((areaH - ph) / 2), areaH, strip }
+  if (ph > room) { ph = room; pw = Math.round(room * a) }
+  if (!upright) return { pw, ph, ox: Math.floor((W - pw) / 2), oy: Math.floor((areaH - ph) / 2), areaH, strip, capY: areaH, big: false }
+  const oy = Math.round((H - ph - strip) * 0.42)
+  return { pw, ph, ox: Math.floor((W - pw) / 2), oy, areaH, strip, capY: oy + ph, big: true }
 }
 // The sizes the roll comes in: 720p by default, hd for 1080p; a width of its own keeps 16:9 (even numbers, as video
-// wants). Without ffmpeg, a smaller animated PNG
-export const ROLL_SIZES = { '': [1280, 720], '720': [1280, 720], hd: [1920, 1080], '1080': [1920, 1080] }
+// wants); short (or shorts, vertical) upright at 1080 x 1920, for YouTube Shorts and phones. Without ffmpeg, a smaller
+// animated PNG
+export const ROLL_SIZES = { '': [1280, 720], '720': [1280, 720], hd: [1920, 1080], '1080': [1920, 1080], short: [1080, 1920], shorts: [1080, 1920], vertical: [1080, 1920] }
+// how long a Short may be, in seconds
+export const SHORT_MAX_S = 180
 export function rollSize(word) {
   if (word in ROLL_SIZES) return ROLL_SIZES[word]
   if (/^\d{3,4}$/.test(word)) { const w = Math.max(320, Math.min(1920, Number(word))) & ~1; return [w, Math.round((w * 9) / 16) & ~1] }
@@ -301,7 +311,7 @@ export function* titleCarding({ W, H, title, sub, ground, light = false, glow = 
     if (x === W - 1) yield
   }
   // the eye
-  const eh = Math.round(H * 0.34), ew = Math.round((eh * 64) / 30)
+  const eh = Math.round(Math.min(H * 0.34, (W * 0.9 * 30) / 64)), ew = Math.round((eh * 64) / 30) // upright, as wide as the frame lets it be
   const eye = yield* eyeRastering(ew, eh, { light })
   const ex = Math.round(cx - ew / 2), ey = Math.round(cy - eh / 2)
   for (let y = 0; y < eh; y++) for (let x = 0; x < ew; x++) {
