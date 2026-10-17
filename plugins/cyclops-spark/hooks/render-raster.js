@@ -345,6 +345,27 @@ export function posterize(rgb, levels) {
   return rgb
 }
 
+// TERMINAL CELLS AS PIXELS, for convert's side by side: the cells her pane drew ([codePoint, fg, bg] each, as toQuadrants or
+// toHalfBlocks make them), each drawn as a block cw x ch pixels, its quarters in fg or bg by the block character's shape
+// (the half blocks are quarter masks too), the terminal's default colour as the ground. RGB bytes, (cols*cw) x (rows*ch)
+export function cellsToRGB(words, cols, rows, cw, ch, ground, levels = 0) {
+  const W = cols * cw, H = rows * ch, out = new Uint8Array(W * H * 3)
+  const g = ground.map((v) => Math.round(v * 255))
+  const step = levels > 1 && levels < 256 ? 255 / (levels - 1) : 0
+  const rgb = (c) => { const v = c === DEFAULT ? g : [(c >> 16) & 255, (c >> 8) & 255, c & 255]; return step ? v.map((x) => Math.round(Math.round(x / step) * step)) : v }
+  const hx = [0, Math.floor(cw / 2), cw], hy = [0, Math.floor(ch / 2), ch]
+  for (let cy = 0; cy < rows; cy++) for (let cx = 0; cx < cols; cx++) {
+    const w = (cy * cols + cx) * 3
+    const mask = Math.max(0, QUAD.indexOf(words[w])), fg = rgb(words[w + 1]), bg = rgb(words[w + 2])
+    for (let q = 0; q < 4; q++) {
+      const col = (mask >> q) & 1 ? fg : bg
+      const x0 = cx * cw + hx[q & 1], x1 = cx * cw + hx[(q & 1) + 1], y0 = cy * ch + hy[q >> 1], y1 = cy * ch + hy[(q >> 1) + 1]
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) { const k = (y * W + x) * 3; out[k] = col[0]; out[k + 1] = col[1]; out[k + 2] = col[2] }
+    }
+  }
+  return out
+}
+
 // any terminal: Raster cells [codePoint, fg, bg] — '▀' top pixel as fg, bottom as bg; the terminal's own default
 // background where a pixel is (nearly) empty, so the entity sits on whatever the terminal's ground is.
 export const DEFAULT = 0x01000000
