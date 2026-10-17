@@ -134,7 +134,7 @@ test('an answer that is not a painting, or a failed call, draws nothing new and 
   await cmd($, 'paint off')
 })
 
-test('a small terminal loses nothing: Spark and her label keep their size; the painting takes only free rows, then just its title, then waits', async ($, on) => {
+test('Spark shares her room: the painting gets the rows it needs to be as large as the width allows, she keeps at least 45% and never grows; a small room gives just the title, then waits', async ($, on) => {
   engine(on)
   const sparkRows = async (cols: number, rows: number) => {
     const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(cols, rows) })
@@ -146,14 +146,15 @@ test('a small terminal loses nothing: Spark and her label keep their size; the p
     return { spark: spark?.props.rows, art: art?.props.rows, title: Boolean(title), label: Boolean(label) }
   }
   await cmd($, 'paint off')
-  const sizes: Array<[number, number]> = [[30, 10], [30, 15], [30, 16], [30, 17], [30, 18], [30, 21], [44, 22], [44, 40], [64, 30]]
+  const sizes: Array<[number, number]> = [[30, 10], [30, 15], [30, 16], [30, 17], [30, 18], [30, 21], [44, 22], [44, 40], [64, 30], [56, 50], [72, 50]]
   const without = []
   for (const [c, r] of sizes) without.push(await sparkRows(c, r))
   await cmd($, 'paint')
   for (let i = 0; i < sizes.length; i++) {
     const [c, r] = sizes[i]!
     const got = await sparkRows(c, r)
-    expect(got.spark).toBe(without[i]!.spark) // Spark is never made smaller for the painting
+    expect(got.spark!).toBeLessThanOrEqual(without[i]!.spark) // never larger for the painting,
+    expect(got.spark!).toBeGreaterThanOrEqual(Math.min(without[i]!.spark, Math.max(8, Math.round((r - 4) * 0.45)))) // and never less than her share
     expect(got.label).toBe(true)
     const free = r - got.spark! - 3 // her lines keep three rows held, so nothing below them moves when they grow
     if (free < 1) { expect(got.title).toBe(false); expect(got.art).toBeUndefined() }
@@ -161,6 +162,7 @@ test('a small terminal loses nothing: Spark and her label keep their size; the p
     else { expect(got.title).toBe(true); expect(got.art).toBeGreaterThanOrEqual(3) }
     // never more rows than the pane has
     expect(got.spark! + 3 + (got.art ?? 0) + (got.title ? 1 : 0) + (got.art && free >= 7 ? 1 : 0)).toBeLessThanOrEqual(r)
+    if (r >= 50) expect(got.art).toBe(Math.floor((c - 1) / 4)) // a tall pane: the wide painting as large as the width lets it be
   }
   await cmd($, 'paint off')
 })
