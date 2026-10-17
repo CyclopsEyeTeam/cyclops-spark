@@ -128,8 +128,69 @@ function heldRows(width: number, need: number): number {
   return h
 }
 // STORY: every painting of this session, in order, kept in memory (never written), to be told again with /spark story
-type StoryEntry = Painting & { shape: string; cost: number; clock: string; live: boolean; opening?: boolean }
+// `at`: when it was painted (seconds since 1970), `by`: 'prism' for a painting of Prism's (see PAINTING WITH PRISM)
+type StoryEntry = Painting & { shape: string; cost: number; clock: string; live: boolean; opening?: boolean; at?: number; by?: 'prism'; src?: string }
 const story: StoryEntry[] = []
+const whoPainted = (e: unknown) => (e as { by?: string } | null)?.by === 'prism' ? 'Prism' : 'Spark'
+
+// PAINTING WITH PRISM. Prism (Cyclops Eye Team's Gemini presence) paints too, with the same brush: her paintings are
+// JSON files of the same marks (colours as 0..1 RGB) in her folder, prism-paintings beside Spark's spark-paintings in
+// the project (the prismPaintings setting, or /spark prism <folder>, says otherwise; off turns it off). The ones she
+// paints during this session join Spark's story in the order they were painted: /spark story tells both, a convert of
+// a page of hers is hers, and the roll is the two of them, each credited under her own paintings, the title card
+// "Spark & Prism". Her files are only read, checked as Spark's own painter's are (every mark clamped), never changed.
+let prismFolder = 'prism-paintings'
+let prismSetting = 'prism-paintings' // the setting's own, for /spark prism on
+const prismSeen = new Set<string>() // her files already looked at (taken into the story, or from before this session)
+let sessionStartMs = 0
+const hexOf = (c: unknown) => Array.isArray(c) ? '#' + c.slice(0, 3).map((v) => Math.round(Math.max(0, Math.min(1, Number(v) || 0)) * 255).toString(16).padStart(2, '0')).join('') : c
+async function prismDir($: EngineInterface): Promise<string> {
+  if (!prismFolder || prismFolder === 'off') return ''
+  if (prismFolder.startsWith('/') || prismFolder.startsWith('~')) return prismFolder
+  const root = await $.session.root().catch(() => '')
+  return (root ? root + '/' : '') + prismFolder
+}
+// And Spark's to her: while Prism's folder is there in the project (she is painting here too), each painting Spark makes
+// is also written, in the same form as hers (title, mood, mirror, the marks with 0..1 RGB colours, tokens, model, at, by,
+// shape), as a JSON file into Spark's own folder (spark-paintings), for Prism to read. Only the painting goes: its marks
+// and title, never anything of the work. With /spark prism off, or no folder of hers, nothing is written.
+let sharedCount = 0
+async function sharePainting($: EngineInterface, e: StoryEntry, mood: string) {
+  const dir = await prismDir($)
+  if (!dir || !(await $.fs.exists(dir).catch(() => false))) return
+  const root = await $.session.root().catch(() => '')
+  const mine = convertFolder.startsWith('/') || convertFolder.startsWith('~') ? convertFolder : (root ? root + '/' : '') + convertFolder
+  const name = slug(e.title, ++sharedCount) + '.json'
+  await $.fs.write(`${mine}/${name}`, JSON.stringify({ title: e.title, mood, mirror: e.mirror, marks: e.marks, tokens: e.cost, model: paintModel, at: e.at, by: 'spark', shape: e.shape, ...(e.opening ? { opening: true } : {}) }))
+}
+
+// Take in the paintings Prism has made this session that Spark has not seen yet; returns how many came in
+async function syncPrism($: EngineInterface): Promise<number> {
+  const dir = await prismDir($)
+  if (!dir) return 0
+  if (!sessionStartMs) sessionStartMs = (await $.session.usage().catch(() => null) as { startedAt?: number } | null)?.startedAt || Date.now()
+  let entries: Array<{ name: string; kind: string }> = []
+  try { entries = await $.fs.list(dir) as never } catch { return 0 } // no folder (yet): nothing of hers
+  let added = 0
+  for (const { name, kind } of entries.filter((e) => e.kind === 'file' && e.name.endsWith('.json')).sort((a, b) => a.name.localeCompare(b.name)).slice(-40)) {
+    if (kind !== 'file' || prismSeen.has(name) || story.some((e) => e.by === 'prism' && e.src === name)) continue
+    prismSeen.add(name)
+    try {
+      const d = JSON.parse(String(await $.fs.read(`${dir}/${name}`))) as { title?: string; mirror?: string | null; marks?: Array<Record<string, unknown>>; at?: number; shape?: string }
+      const at = Number(d.at) || 0
+      if (!at || at * 1000 < sessionStartMs - 5000 || !Array.isArray(d.marks)) continue // from before this session
+      const p = parsePainting(JSON.stringify({ title: d.title, mirror: d.mirror || 'none', marks: d.marks.map((m) => ({ ...m, c: hexOf(m.c), ...(m.c2 ? { c2: hexOf(m.c2) } : {}) })) }), palette, HD_MARKS)
+      if (!p) continue
+      const entry: StoryEntry = { ...p, shape: d.shape && d.shape in SHAPES ? d.shape : 'wide', cost: 0, clock: new Date(at * 1000).toTimeString().slice(0, 5), live: false, at, by: 'prism', src: name }
+      const k = story.findIndex((e) => (e.at ?? 0) > at)
+      if (k < 0) story.push(entry); else story.splice(k, 0, entry)
+      if (story.length > STORY_MAX) story.shift()
+      added++
+    } catch { /* not a painting of hers we can read: left alone */ }
+  }
+  if (added) logRecent(`prism ${added}`)
+  return added
+}
 const STORY_MAX = 60
 const STORY_S = 7 // each painting is laid down again, then held, for this long
 // Told once through, then held on the last page. `paused`: the moment it was held (the page stays), `done`: it reached
@@ -237,7 +298,6 @@ async function refreshTheme($: EngineInterface) {
   } catch { /* a host without the row: stay dark */ }
   sites.clear()
 }
-
 const ground = (): number[] => activeTheme() === 'light' ? [0.96, 0.95, 0.94] : [0.07, 0.07, 0.08] // assumed terminal ground for half-transparent pixels
 
 function frameFor(site: Site, f: any, peers = false): { cells?: string; rgba?: string; width?: number; height?: number } {
@@ -592,6 +652,7 @@ async function askWay($: EngineInterface, question: string, list: Array<Painting
 }
 // /spark convert [truest | faithful | refined | interpretive | every | all [way] | roll [way]] [hd | 4k | width]
 async function convertPainting($: EngineInterface, words: string[], raw: string[] = words): Promise<string> {
+  await syncPrism($).catch(() => 0) // Prism's newest join the story first
   // `called <a title>`: the roll's title, as you write it
   let called = ''
   const at = words.indexOf('called')
@@ -661,7 +722,7 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
         const n = converted.length + 1
         const name = slug(p.title, n) + '-' + tag
         const when = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-        const caption = convertCaption ? captionLines(p.title, tag, when) : null
+        const caption = convertCaption ? captionLines(p.title, tag, when, whoPainted(source)) : null
         let px: { W: number; H: number; px: Float32Array }
         if (tag === 'truest') { // as she sees it: the terminal's weight for each mark, in depth (its layers, the far ones softened, shadows, the bloom)
           await $.fs.write(`${folder}/${name}.svg`, sceneSVG([], W, H, { theme, title: p.title, caption, floor: Math.max(layeredFloor(W, H), 0.6 * cellRes(W)), layers: layeredScenes(p, W, H, { theme }) }))
@@ -798,7 +859,7 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
         if (revisits(way)) { const r = await revisitPainting($, p, way as 'refined' | 'interpretive'); p = r.p; if (!r.ok && !notes.length) notes.push(r.note.replace(/^the painter/, 'for some paintings the painter')) }
         rolled.push(p)
         const seq = i + lead // its place in the clip, after the title card
-        const lines = captionLines(p.title, `${i + 1} of ${n}`, when)
+        const lines = captionLines(p.title, `${i + 1} of ${n}`, when, whoPainted(list[i]))
         const L = rollLayout(p.shape, W, H, lines.length)
         // the frame: the ground, the caption strip at the bottom (the same for all this painting's frames), the painting
         const frame = new Uint8Array(W * H * 3)
@@ -851,7 +912,7 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
       let at = n
       if (lead) {
         progress(at, `raising the title, “${shortTitle(title, 16)}”`)
-        const sub = `Spark · ${when} · ${plural(n)}${video && rollMusic ? ` · music in ${score.key}` : ''}`
+        const sub = `${list.some((e) => e.by === 'prism') ? 'Spark & Prism' : 'Spark'} · ${when} · ${plural(n)}${video && rollMusic ? ` · music in ${score.key}` : ''}`
         const glow = sessionColour(rolled)
         const tf = video ? TITLE.fadeFrames : frames
         const full = await titleCardAsync({ W, H, title, sub, ground: g, light, glow }, pause) // drawn once; each frame brings it up out of the ground
@@ -962,7 +1023,9 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live'): Pro
     const p = parsePainting(r.text, palette)
     if (!p) { paintNote = 'the painter answered something that was not a painting'; logRecent('paint ✕'); return 'no painting: ' + paintNote }
     painting = { ...p, at: now(), n: ++paintCount, shape, cost }
-    story.push({ ...p, shape, cost, clock: new Date().toTimeString().slice(0, 5), live: why === 'live', ...(opening ? { opening: true } : {}) })
+    const entry: StoryEntry = { ...p, shape, cost, clock: new Date().toTimeString().slice(0, 5), live: why === 'live', at: Date.now() / 1000, ...(opening ? { opening: true } : {}) }
+    story.push(entry)
+    void quietly(() => sharePainting($, entry, String(liveFrame().hover).replace(/^Spark · /, ''))) // to Prism, when she paints here too
     if (opening) openingMade = true
     if (story.length > STORY_MAX) story.shift()
     storyOn = null // a new painting is shown as it arrives: the story steps aside
@@ -1041,7 +1104,7 @@ function paintBlock(els: any, width: number, room0: number): any[] {
   // when there is room for it after the title, and never at the cost of the painting itself (it needs at least 3 rows)
   const k = storyIndex()
   const costs = k >= 0
-    ? [`story · ${k + 1} of ${story.length} · ${story[k]!.clock}${story[k]!.opening ? ' · her opening' : story[k]!.live ? ' · while it worked' : ''}${storyOn!.done ? ' · the end' : storyOn!.paused !== null ? ' · held' : ''}`] // which page of the session's story
+    ? [`story · ${k + 1} of ${story.length} · ${story[k]!.clock}${story[k]!.by === 'prism' ? ' · Prism’s' : story[k]!.opening ? ' · her opening' : story[k]!.live ? ' · while it worked' : ''}${storyOn!.done ? ' · the end' : storyOn!.paused !== null ? ' · held' : ''}`] // which page of the session's story
     : painting.cost > 0 ? [`this painting · ${kilo(painting.cost)} tokens`, `session · ${spentText().replace(/^painter · /, '')}`] : []
   let spendRows = 0
   const spent: any[] = []
@@ -1180,6 +1243,7 @@ const HELP = [
   '/spark paint   a small painter paints each turn below Spark, and one now (it uses tokens); /spark paint off stops it',
   '/spark story   the session\'s paintings told again in order, each laid down anew (no tokens); /spark story again ends it',
   '/spark copy    what you last said to Spark and her answer, whole, onto your clipboard (or ⧉ copy under it)',
+  '/spark prism   painting with Prism: her paintings this session join the story, converts and rolls, credited to her; /spark prism off | on | <folder>',
   '/spark convert the painting made large, SVG and PNG, into the convert folder: click what (this painting, every way, all paintings, the roll) then which way (truest, faithful, refined, interpretive, each with its token cost), or say it: /spark convert truest 4k, every, all refined, roll truest hd, roll short (upright, for YouTube Shorts)',
 ].join('\n')
 
@@ -1339,7 +1403,19 @@ async function sparkRun($: EngineInterface, e: { args: string; presentation?: { 
     } else text = 'link takes: on | off | status'
   }
   else if (word === 'convert') text = await convertPainting($, e.args.trim().toLowerCase().split(/\s+/).slice(1), e.args.trim().split(/\s+/).slice(1))
+  else if (word === 'prism') { // painting with Prism: where her paintings are read from, on or off
+    const rest = e.args.trim().split(/\s+/).slice(1).join(' ')
+    if (arg === 'off') prismFolder = 'off'
+    else if (arg === 'on') prismFolder = prismSetting === 'off' ? 'prism-paintings' : prismSetting
+    else if (rest) { prismFolder = rest; prismSeen.clear() }
+    const fresh = await syncPrism($).catch(() => 0)
+    const hers = story.filter((x) => x.by === 'prism').length
+    text = prismFolder === 'off'
+      ? 'prism: off. Her paintings are not read (the ones already in the story stay); /spark prism on reads them again'
+      : `prism: reading ${await prismDir($)}: ${hers} of her paintings from this session in the story${fresh ? ` (${fresh} just now)` : ''}. They are told with Spark's in /spark story, made large with /spark convert, and rolled together, each credited`
+  }
   else if (word === 'story') { // the session's paintings, told again in order, once through: nothing is asked of any model
+    if (!storyOn) await syncPrism($).catch(() => 0) // Prism's too, the ones she has painted this session
     const page = () => storyOn ? `page ${storyIndex() + 1} of ${story.length}` : ''
     if (storyOn && (arg === 'pause' || arg === 'hold')) { storyPause(true); text = `story held on ${page()}: /spark convert makes this one large; /spark story play goes on` }
     else if (storyOn && (arg === 'play' || arg === 'go')) { if (storyOn.done) storyTurn(0); storyPause(false); text = `story goes on from ${page()}` }
@@ -1407,10 +1483,11 @@ export const register: Register = (on, options) => {
   if (typeof o.sideWidth === 'number' && o.sideWidth >= 0) sideWidth = o.sideWidth
   if (typeof o.convertFolder === 'string' && o.convertFolder.trim()) convertFolder = o.convertFolder.trim()
   if (typeof o.convertCaption === 'boolean') convertCaption = o.convertCaption
+  if (typeof o.prismPaintings === 'string') prismFolder = prismSetting = o.prismPaintings.trim() || 'off'
 
   on('session.start', async ($, e, next) => {
     await refreshTheme($)
-    await $.command.register({ name: 'spark', description: 'Spark, Claude\'s living presence: /spark [side|top|focus|kitty|hd|state|calm|theme|palette|sound|murmur|status|replay|ask|link|paint|story|copy|convert|help]', immediate: true })
+    await $.command.register({ name: 'spark', description: 'Spark, Claude\'s living presence: /spark [side|top|focus|kitty|hd|state|calm|theme|palette|sound|murmur|status|replay|ask|link|paint|story|prism|copy|convert|help]', immediate: true })
     const wanted = (await $.env.get('SPARK_LINK').catch(() => undefined))?.trim().toLowerCase()
     linkWanted = wanted === '1' || wanted === 'on' ? true : wanted === '0' || wanted === 'off' ? false : null
     if (linkWanted !== null) linkOn = linkWanted
@@ -1518,6 +1595,7 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', async ($, e, next) => {
     if (!e.agentId) {
+      await quietly(() => syncPrism($)) // anything Prism painted meanwhile joins the story (only her new files are read)
       const reason = e.reason === 'answer' ? 'answer' : e.reason === 'aborted' ? 'aborted' : e.reason === 'refusal' ? 'refusal' : 'error'
       emit({ type: 'turn.end', reason, durationMs: e.durationMs })
       const secs = e.durationMs / 1000
