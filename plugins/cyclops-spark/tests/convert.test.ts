@@ -733,3 +733,75 @@ test('a Short: /spark convert roll short makes it upright, 1080 x 1920, the pain
   expect(card).toBeDefined() // the title card, upright too
   await cmd($, 'paint off')
 })
+
+// Painting with Prism: her paintings (JSON files of the same marks, colours 0..1 RGB) in prism-paintings beside the work
+const PRISM = (title: string, at: number) => JSON.stringify({ title, thought: 'for you <3', mood: 'aurora', mirror: null, tokens: 0, model: 'prism-muse', at,
+  marks: [{ k: 'fill', pts: [[0, 0], [1, 0], [1, 1], [0, 1]], c: [0.02, 0.03, 0.09], c2: [0.09, 0.05, 0.18], grad: 0.25, a: 1 }, { k: 'glow', x: 0.5, y: 0.4, r: 0.3, c: [0, 0.95, 1], a: 0.5 }, { k: 'ring', x: 0.5, y: 0.4, r: 0.12, w: 0.02, c: [1, 0.3, 0.8], a: 0.9 }, { k: 'dot', x: 0.5, y: 0.4, r: 0.03, c: [1, 1, 1], a: 1 }, { k: 'spray', x: 0.5, y: 0.2, r: 0.4, n: 20, s: 0.006, c: [0.9, 0.9, 1], a: 0.7 }, { k: 'line', pts: [[0.1, 0.8], [0.9, 0.8]], w: 0.01, c: [0, 0.8, 0.8], c2: [0.9, 0.4, 0.7], a: 0.8 }] })
+function prismFolder(on: On, files: Map<string, string>, startedAt: number) {
+  const dir = '/home/t/zilo/prism-paintings'
+  on('session.usage', async () => loose({ value: { startedAt, context: {}, rateLimits: {}, cost: {} } }))
+  on('fs.exists', async (_$, e) => loose({ value: (e as { path: string }).path === dir || files.has((e as { path: string }).path) }))
+  on('fs.list', async (_$, e) => {
+    const d = (e as { path: string }).path.replace(/\/+$/, '')
+    if (d !== dir) throw new Error('ENOENT')
+    return loose({ value: [...files.keys()].filter((f) => f.startsWith(dir + '/')).map((f) => ({ name: f.slice(dir.length + 1), kind: 'file', size: files.get(f)!.length, mtimeMs: 0, isLink: false })) })
+  })
+  on('fs.read', async (_$, e) => { const f = files.get((e as { path: string }).path); if (f === undefined) throw new Error('ENOENT'); return loose({ value: f }) })
+  return dir
+}
+
+test('painting with Prism: her paintings of this session join the story in order, credited to her; converts and the roll carry her name; her files are only read', { timeoutMs: 30000 }, async ($, on) => {
+  const startedAt = Date.now() - 60_000
+  const prism = new Map<string, string>()
+  const dir = prismFolder(on, prism, startedAt)
+  prism.set(`${dir}/00-from-yesterday.json`, PRISM('from yesterday', (startedAt - 86_400_000) / 1000)) // before this session: left out
+  prism.set(`${dir}/01-midnight-aurora.json`, PRISM('Midnight Aurora & Crystal Heart', (startedAt + 10_000) / 1000))
+  prism.set(`${dir}/02-broken.json`, '{ not a painting') // unreadable: left alone
+  const { files, logs } = engine(on)
+  await cmd($, 'paint'); await settle() // Spark paints after Prism's
+  expect(await say($, 'prism')).toMatch(/^prism: reading \/home\/t\/zilo\/prism-paintings: 1 of her paintings from this session in the story/)
+  expect(await say($, 'story')).toMatch(/^story: 2 paintings/)
+  const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(60, 70) })
+  expect(await term.find({ type: 'Text', text: /^story · 1 of 2 · \d\d:\d\d · Prism’s/ })).toBeDefined() // hers first: she painted first
+  expect(await term.find({ type: 'Text', text: /Midnight Aurora/ })).toBeDefined()
+  await term.unmount()
+  await cmd($, 'story end')
+  // all of them made large: hers captioned with her name
+  expect(await say($, 'convert all faithful 320')).toMatch(/^converting all 2 paintings/)
+  await until(() => logs.length >= 1)
+  const hers = [...files.keys()].find((f) => /01-midnight-aurora-crystal-heart-faithful\.svg$/.test(f))!
+  expect(files.get(hers)).toMatch(/Prism · \d{1,2} \w{3} \d{4} · faithful/)
+  // the roll: the two of them, "Spark & Prism" on the title card's line
+  expect(await say($, 'convert roll faithful 320')).toMatch(/^rolling all 2 paintings/)
+  await until(() => logs.length >= 2)
+  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings/)
+  expect([...prism.keys()].length).toBe(3) // nothing of hers written or changed
+  // off: not read any more, the story keeps what it has
+  expect(await say($, 'prism off')).toMatch(/^prism: off/)
+  await cmd($, 'paint off')
+})
+
+test('and Spark shares hers: while Prism paints in the project, each of Spark\'s paintings is also written for her, in the same form, into Spark\'s folder', async ($, on) => {
+  const prism = new Map<string, string>()
+  prismFolder(on, prism, Date.now() - 1000)
+  const { files } = engine(on)
+  await cmd($, 'paint'); await settle()
+  await until(() => [...files.keys()].some((f) => f.endsWith('.json')))
+  const shared = [...files.keys()].filter((f) => /^\/home\/t\/zilo\/spark-paintings\/\d\d-[a-z0-9-]+\.json$/.test(f))
+  expect(shared).toHaveLength(1)
+  const d = JSON.parse(files.get(shared[0]!)!)
+  expect(d.by).toBe('spark')
+  expect(d.title).toBe('a fox under three moons')
+  expect(Array.isArray(d.marks[0].c)).toBe(true) // colours as 0..1 RGB, as hers are
+  expect(typeof d.at).toBe('number')
+  expect(JSON.stringify(d)).not.toMatch(/secret|notes\.md|npm/) // only the painting, never the work
+  await cmd($, 'paint off')
+})
+
+test('with no folder of Prism\'s, Spark writes nothing for her', async ($, on) => {
+  const { files } = engine(on)
+  await cmd($, 'paint'); await settle()
+  for (let i = 0; i < 20; i++) { await settle(); await new Promise((r) => setTimeout(r, 0)) }
+  expect([...files.keys()].some((f) => f.endsWith('.json'))).toBe(false)
+  await cmd($, 'paint off')
+})

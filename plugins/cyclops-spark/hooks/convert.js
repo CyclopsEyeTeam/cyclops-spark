@@ -180,8 +180,9 @@ const CELL = 10
 const MIDDOT = String.fromCharCode(0xb7)
 const ACCENTS = new RegExp('[' + String.fromCharCode(0x300) + '-' + String.fromCharCode(0x36f) + ']', 'g') // combining marks, named by code so none sits in this source
 const glyph = (ch) => FONT[ch] || FONT[ch.normalize('NFD').replace(ACCENTS, '')] || FONT['?']
-export function captionLines(title, mode, when) {
-  return [{ text: title || 'untitled', dim: false }, { text: `Spark ${MIDDOT} ${when} ${MIDDOT} ${mode}`, dim: true }]
+// `by`: whose painting it is (Spark's own, or Prism's when they paint together)
+export function captionLines(title, mode, when, by = 'Spark') {
+  return [{ text: title || 'untitled', dim: false }, { text: `${by} ${MIDDOT} ${when} ${MIDDOT} ${mode}`, dim: true }]
 }
 export function captionHeight(W, lines = 2, big = false) {
   const s = captionScale(W, big)

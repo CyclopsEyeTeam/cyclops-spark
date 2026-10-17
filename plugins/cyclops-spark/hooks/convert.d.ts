@@ -5,7 +5,7 @@ export function slug(title: string, n: number): string
 export function canvasFor(shape: string, width: number): [number, number]
 export function revisitRequest(o: { painting: { title: string; marks: Array<Record<string, any>>; mirror?: string | null }; mode: 'refined' | 'interpretive'; palette?: string; theme?: string; reflection?: string }): { system: string; prompt: string }
 export type CaptionLine = { text: string; dim: boolean }
-export function captionLines(title: string, mode: string, when: string): CaptionLine[]
+export function captionLines(title: string, mode: string, when: string, by?: string): CaptionLine[]
 export function captionHeight(W: number, lines?: number, big?: boolean): number
 export function captionStrip(W: number, lines: CaptionLine[], ground: number[], o?: { light?: boolean; big?: boolean }): Uint8Array
 export function withCaption(rgb: Uint8Array, W: number, H: number, lines: CaptionLine[], ground: number[], o?: { light?: boolean }): { rgb: Uint8Array; H: number }
