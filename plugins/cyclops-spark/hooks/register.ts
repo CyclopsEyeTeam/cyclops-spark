@@ -286,6 +286,7 @@ const sites = new Map<string, Site>() // requestId → a terminal site we blit i
 function emit(ev: Record<string, unknown>, quiet = false) {
   const e = { t: now(), ...ev }
   spark.apply(e)
+  feedPush(e) // inside Studio, a copy for its panes (nothing anywhere else)
   if (quiet) return
   const extra = ev.tool ? ' ' + String(ev.tool) : ev.via ? ' ' + String(ev.via) : ev.kind ? ' ' + String(ev.kind) : ev.effort ? ' ' + String(ev.effort) : ''
   recent.push(`${e.t.toFixed(2)} ${String(ev.type)}${extra}${ev.error ? ' ✕' : ''}${ev.denied ? ' denied' : ''}${ev.aborted ? ' aborted' : ''}${ev.reason ? ' ' + String(ev.reason) : ''}`)
@@ -422,6 +423,172 @@ async function copied($: EngineInterface, via: string, id?: string) {
   await cue($, 'copied', 'full')
 }
 
+// ---------------------------------------------------------------- the Studio feed (One Spark: inside Studio only)
+// Inside Cyclops Studio (CYCLOPS_STUDIO=1, and CYCLOPS_SESSION_ID on every terminal it owns) Spark also writes the events
+// she receives, so Studio can draw this very Spark in its panes, at any size, from the same truth. Everywhere else she
+// writes nothing at all. Two small files in
+//   ${XDG_STATE_HOME:-~/.local/state}/cyclops-presence/<CYCLOPS_SESSION_ID>/spark/
+//   durable.json  everything that shapes Spark for longer than a moment (turns, tools, compactions, a wake), at most 1/s
+//   live.json     the last minute of everything (streams and typing too) and a heartbeat (at least every 5 s), at most 5/s
+// The first live.json goes out as the session starts (her wake), not at the first prompt, so Studio's "waiting for
+// connection" turns into her straight away; when the session ends, live.json says ended. Each event keeps its own time
+// (epoch seconds, to the millisecond) and a sequence number, so Studio replays it exactly. Nothing a tool reads is
+// written (a call is written as its classified lane, never the command, URL or arguments, and its host id only as a
+// short hash), no prompt, reply or thinking text, and nothing here changes Spark: it is a copy of the events, not a
+// source of them. The format is Studio's docs/presence-feeds.md.
+const TRANSIENT = new Set(['stream', 'agent.stream', 'prompt.edit'])
+const FEED_CAPS = ['feed.v1', 'notes.v1', 'side.v1']
+const SAFE_ID = /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,79}$/
+const feed = { on: false, dir: '', run: '', seq: 0, startedAt: 0, ended: false,
+  durable: [] as Record<string, unknown>[], live: [] as Record<string, unknown>[],
+  dirtyDurable: false, dirtyLive: false, wroteDurable: -1e12, wroteLive: -1e12, writing: false, forceAfter: false }
+
+async function startFeed($: EngineInterface) {
+  if (feed.on && !feed.ended) return // (after a /resume ended the last one, a new session is a new run)
+  try {
+    if ((await $.env.get('CYCLOPS_STUDIO'))?.trim() !== '1') return // not in Studio: Spark writes nothing
+    const sid = (await $.env.get('CYCLOPS_SESSION_ID'))?.trim() ?? ''
+    const home = await $.env.get('HOME')
+    const stateHome = (await $.env.get('XDG_STATE_HOME')) || (home ? `${home}/.local/state` : '')
+    if (!SAFE_ID.test(sid) || !stateHome) return
+    Object.assign(feed, { on: true, dir: `${stateHome}/cyclops-presence/${sid}/spark`, run: crypto.randomUUID(), seq: 0, startedAt: +(Date.now() / 1000).toFixed(3),
+      ended: false, durable: [], live: [], dirtyDurable: true, dirtyLive: true, wroteDurable: -1e12, wroteLive: -1e12 })
+    marks.path = `${stateHome}/cyclops-presence/${sid}/studio.json`
+    marks.mtime = (await $.fs.stat(marks.path).catch(() => null))?.mtimeMs ?? 0
+    const before = await readMark($) // a copy or an ask made before this session started is not this session's
+    marks.seen = before.copied?.id ?? ''; marks.seenAsk = before.ask?.id ?? ''
+  } catch { /* no environment here: no feed */ }
+}
+
+function feedPush(e: Record<string, unknown>) {
+  if (!feed.on) return
+  const ev: Record<string, unknown> = { ...e, seq: ++feed.seq, t: +((T0 / 1000) + Number(e.t)).toFixed(3) }
+  if (ev.type === 'tool.start') { // the lane, classified here; never the command, URL or arguments it was read from
+    ev.lane = laneFor(String(ev.tool), (ev.input && typeof ev.input === 'object' ? ev.input : {}) as Record<string, unknown>)
+    delete ev.input
+  }
+  // a call's host id is replaced by a short hash of it: enough to pair a call's start and end, nothing more
+  if (typeof ev.id === 'string' && /^tool\./.test(String(ev.type))) ev.id = 'c' + hashText(ev.id)
+  feed.live.push(ev); feed.dirtyLive = true
+  if (!TRANSIENT.has(String(ev.type))) { feed.durable.push(ev); feed.dirtyDurable = true; if (feed.durable.length > 19000) feed.durable.splice(0, 1000) }
+}
+
+async function flushFeed($: EngineInterface, force = false) {
+  if (!feed.on) return
+  if (feed.writing) { if (force) feed.forceAfter = true; return } // a forced write (the session starting or ending) is never lost behind a timed one
+  feed.writing = true
+  const at = Date.now()           // the wall clock, for the stamps Studio reads
+  const due = await $.clock.now() // the host's clock, for the cadence
+  // the live window: one minute, and never less than the latest event
+  const cut = at / 1000 - 60
+  while (feed.live.length > 1 && Number(feed.live[0]!.t) < cut) feed.live.shift()
+  const durableDue = feed.dirtyDurable && (force || due - feed.wroteDurable >= 1000)
+  const liveDue = force || (feed.dirtyLive && due - feed.wroteLive >= 200) || due - feed.wroteLive >= 5000 // the 5 s heartbeat
+  if (!durableDue && !liveDue) { feed.writing = false; return }
+  try {
+    const head = { v: 1, run: feed.run, startedAt: feed.startedAt, seq: feed.seq, caps: FEED_CAPS }
+    if (durableDue) { feed.dirtyDurable = false; feed.wroteDurable = due; await $.fs.write(`${feed.dir}/durable.json`, JSON.stringify({ ...head, events: feed.durable })) }
+    if (liveDue) { feed.dirtyLive = false; feed.wroteLive = due; await $.fs.write(`${feed.dir}/live.json`, JSON.stringify({ ...head, aliveAt: +(at / 1000).toFixed(3), ended: feed.ended, events: feed.live })) }
+  } catch { feed.on = false /* cannot write there: stop trying, Spark herself is untouched */ } finally { feed.writing = false }
+  if (feed.forceAfter) { feed.forceAfter = false; await flushFeed($, true) }
+}
+
+// the session is over: live.json says so at once, and what Studio offered from this session (answers, heads-ups) goes
+async function endFeed($: EngineInterface) {
+  if (!feed.on || feed.ended) return
+  feed.ended = true
+  await flushFeed($, true)
+  await $.fs.write(`${feed.dir}/side.json`, JSON.stringify({ v: 1, run: feed.run, answers: [] })).catch(() => undefined)
+  await $.fs.write(`${feed.dir}/notes.json`, JSON.stringify({ v: 1, run: feed.run, notes: [] })).catch(() => undefined)
+}
+
+function hashText(t: string): string { let h = 2166136261; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619) } return (h >>> 0).toString(16).padStart(8, '0') }
+
+// ---------------------------------------------------------------- Studio marks: what Studio tells her
+// One small file beside the feeds that Spark only reads:
+//   .../cyclops-presence/<CYCLOPS_SESSION_ID>/studio.json
+//     { "v": 1, "copied": { "id", "t" },            Studio's own Copy took this terminal's last response
+//               "ask": { "id", "t", "text" } }      you asked Claude a side question from Studio (right-click Spark)
+// Spark looks every 0.7 s (a stat; a read only when it changed). A copy made after the reply she holds out landed is a real
+// event (reply.copied); an ask made while this session runs is answered on the side (askOnTheSide, a tool-less fork, the
+// same as /spark ask), its answer written to spark/side.json for Studio to show. The feed gets only that it happened.
+type Mark = { copied: { id: string; t: number } | null; ask: { id: string; t: number; text: string } | null }
+const marks = { path: '', seen: '', seenAsk: '', mtime: 0, busy: false }
+async function readMark($: EngineInterface): Promise<Mark> {
+  try {
+    const m = JSON.parse(String(await $.fs.read(marks.path)))
+    const c = m && typeof m === 'object' ? m.copied : null, a = m && typeof m === 'object' ? m.ask : null
+    return {
+      copied: c && typeof c.id === 'string' && typeof c.t === 'number' ? { id: c.id.slice(0, 80), t: c.t } : null,
+      ask: a && typeof a.id === 'string' && typeof a.t === 'number' && typeof a.text === 'string' && a.text.trim()
+        ? { id: a.id.slice(0, 80), t: a.t, text: a.text.slice(0, 4000) } : null,
+    }
+  } catch { return { copied: null, ask: null } }
+}
+async function pollMarks($: EngineInterface) {
+  if (!feed.on || !marks.path || marks.busy || feed.ended) return
+  marks.busy = true
+  try {
+    const st = await $.fs.stat(marks.path).catch(() => null)
+    if (!st || st.mtimeMs === marks.mtime) return
+    marks.mtime = st.mtimeMs
+    const { copied: c, ask } = await readMark($)
+    if (c && c.id !== marks.seen) {
+      marks.seen = c.id
+      const held = spark.offer as { at: number } | null
+      if (held && c.t + 1 >= T0 / 1000 + held.at) await copied($, 'studio', c.id) // (a second of grace: two clocks, one machine)
+    }
+    if (ask && ask.id !== marks.seenAsk) {
+      marks.seenAsk = ask.id
+      if (ask.t >= T0 / 1000 - 1 && Date.now() / 1000 - ask.t < 120) void quietly(() => answerForStudio($, ask)) // never an old one
+    }
+  } finally { marks.busy = false }
+}
+// Studio's ask: the answer goes to spark/side.json (the last few, newest last), which Studio reads and shows by her
+const sideAnswers: Array<{ id: string; t: number; ok: boolean; text: string }> = []
+async function answerForStudio($: EngineInterface, ask: { id: string; text: string }) {
+  const { ok, text } = await askOnTheSide($, ask.text, ask.id, 'studio')
+  sideAnswers.push({ id: ask.id, t: +(Date.now() / 1000).toFixed(3), ok, text })
+  while (sideAnswers.length > 5) sideAnswers.shift()
+  await $.fs.write(`${feed.dir}/side.json`, JSON.stringify({ v: 1, run: feed.run, answers: sideAnswers })).catch(() => undefined)
+}
+
+// ---------------------------------------------------------------- heads-ups for Studio
+// Inside Studio, an offer above the prompt (Claude Code's "You should know" / "Heads up") is also left for Studio as plain
+// text, so it can offer it as a small bubble to copy or send to its Notepad:
+//   .../spark/notes.json   { "v": 1, "run", "notes": [{ "id", "t", "tag", "title", "text" }] }   the last five, newest last
+// Only what is already on your screen, only inside Studio; the feed gets only note.shown { id, tag }.
+function textOf(node: unknown, out: string[] = [], depth = 0): string[] {
+  if (!node || depth > 40) return out
+  if (typeof node === 'string') { out.push(node); return out }
+  if (Array.isArray(node)) { for (const n of node) textOf(n, out, depth + 1); return out }
+  if (typeof node !== 'object') return out
+  const el = node as { type?: unknown; props?: Record<string, unknown>; children?: unknown }
+  if (el.type === 'Button' || el.type === 'Select') return out
+  const before = out.length
+  textOf(el.children, out, depth + 1); textOf(el.props?.children, out, depth + 1)
+  if (el.type === 'Text' && out.length > before) { const line = out.splice(before).join(''); out.push(line) }
+  return out
+}
+const notes: Array<{ id: string; t: number; tag: string; title: string; text: string }> = []
+let lastNoteId = ''
+function noteFrom($: EngineInterface, tree: unknown) {
+  if (!feed.on || feed.ended) return
+  const lines = textOf(tree).map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean)
+  const text = lines.join('\n').slice(0, 8000)
+  if (!text) return
+  const id = hashText(text)
+  if (id === lastNoteId || notes.some((n) => n.id === id)) { lastNoteId = id; return }
+  lastNoteId = id
+  const tagLine = lines.find((l) => /^(you should know|heads[\s-]*up)\b/i.test(l)) ?? ''
+  const tag = /^heads/i.test(tagLine) ? 'Heads up' : tagLine ? 'You should know' : ''
+  const title = (lines.find((l) => !/^(you should know|heads[\s-]*up)\W*$/i.test(l)) ?? lines[0]!).replace(/^(you should know|heads[\s-]*up)\s*[·:\-–—]\s*/i, '').slice(0, 160)
+  notes.push({ id, t: +(Date.now() / 1000).toFixed(3), tag, title, text })
+  while (notes.length > 5) notes.shift()
+  emit({ type: 'note.shown', id, ...(tag ? { tag } : {}) }, true)
+  void $.fs.write(`${feed.dir}/notes.json`, JSON.stringify({ v: 1, run: feed.run, notes })).catch(() => undefined)
+}
+
 // Playback. The host plays a clip with afplay on macOS; a Linux terminal has no player there, so on Linux Spark plays its
 // own file with the desktop's player (PipeWire's pw-play, PulseAudio's paplay, or ALSA's aplay), found once and remembered.
 // Anywhere else, or if none is installed, the host's own playback stands (and stays silent where it has no player).
@@ -504,6 +671,7 @@ async function murmur($: EngineInterface, kind: 'think' | 'write') {
 // Terminal frames: 20 fps while something real is happening, 8 fps of ambient otherwise (a slow heartbeat in calm), nothing when unseen.
 async function paint($: EngineInterface) {
   tick += 1
+  if (feed.on) { void quietly(() => flushFeed($)); if (tick % 14 === 0) void quietly(() => pollMarks($)) } // Studio's copy, and what Studio says
   if (statusOn && tick % 5 === 0) pushStatus($)
   if (linkOn && linkFactsPath) await sendLinkFacts($)
   if (!paneOpen && !band) return
@@ -1459,7 +1627,7 @@ async function sparkRun($: EngineInterface, e: { args: string; presentation?: { 
     }
   }
   else if (word === 'state') {
-    text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · hd ${hd ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${paintOn ? ' · paint on' + (paintWay === 'free' ? ` · free${paintEvery > 0 ? ` every ${paintEvery} min` : ''}` : '') + (paintSpent.calls ? ` (${spentText()})` : '') : ''}${convertProgress ? ` · converting ${convertProgress.done} of ${convertProgress.total} (${convertProgress.what})` : ''}\n` + (reflection ? `last reflection (sent to the painter): ${reflection}\n` : '') + recent.join('\n')
+    text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · hd ${hd ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${feed.on ? ` · studio feed${feed.ended ? ' (ended)' : ''}` : ''}${paintOn ? ' · paint on' + (paintWay === 'free' ? ` · free${paintEvery > 0 ? ` every ${paintEvery} min` : ''}` : '') + (paintSpent.calls ? ` (${spentText()})` : '') : ''}${convertProgress ? ` · converting ${convertProgress.done} of ${convertProgress.total} (${convertProgress.what})` : ''}\n` + (reflection ? `last reflection (sent to the painter): ${reflection}\n` : '') + recent.join('\n')
   }
   else if (word === 'link') {
     if (arg === 'on' || arg === 'off') {
@@ -1578,7 +1746,9 @@ export const register: Register = (on, options) => {
     $.clock.every(50, () => void paint($))
     // a session just begun: a plugin reloaded mid-conversation (an update) finds turns already taken, and stays quiet
     welcome = welcomeOn && (await $.session.turns().catch(() => 0)) === 0
+    await quietly(() => startFeed($)) // inside Studio: her feed, from the moment the session starts
     emit({ type: 'session.wake' })
+    await quietly(() => flushFeed($, true)) // the first live.json now, so Studio finds her before any prompt
     await cue($, 'wake', 'full')
     return next(e)
   })
@@ -1589,6 +1759,7 @@ export const register: Register = (on, options) => {
   // a /clear ends the conversation without a new session.start: the stars are gone and Spark wakes again
   on('session.end', async ($, e, next) => {
     if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full'); painting = null; paintSite = null; lastTurn = null; turnsSeen = 0; reflection = ''; spoken = ''; talk = null; story.length = 0; storyOn = null; openingMade = false; welcome = welcomeOn; $.ui.invalidate('ui.render') }
+    else await quietly(() => endFeed($)) // the session is over: Studio takes her off the screen
     const res = await next(e)
     if (e.reason === 'clear' && linkOn) { await stopLink(); await startLink($) } // a new conversation is a new instance
     return res
@@ -1903,6 +2074,7 @@ export const register: Register = (on, options) => {
     const left = art
       ? Box({ flexDirection: 'row', columnGap: 1, alignItems: 'center', children: [art, Box({ flexDirection: 'column', children: words })] })
       : Box({ flexDirection: 'row', columnGap: 1, children: [Text({ children: [f.glyph] }), ...words] })
+    if (below && feed.on && asksSomething(below)) noteFrom($, below) // inside Studio, the heads-up is left for it too
     if (below && asksSomething(below)) // Spark speaking: the offer as its bubble, joined to it
       return Box({ flexDirection: 'row', columnGap: 1, children: [left, Text({ children: ['╶─'], dimColor: true }), below as never] })
     return Box({ flexDirection: 'row', columnGap: 2, children: below ? [left, below as never] : [left] })

@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.7.18
+
+- **Spark in Studio's panes again (One Spark).** Since the public line took over from the old Studio one, Spark wrote no
+  feed, so Studio could not draw her ("0 in terminals", "Not running"). Inside Cyclops Studio only (`CYCLOPS_STUDIO=1`
+  and a plain `CYCLOPS_SESSION_ID`), she writes it again, in Studio's format: `live.json` (the last minute, at most 5
+  writes a second, a heartbeat at least every 5 s) and `durable.json` (at most once a second) in
+  `${XDG_STATE_HOME:-~/.local/state}/cyclops-presence/<id>/spark/`, with `caps` `feed.v1`, `notes.v1`, `side.v1`.
+  - **She connects at launch.** The first `live.json` (a new run and her wake) goes out as the session starts, before
+    any prompt, so Studio's "waiting for connection" turns into her straight away.
+  - **When the session ends,** `live.json` says `ended` at once, and her answers and heads-ups for Studio are emptied.
+  - **Studio's extras are back:** a Studio Copy of the reply she holds out is her `reply.copied`; a side question asked
+    from Studio is answered on the side into `side.json`; Claude Code's heads-ups are left in `notes.json`.
+  - Kinds and counts only: a call is its lane, never its command, URL or arguments, its id a short hash, and no prompt,
+    reply or thinking text. Outside Studio she still writes nothing.
+  - Checked against Studio's own strict reader (`studio/presence_feeds.py`): it reads her feed whole, alive, with
+    every event and lane.
+
 ## 1.7.17
 
 - **Spark grows smoothly as the pane widens.** The side pane chose between a column (Spark over her painting) and side by
