@@ -686,9 +686,9 @@ function feedEngine(on: On) {
   return { clock, writes }
 }
 
-test('outside Studio Spark writes nothing anywhere, whatever else the environment says (her Studio feed: studio-feed.test.ts)', async ($, on) => {
+test('Spark writes nothing anywhere, whatever the environment says', async ($, on) => {
   const { clock, writes } = feedEngine(on)
-  mock.env(on, { HOME: '/home/t', XDG_STATE_HOME: '/home/t/.state', CYCLOPS_SESSION_ID: 'pane-7' })
+  mock.env(on, { HOME: '/home/t', XDG_STATE_HOME: '/home/t/.state', CYCLOPS_STUDIO: '1', CYCLOPS_SESSION_ID: 'pane-7' }) // inside Studio too: its feed lives in Studio's own copy
   await $.session.start(loose({ cwd: '/', surface: 'terminal', isInteractive: true }))
   await $.turn.start(loose({ text: 'go', turnId: 'o1' })); await $.turn.complete(answer('o1', 2))
   await clock.advance(6000)

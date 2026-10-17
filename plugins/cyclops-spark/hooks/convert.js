@@ -176,6 +176,45 @@ export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '
   ].filter((l) => l !== '').join('\n')
 }
 
+// ---------------------------------------------------------------- side by side
+// The painting as her pane showed it (its terminal cells, block by block) beside the same painting made large (truest),
+// for a post: what she painted in the terminal, and what it becomes. Two panels of the painting's shape across `width`,
+// with a margin round them; the caption under both
+export function sideLayout(shape, width) {
+  const gap = Math.max(8, Math.round(width * 0.03))
+  const pw = Math.floor((width - 3 * gap) / 2), ph = canvasFor(shape, pw)[1]
+  return { W: width, H: ph + 2 * gap, gap, pw, ph, lx: gap, rx: 2 * gap + pw, y: gap }
+}
+// the cells her pane drew, as SVG rects (a cell's quarters in its two colours), cw x ch each, from (x, y)
+export function cellsSVG(words, cols, rows, x, y, cw, ch, ground, levels = 0) {
+  const step = levels > 1 && levels < 256 ? 255 / (levels - 1) : 0
+  const g = ground.map((v) => Math.round(v * 255))
+  const col = (c) => { const v = c === 0x01000000 ? g : [(c >> 16) & 255, (c >> 8) & 255, c & 255]; return '#' + v.map((n) => (step ? Math.round(Math.round(n / step) * step) : n).toString(16).padStart(2, '0')).join('') }
+  const masks = [0x20, 0x2598, 0x259d, 0x2580, 0x2596, 0x258c, 0x259e, 0x259b, 0x2597, 0x259a, 0x2590, 0x259c, 0x2584, 0x2599, 0x259f, 0x2588]
+  const hw = cw / 2, hh = ch / 2, out = []
+  for (let cy = 0; cy < rows; cy++) for (let cx = 0; cx < cols; cx++) {
+    const w = (cy * cols + cx) * 3, mask = Math.max(0, masks.indexOf(words[w])), fg = col(words[w + 1]), bg = col(words[w + 2])
+    const X = +(x + cx * cw).toFixed(2), Y = +(y + cy * ch).toFixed(2)
+    if (mask === 0 || mask === 15) { out.push(`<rect x="${X}" y="${Y}" width="${cw}" height="${ch}" fill="${mask ? fg : bg}"/>`); continue }
+    out.push(`<rect x="${X}" y="${Y}" width="${cw}" height="${ch}" fill="${bg}"/>`)
+    for (let q = 0; q < 4; q++) if ((mask >> q) & 1) out.push(`<rect x="${+(X + (q & 1) * hw).toFixed(2)}" y="${+(Y + (q >> 1) * hh).toFixed(2)}" width="${hw}" height="${hh}" fill="${fg}"/>`)
+  }
+  return out.join('')
+}
+// the side-by-side SVG: the frame (ground and caption) with the cells on the left and the truest painting (its own SVG,
+// nested) on the right
+export function sideSVG({ layout, cells, cols, rows, cw, ch, truest, theme = 'dark', title = '', caption = null, ground, levels = 0 }) {
+  // both panels the same size: the cells' own (whole pixels a cell), centred in their halves
+  const { W, H, gap, pw, ph, lx, rx, y } = layout
+  const frame = sceneSVG([], W, H, { theme, title, caption })
+  const ox = Math.floor((pw - cols * cw) / 2), oy = Math.floor((ph - rows * ch) / 2)
+  const left = cellsSVG(cells, cols, rows, lx + ox, y + oy, cw, ch, ground, levels)
+  const right = truest.replace(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width=/, `<svg xmlns="http://www.w3.org/2000/svg" x="${rx + ox}" y="${y + oy}" width=`).replace(/\n$/, '')
+  const at = frame.indexOf(`<rect width="${W}" height="${H}"`)
+  const end = frame.indexOf('\n', at)
+  return frame.slice(0, end + 1) + `<g>${left}</g>\n${right}\n` + frame.slice(end + 1)
+}
+
 // ---------------------------------------------------------------- the caption, on the picture itself
 // Under a converted painting: its title, then a dim line (Spark · the date · the way it was made), drawn in a small
 // bitmap font scaled to the picture, on a strip of the ground colour. The SVG writes the same lines as text.

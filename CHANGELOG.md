@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.7.19
+
+- **Save her painting as it is: `/spark save`, or ⤓ save at the top of her pane.** No menus, no tokens. Into the convert
+  folder go the painting as the terminal showed it, cell by cell (`NN-title-terminal.png`, each cell 16 x 32 pixels,
+  and `-terminal.svg`, its blocks as rects, crisp at any size), and the painting itself as JSON (`NN-title.json`: its
+  title, marks and shape, and the cells it was drawn in), the original a redraw elsewhere can start from. Both images
+  keep the terminal's colour depth. The gallery page lists it.
+- **Side by side: `/spark convert side`** (or `all side`). The painting as her pane showed it, beside the same painting
+  made large (truest), the two the same size and level, with the caption under both ("side by side"): what she painted
+  in the terminal, and what it becomes. PNG and SVG (the cells as rects, the truest painting nested). By word only,
+  since the dialog holds four ways; not for the roll.
+- **The Studio feed leaves the public plugin.** 1.7.18's feed for Cyclops Studio's panes is for Studio's own copy of
+  Spark, kept with Studio, not for everyone who installs her. The public Spark is back to writing no files of her own
+  anywhere, whatever the environment says, `CYCLOPS_STUDIO=1` included.
+
 ## 1.7.18
 
 - **Spark in Studio's panes again (One Spark).** Since the public line took over from the old Studio one, Spark wrote no

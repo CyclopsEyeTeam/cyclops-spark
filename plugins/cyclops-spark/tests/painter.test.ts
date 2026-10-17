@@ -451,7 +451,7 @@ test('her tools, top right once there is a painting: story, convert and roll, ea
   await term.unmount()
   await cmd($, 'paint')
   term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
-  for (const k of ['spark-tool-story', 'spark-tool-convert', 'spark-tool-roll']) expect(await term.find({ key: k })).toBeDefined()
+  for (const k of ['spark-tool-story', 'spark-tool-save', 'spark-tool-convert', 'spark-tool-roll']) expect(await term.find({ key: k })).toBeDefined()
   await term.press({ key: 'spark-tool-story' })
   await settle()
   await term.unmount()

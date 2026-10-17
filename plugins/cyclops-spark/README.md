@@ -25,9 +25,7 @@ closed gate.
 - `python3 link/spark_link.py`: the Cyclops Link helper, only while Link is on (off by default; the `link` setting,
   `/spark link on`, or `SPARK_LINK=1`). It is plain, readable Python in this folder.
 
-**Files she writes.** None, unless you turn Link on, or she runs inside Cyclops Studio (`CYCLOPS_STUDIO=1`), where she
-writes her feed for Studio's panes to `~/.local/state/cyclops-presence/<session>/spark/`: event kinds and counts, never
-content (see docs/PRIVACY.md). With Link on, the helper keeps a small record of Spark's coarse
+**Files she writes.** None, unless you turn Link on. With Link on, the helper keeps a small record of Spark's coarse
 state (idle, thinking, writing…, counts of calls, and whom she is calling) in `~/.local/state/cyclops-link/` (or
 `$XDG_STATE_HOME/cyclops-link`, or `$CYCLOPS_LINK_DIR`), and a private facts file in `~/.local/state/cyclops-spark/`,
 created with 0600/0700 permissions. Never prompts, commands, file paths or names. She writes no build, start-up,

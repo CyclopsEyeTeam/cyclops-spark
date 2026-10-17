@@ -31,7 +31,7 @@
 
 import type { EngineInterface, Register } from 'claude-code'
 import { buildScene, createPresence, laneFor, PAINT_TOWARD, PALETTE_NAMES } from './core.js'
-import { base64, base64Async, createRaster, posterize, toHalfBlocks, toQuadrants, toRGB8Async, toRGBA8 } from './render-raster.js'
+import { base64, base64Async, cellsToRGB, createRaster, posterize, toHalfBlocks, toQuadrants, toRGB8Async, toRGBA8 } from './render-raster.js'
 import { eyeColumns, eyeRaster } from './eye.js'
 import { layeredFloor, layeredRaster, layeredScenes, layeredStepper } from './layered.js'
 import { rollHolds, rollScore, sessionColour } from './music.js'
@@ -41,7 +41,7 @@ import { KEEPER, PRISM } from './link-marks.js'
 import { cleanReflection, reflectRequest, SPOKEN_CHARS, talkRequest, parseTalk, TALK_IN, newTurnFacts, recordTool, painterFacts, painterRequest, openingRequest, freeRequest, OPENING_WORDS, parsePainting, paintingScene, shapeFor, SHAPES, type Painting, type TurnFacts } from './painter.js'
 import { wrapRows } from './layout.js'
 import { motion, motionFor, WIDTH as MOTION_W } from './motion.js'
-import { canvasFor, SHORT_MAX_S, captionLines, captionStrip, galleryHTML, titleCardAsync, HD_MARKS, markFloor, revisitRequest, rollLayout, rollSize, sceneSVG, SIZES, slug, withCaption } from './convert.js'
+import { canvasFor, SHORT_MAX_S, captionLines, captionStrip, galleryHTML, titleCardAsync, HD_MARKS, markFloor, revisitRequest, rollLayout, rollSize, sceneSVG, cellsSVG, sideLayout, sideSVG, SIZES, slug, withCaption } from './convert.js'
 
 const PANE = 'cyclops-spark'
 const T0 = Date.now()
@@ -286,7 +286,6 @@ const sites = new Map<string, Site>() // requestId → a terminal site we blit i
 function emit(ev: Record<string, unknown>, quiet = false) {
   const e = { t: now(), ...ev }
   spark.apply(e)
-  feedPush(e) // inside Studio, a copy for its panes (nothing anywhere else)
   if (quiet) return
   const extra = ev.tool ? ' ' + String(ev.tool) : ev.via ? ' ' + String(ev.via) : ev.kind ? ' ' + String(ev.kind) : ev.effort ? ' ' + String(ev.effort) : ''
   recent.push(`${e.t.toFixed(2)} ${String(ev.type)}${extra}${ev.error ? ' ✕' : ''}${ev.denied ? ' denied' : ''}${ev.aborted ? ' aborted' : ''}${ev.reason ? ' ' + String(ev.reason) : ''}`)
@@ -423,172 +422,6 @@ async function copied($: EngineInterface, via: string, id?: string) {
   await cue($, 'copied', 'full')
 }
 
-// ---------------------------------------------------------------- the Studio feed (One Spark: inside Studio only)
-// Inside Cyclops Studio (CYCLOPS_STUDIO=1, and CYCLOPS_SESSION_ID on every terminal it owns) Spark also writes the events
-// she receives, so Studio can draw this very Spark in its panes, at any size, from the same truth. Everywhere else she
-// writes nothing at all. Two small files in
-//   ${XDG_STATE_HOME:-~/.local/state}/cyclops-presence/<CYCLOPS_SESSION_ID>/spark/
-//   durable.json  everything that shapes Spark for longer than a moment (turns, tools, compactions, a wake), at most 1/s
-//   live.json     the last minute of everything (streams and typing too) and a heartbeat (at least every 5 s), at most 5/s
-// The first live.json goes out as the session starts (her wake), not at the first prompt, so Studio's "waiting for
-// connection" turns into her straight away; when the session ends, live.json says ended. Each event keeps its own time
-// (epoch seconds, to the millisecond) and a sequence number, so Studio replays it exactly. Nothing a tool reads is
-// written (a call is written as its classified lane, never the command, URL or arguments, and its host id only as a
-// short hash), no prompt, reply or thinking text, and nothing here changes Spark: it is a copy of the events, not a
-// source of them. The format is Studio's docs/presence-feeds.md.
-const TRANSIENT = new Set(['stream', 'agent.stream', 'prompt.edit'])
-const FEED_CAPS = ['feed.v1', 'notes.v1', 'side.v1']
-const SAFE_ID = /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,79}$/
-const feed = { on: false, dir: '', run: '', seq: 0, startedAt: 0, ended: false,
-  durable: [] as Record<string, unknown>[], live: [] as Record<string, unknown>[],
-  dirtyDurable: false, dirtyLive: false, wroteDurable: -1e12, wroteLive: -1e12, writing: false, forceAfter: false }
-
-async function startFeed($: EngineInterface) {
-  if (feed.on && !feed.ended) return // (after a /resume ended the last one, a new session is a new run)
-  try {
-    if ((await $.env.get('CYCLOPS_STUDIO'))?.trim() !== '1') return // not in Studio: Spark writes nothing
-    const sid = (await $.env.get('CYCLOPS_SESSION_ID'))?.trim() ?? ''
-    const home = await $.env.get('HOME')
-    const stateHome = (await $.env.get('XDG_STATE_HOME')) || (home ? `${home}/.local/state` : '')
-    if (!SAFE_ID.test(sid) || !stateHome) return
-    Object.assign(feed, { on: true, dir: `${stateHome}/cyclops-presence/${sid}/spark`, run: crypto.randomUUID(), seq: 0, startedAt: +(Date.now() / 1000).toFixed(3),
-      ended: false, durable: [], live: [], dirtyDurable: true, dirtyLive: true, wroteDurable: -1e12, wroteLive: -1e12 })
-    marks.path = `${stateHome}/cyclops-presence/${sid}/studio.json`
-    marks.mtime = (await $.fs.stat(marks.path).catch(() => null))?.mtimeMs ?? 0
-    const before = await readMark($) // a copy or an ask made before this session started is not this session's
-    marks.seen = before.copied?.id ?? ''; marks.seenAsk = before.ask?.id ?? ''
-  } catch { /* no environment here: no feed */ }
-}
-
-function feedPush(e: Record<string, unknown>) {
-  if (!feed.on) return
-  const ev: Record<string, unknown> = { ...e, seq: ++feed.seq, t: +((T0 / 1000) + Number(e.t)).toFixed(3) }
-  if (ev.type === 'tool.start') { // the lane, classified here; never the command, URL or arguments it was read from
-    ev.lane = laneFor(String(ev.tool), (ev.input && typeof ev.input === 'object' ? ev.input : {}) as Record<string, unknown>)
-    delete ev.input
-  }
-  // a call's host id is replaced by a short hash of it: enough to pair a call's start and end, nothing more
-  if (typeof ev.id === 'string' && /^tool\./.test(String(ev.type))) ev.id = 'c' + hashText(ev.id)
-  feed.live.push(ev); feed.dirtyLive = true
-  if (!TRANSIENT.has(String(ev.type))) { feed.durable.push(ev); feed.dirtyDurable = true; if (feed.durable.length > 19000) feed.durable.splice(0, 1000) }
-}
-
-async function flushFeed($: EngineInterface, force = false) {
-  if (!feed.on) return
-  if (feed.writing) { if (force) feed.forceAfter = true; return } // a forced write (the session starting or ending) is never lost behind a timed one
-  feed.writing = true
-  const at = Date.now()           // the wall clock, for the stamps Studio reads
-  const due = await $.clock.now() // the host's clock, for the cadence
-  // the live window: one minute, and never less than the latest event
-  const cut = at / 1000 - 60
-  while (feed.live.length > 1 && Number(feed.live[0]!.t) < cut) feed.live.shift()
-  const durableDue = feed.dirtyDurable && (force || due - feed.wroteDurable >= 1000)
-  const liveDue = force || (feed.dirtyLive && due - feed.wroteLive >= 200) || due - feed.wroteLive >= 5000 // the 5 s heartbeat
-  if (!durableDue && !liveDue) { feed.writing = false; return }
-  try {
-    const head = { v: 1, run: feed.run, startedAt: feed.startedAt, seq: feed.seq, caps: FEED_CAPS }
-    if (durableDue) { feed.dirtyDurable = false; feed.wroteDurable = due; await $.fs.write(`${feed.dir}/durable.json`, JSON.stringify({ ...head, events: feed.durable })) }
-    if (liveDue) { feed.dirtyLive = false; feed.wroteLive = due; await $.fs.write(`${feed.dir}/live.json`, JSON.stringify({ ...head, aliveAt: +(at / 1000).toFixed(3), ended: feed.ended, events: feed.live })) }
-  } catch { feed.on = false /* cannot write there: stop trying, Spark herself is untouched */ } finally { feed.writing = false }
-  if (feed.forceAfter) { feed.forceAfter = false; await flushFeed($, true) }
-}
-
-// the session is over: live.json says so at once, and what Studio offered from this session (answers, heads-ups) goes
-async function endFeed($: EngineInterface) {
-  if (!feed.on || feed.ended) return
-  feed.ended = true
-  await flushFeed($, true)
-  await $.fs.write(`${feed.dir}/side.json`, JSON.stringify({ v: 1, run: feed.run, answers: [] })).catch(() => undefined)
-  await $.fs.write(`${feed.dir}/notes.json`, JSON.stringify({ v: 1, run: feed.run, notes: [] })).catch(() => undefined)
-}
-
-function hashText(t: string): string { let h = 2166136261; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619) } return (h >>> 0).toString(16).padStart(8, '0') }
-
-// ---------------------------------------------------------------- Studio marks: what Studio tells her
-// One small file beside the feeds that Spark only reads:
-//   .../cyclops-presence/<CYCLOPS_SESSION_ID>/studio.json
-//     { "v": 1, "copied": { "id", "t" },            Studio's own Copy took this terminal's last response
-//               "ask": { "id", "t", "text" } }      you asked Claude a side question from Studio (right-click Spark)
-// Spark looks every 0.7 s (a stat; a read only when it changed). A copy made after the reply she holds out landed is a real
-// event (reply.copied); an ask made while this session runs is answered on the side (askOnTheSide, a tool-less fork, the
-// same as /spark ask), its answer written to spark/side.json for Studio to show. The feed gets only that it happened.
-type Mark = { copied: { id: string; t: number } | null; ask: { id: string; t: number; text: string } | null }
-const marks = { path: '', seen: '', seenAsk: '', mtime: 0, busy: false }
-async function readMark($: EngineInterface): Promise<Mark> {
-  try {
-    const m = JSON.parse(String(await $.fs.read(marks.path)))
-    const c = m && typeof m === 'object' ? m.copied : null, a = m && typeof m === 'object' ? m.ask : null
-    return {
-      copied: c && typeof c.id === 'string' && typeof c.t === 'number' ? { id: c.id.slice(0, 80), t: c.t } : null,
-      ask: a && typeof a.id === 'string' && typeof a.t === 'number' && typeof a.text === 'string' && a.text.trim()
-        ? { id: a.id.slice(0, 80), t: a.t, text: a.text.slice(0, 4000) } : null,
-    }
-  } catch { return { copied: null, ask: null } }
-}
-async function pollMarks($: EngineInterface) {
-  if (!feed.on || !marks.path || marks.busy || feed.ended) return
-  marks.busy = true
-  try {
-    const st = await $.fs.stat(marks.path).catch(() => null)
-    if (!st || st.mtimeMs === marks.mtime) return
-    marks.mtime = st.mtimeMs
-    const { copied: c, ask } = await readMark($)
-    if (c && c.id !== marks.seen) {
-      marks.seen = c.id
-      const held = spark.offer as { at: number } | null
-      if (held && c.t + 1 >= T0 / 1000 + held.at) await copied($, 'studio', c.id) // (a second of grace: two clocks, one machine)
-    }
-    if (ask && ask.id !== marks.seenAsk) {
-      marks.seenAsk = ask.id
-      if (ask.t >= T0 / 1000 - 1 && Date.now() / 1000 - ask.t < 120) void quietly(() => answerForStudio($, ask)) // never an old one
-    }
-  } finally { marks.busy = false }
-}
-// Studio's ask: the answer goes to spark/side.json (the last few, newest last), which Studio reads and shows by her
-const sideAnswers: Array<{ id: string; t: number; ok: boolean; text: string }> = []
-async function answerForStudio($: EngineInterface, ask: { id: string; text: string }) {
-  const { ok, text } = await askOnTheSide($, ask.text, ask.id, 'studio')
-  sideAnswers.push({ id: ask.id, t: +(Date.now() / 1000).toFixed(3), ok, text })
-  while (sideAnswers.length > 5) sideAnswers.shift()
-  await $.fs.write(`${feed.dir}/side.json`, JSON.stringify({ v: 1, run: feed.run, answers: sideAnswers })).catch(() => undefined)
-}
-
-// ---------------------------------------------------------------- heads-ups for Studio
-// Inside Studio, an offer above the prompt (Claude Code's "You should know" / "Heads up") is also left for Studio as plain
-// text, so it can offer it as a small bubble to copy or send to its Notepad:
-//   .../spark/notes.json   { "v": 1, "run", "notes": [{ "id", "t", "tag", "title", "text" }] }   the last five, newest last
-// Only what is already on your screen, only inside Studio; the feed gets only note.shown { id, tag }.
-function textOf(node: unknown, out: string[] = [], depth = 0): string[] {
-  if (!node || depth > 40) return out
-  if (typeof node === 'string') { out.push(node); return out }
-  if (Array.isArray(node)) { for (const n of node) textOf(n, out, depth + 1); return out }
-  if (typeof node !== 'object') return out
-  const el = node as { type?: unknown; props?: Record<string, unknown>; children?: unknown }
-  if (el.type === 'Button' || el.type === 'Select') return out
-  const before = out.length
-  textOf(el.children, out, depth + 1); textOf(el.props?.children, out, depth + 1)
-  if (el.type === 'Text' && out.length > before) { const line = out.splice(before).join(''); out.push(line) }
-  return out
-}
-const notes: Array<{ id: string; t: number; tag: string; title: string; text: string }> = []
-let lastNoteId = ''
-function noteFrom($: EngineInterface, tree: unknown) {
-  if (!feed.on || feed.ended) return
-  const lines = textOf(tree).map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean)
-  const text = lines.join('\n').slice(0, 8000)
-  if (!text) return
-  const id = hashText(text)
-  if (id === lastNoteId || notes.some((n) => n.id === id)) { lastNoteId = id; return }
-  lastNoteId = id
-  const tagLine = lines.find((l) => /^(you should know|heads[\s-]*up)\b/i.test(l)) ?? ''
-  const tag = /^heads/i.test(tagLine) ? 'Heads up' : tagLine ? 'You should know' : ''
-  const title = (lines.find((l) => !/^(you should know|heads[\s-]*up)\W*$/i.test(l)) ?? lines[0]!).replace(/^(you should know|heads[\s-]*up)\s*[·:\-–—]\s*/i, '').slice(0, 160)
-  notes.push({ id, t: +(Date.now() / 1000).toFixed(3), tag, title, text })
-  while (notes.length > 5) notes.shift()
-  emit({ type: 'note.shown', id, ...(tag ? { tag } : {}) }, true)
-  void $.fs.write(`${feed.dir}/notes.json`, JSON.stringify({ v: 1, run: feed.run, notes })).catch(() => undefined)
-}
-
 // Playback. The host plays a clip with afplay on macOS; a Linux terminal has no player there, so on Linux Spark plays its
 // own file with the desktop's player (PipeWire's pw-play, PulseAudio's paplay, or ALSA's aplay), found once and remembered.
 // Anywhere else, or if none is installed, the host's own playback stands (and stays silent where it has no player).
@@ -671,7 +504,6 @@ async function murmur($: EngineInterface, kind: 'think' | 'write') {
 // Terminal frames: 20 fps while something real is happening, 8 fps of ambient otherwise (a slow heartbeat in calm), nothing when unseen.
 async function paint($: EngineInterface) {
   tick += 1
-  if (feed.on) { void quietly(() => flushFeed($)); if (tick % 14 === 0) void quietly(() => pollMarks($)) } // Studio's copy, and what Studio says
   if (statusOn && tick % 5 === 0) pushStatus($)
   if (linkOn && linkFactsPath) await sendLinkFacts($)
   if (!paneOpen && !band) return
@@ -764,10 +596,12 @@ async function talkTo($: EngineInterface, words: string): Promise<void> {
 // the terminal's colour depth, and nothing the terminal does not show), Faithful (the same marks, large and fine),
 // Refined or Interpretive (the painter revisits each: one call a painting). Layered, the depth pass Truest grew out of
 // (its layers softened, shadows, a bloom: the renderer's own reading of depth, not the painting's), is kept as a word,
-// /spark convert layered, for comparing.
-type Way = 'truest' | 'faithful' | 'refined' | 'interpretive' | 'layered'
-const WAYS: Way[] = ['truest', 'faithful', 'refined', 'interpretive'] // the menu's four
-const TYPED_WAYS: Way[] = [...WAYS, 'layered']
+// /spark convert layered, for comparing. Side by side puts the painting as her pane showed it (its terminal cells) beside
+// it made large (truest), on one picture: for a post, what she painted and what it becomes.
+type Way = 'truest' | 'faithful' | 'refined' | 'interpretive' | 'layered' | 'side'
+const WAYS: Way[] = ['truest', 'faithful', 'refined', 'interpretive'] // the menu's four (a dialog holds four), and every way
+const TYPED_WAYS: Way[] = [...WAYS, 'side', 'layered'] // and by word: side by side, and the depth pass to compare
+const wayName = (w: Way) => w === 'side' ? 'Side by side' : Cap(w)
 let truestLevels = 16 // the truestLevels setting: the terminal's colour depth, levels a channel (0: full colour)
 const revisits = (w: Way) => w === 'refined' || w === 'interpretive'
 const Cap = (w: string) => w[0]!.toUpperCase() + w.slice(1)
@@ -825,13 +659,73 @@ async function revisitPainting($: EngineInterface, source: Painting & { shape: s
   if (!q) return { p: source, ok: false, note: r.isAnswered ? 'the painter answered something that was not a painting; it was drawn as it was' : 'the painter sent nothing back; it was drawn as it was' }
   return { p: { ...q, shape: source.shape }, ok: true, note: '' }
 }
+// The PNG: RGB bytes handed to the python helper (link/spark_png.py) as base64 text, in parts of at most 3 MB each (one
+// write may carry 4 MiB, and a 4k picture is far more than that); true when it wrote the file
+async function writePNG($: EngineInterface, folder: string, name: string, rgb: Uint8Array, W: number, H: number, pause: () => Promise<unknown>): Promise<boolean> {
+  const b64 = await base64Async(rgb, pause), PART = 3_000_000, parts = Math.ceil(b64.length / PART)
+  const b64Path = `${folder}/${name}.rgb.b64`
+  for (let k = 0; k < parts; k++) await $.fs.write(`${b64Path}.${k}`, b64.slice(k * PART, (k + 1) * PART))
+  try {
+    const proc = $.process.spawn({ argv: ['python3', `${$.plugin.root}/link/spark_png.py`, b64Path, `${folder}/${name}.png`, String(W), String(H), String(parts)] })
+    for await (const _ of proc) { /* its lines are not needed */ }
+    const end = await proc.result
+    return (end as { code?: number } | null)?.code === 0
+  } catch { return false }
+}
+// where convert and save write: the convert folder, in the project or as written
+async function convertDir($: EngineInterface): Promise<string> {
+  const root = await $.session.root().catch(() => '')
+  return convertFolder.startsWith('/') || convertFolder.startsWith('~') ? convertFolder : (root ? root + '/' : '') + convertFolder
+}
+// The painting as her pane showed it, cell by cell: her own terminal drawing (four pixels to a cell in HD, or half
+// blocks), its light in the terminal's colour depth, at the size the pane last drew it (columns x rows, a cell twice as
+// tall as wide)
+function terminalCells(p: Painting & { shape: string }, theme: string) {
+  const cols = Math.max(8, paintCols || 44), rows = Math.max(3, Math.round(cols / (2 * (SHAPES[p.shape] ?? 2))))
+  const small = createRaster(hd ? cols * 2 : cols, hd ? rows * 4 : rows * 2)
+  small.draw(paintingScene(p, small.W, small.H, { reveal: 1, theme }), theme, { res: hd ? 2 : 1 })
+  return { cols, rows, cells: (hd ? toQuadrants : toHalfBlocks)(small, ground()) }
+}
+const SAVE_CELL = 16 // /spark save: each terminal cell 16 x 32 pixels, so a 44-column painting is 704 wide, blocks crisp
+
+// /spark save (or ⤓ save at the top of her pane): the painting showing, kept as it is, no menus and no tokens. Three files
+// in the convert folder: the painting as the terminal showed it (PNG, and an SVG of its blocks that stays crisp at any
+// size), and the painting itself as JSON (its title and marks, the same format she shares with Prism), the original a
+// redraw elsewhere can start from
+async function savePainting($: EngineInterface): Promise<string> {
+  const p = shownPainting()
+  if (!p) return story.length ? 'no painting is showing: /spark story shows them, /spark paint makes one' : 'no paintings yet this session: /spark paint makes one'
+  if (convertBusy) return busyText()
+  convertBusy = true
+  try {
+    const folder = await convertDir($), theme = activeTheme(), g = ground()
+    const { cols, rows, cells } = terminalCells(p, theme)
+    const cw = SAVE_CELL, ch = SAVE_CELL * 2, W = cols * cw, H = rows * ch
+    const n = converted.length + 1, base = slug(p.title, n), name = base + '-terminal'
+    const by = (p as { by?: string }).by === 'prism' ? 'prism' : 'spark'
+    const hexG = '#' + g.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('')
+    const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    await $.fs.write(`${folder}/${name}.svg`, `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" shape-rendering="crispEdges">\n<title>${esc(p.title || 'untitled')}</title>\n<rect width="${W}" height="${H}" fill="${hexG}"/>\n${cellsSVG(cells, cols, rows, 0, 0, cw, ch, g, truestLevels)}\n</svg>\n`)
+    await $.fs.write(`${folder}/${base}.json`, JSON.stringify({ title: p.title, mirror: p.mirror, marks: p.marks, shape: p.shape, at: Date.now() / 1000, by, cells: { columns: cols, rows, hd } }))
+    const written = [`${name}.svg`, `${base}.json`]
+    const png = await writePNG($, folder, name, cellsToRGB(cells, cols, rows, cw, ch, g, truestLevels), W, H, () => $.clock.now())
+    if (png) written.unshift(`${name}.png`)
+    converted.push({ file: png ? `${name}.png` : `${name}.svg`, title: p.title || 'untitled', when: new Date().toTimeString().slice(0, 5), mode: 'as the terminal showed it' })
+    await $.fs.write(`${folder}/index.html`, galleryHTML(converted))
+    logRecent('save')
+    return `saved “${p.title || 'untitled'}” as the terminal showed it (${cols} x ${rows} cells, ${W} x ${H}) into ${folder}: ${written.join(', ')}` + (png ? '' : '. No PNG: python3 was not found (the SVG opens in any browser, at any size)')
+  } catch (err) {
+    return 'save failed: ' + String((err as Error)?.message || err).slice(0, 120)
+  } finally { convertBusy = false }
+}
+
 // the second menu: which way, each with what it costs for these paintings
-async function askWay($: EngineInterface, question: string, list: Array<Painting & { shape: string }>): Promise<Way | null> {
-  const labels = WAYS.map((w) => `${Cap(w)} · ${costText(list.map((source) => ({ source, way: w })))}`)
+async function askWay($: EngineInterface, question: string, list: Array<Painting & { shape: string }>, ways: Way[] = WAYS): Promise<Way | null> {
+  const labels = ways.map((w) => `${wayName(w)} · ${costText(list.map((source) => ({ source, way: w })))}`)
   let choice = ''
   try { choice = await $.ui.ask(question, { options: labels, header: 'Which way' }) } catch { return null }
   const k = labels.indexOf(choice)
-  return k < 0 ? null : WAYS[k]!
+  return k < 0 ? null : ways[k]!
 }
 // /spark convert [truest | faithful | refined | interpretive | every | all [way] | roll [way]] [hd | 4k | width]
 async function convertPainting($: EngineInterface, words: string[], raw: string[] = words): Promise<string> {
@@ -848,7 +742,7 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
   if ((mode === 'all' || mode === 'roll') && (TYPED_WAYS as string[]).includes(next)) { way = next as Way; sizeWord = after } // all refined 4k, roll truest hd
   if ((TYPED_WAYS as string[]).includes(mode)) { way = mode as Way; mode = 'one' }
   const known = ['', 'one', 'every', 'all', 'roll']
-  if (!known.includes(mode)) return 'convert takes: truest | faithful | refined | interpretive | layered (this painting that way; layered is the depth pass, kept to compare) | every (this painting every way) | all [way] (every painting of the session) | roll [way] (every painting as a clip), then a size: hd (1920 wide, the default) or 4k, for the roll hd (1080p). On its own, /spark convert lets you click'
+  if (!known.includes(mode)) return 'convert takes: truest | faithful | refined | interpretive | side (as the terminal showed it, beside it made large) | layered (this painting that way; layered is the depth pass, kept to compare) | every (this painting every way) | all [way] (every painting of the session) | roll [way] (every painting as a clip), then a size: hd (1920 wide, the default) or 4k, for the roll hd (1080p). On its own, /spark convert lets you click'
   const stillWidth = (w: string) => w === '' ? SIZES.hd! : SIZES[w] ?? (/^\d{3,4}$/.test(w) ? Math.max(256, Math.min(4096, Number(w))) : 0)
   if (mode === 'roll' && !rollSize(sizeWord)) return 'roll size: hd (1080p, 1920 wide), short (upright 1080 x 1920, for YouTube Shorts), or a width (16:9); 720p (1280 wide) when nothing is said'
   if (mode !== 'roll' && !stillWidth(sizeWord)) return 'convert size: hd (1920 wide) or 4k (3840)'
@@ -873,6 +767,7 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
     if (!w) return 'convert: nothing chosen'
     way = w
   }
+  if (mode === 'roll' && way === 'side') return 'side by side is for a painting or all of them, not the roll: /spark convert side, or all side'
   if (mode === 'roll') return rollPaintings($, way as Way, sizeWord, called)
   const width = stillWidth(sizeWord)
   if (!width) return 'convert size: hd (1920 wide) or 4k (3840)'
@@ -882,8 +777,7 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
   const jobs: Job[] = mode === 'all' ? story.map((source) => ({ source, way: way as Way })) : mode === 'every' ? WAYS.map((w) => ({ source: pick!, way: w })) : [{ source: pick!, way: way as Way }]
   const said = mode === 'all' ? `all, ${way}` : mode === 'every' ? 'every way' : way
   convertBusy = true
-  const root = await $.session.root().catch(() => '')
-  const folder = convertFolder.startsWith('/') || convertFolder.startsWith('~') ? convertFolder : (root ? root + '/' : '') + convertFolder
+  const folder = await convertDir($)
   const written: string[] = []
   let note = ''
   const theme = activeTheme()
@@ -900,13 +794,34 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
         let tag: string = w
         if (revisits(w)) { const r = await revisitPainting($, source, w as 'refined' | 'interpretive'); p = r.p; if (!r.ok) { note = r.note; tag = 'faithful' } }
         if (revisits(w)) step(0.3, `drawing “${shortTitle(p.title)}”${which}`)
-        const [W, H] = canvasFor(p.shape, width)
+        let [W, H] = canvasFor(p.shape, width)
         const n = converted.length + 1
         const name = slug(p.title, n) + '-' + tag
         const when = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-        const caption = convertCaption ? captionLines(p.title, tag, when, whoPainted(source)) : null
-        let px: { W: number; H: number; px: Float32Array }
-        if (tag === 'truest') { // as you see it: each mark the weight of a terminal cell, drawn flat as the terminal draws it (nothing added), its light then put in the terminal's colour depth (below)
+        const caption = convertCaption ? captionLines(p.title, tag === 'side' ? 'side by side' : tag, when, whoPainted(source)) : null
+        let px: { W: number; H: number; px: Float32Array } | null = null
+        let pair: Uint8Array | null = null // side by side: the two panels, already in RGB
+        if (tag === 'side') { // her pane's cells (as she drew them there: four pixels to a cell, or half blocks), beside truest
+          const lay = sideLayout(p.shape, width); W = lay.W; H = lay.H
+          const { cols, rows, cells } = terminalCells(p, theme)
+          const cw = Math.max(2, Math.floor(Math.min(lay.pw / cols, lay.ph / (rows * 2)))), ch = cw * 2 // a cell twice as tall as wide
+          const pw = cols * cw, ph = rows * ch // the made-large one the same size as the cells, so the two sit level
+          const scene = paintingScene(p, pw, ph, { reveal: 1, theme })
+          const truestSvg = sceneSVG(scene, pw, ph, { theme, floor: 0.6 * cellRes(pw), levels: truestLevels })
+          await $.fs.write(`${folder}/${name}.svg`, sideSVG({ layout: lay, cells, cols, rows, cw, ch, truest: truestSvg, theme, title: p.title, caption, ground: ground(), levels: truestLevels }))
+          step(0.35, `drawing “${shortTitle(p.title)}” large beside it${which}`)
+          const big = createRaster(pw, ph)
+          await big.drawAsync(scene, theme, { res: cellRes(pw), floor: 1 }, pause)
+          const right = posterize(await toRGB8Async(big as never, ground(), pause), truestLevels)
+          const left = cellsToRGB(cells, cols, rows, cw, ch, ground(), truestLevels)
+          const out = new Uint8Array(W * H * 3), g = ground().map((v) => Math.round(v * 255))
+          for (let i = 0; i < W * H; i++) { out[i * 3] = g[0]!; out[i * 3 + 1] = g[1]!; out[i * 3 + 2] = g[2]! }
+          const blit = (src: Uint8Array, sw: number, sh: number, x0: number, y0: number) => { for (let yy = 0; yy < sh; yy++) out.set(src.subarray(yy * sw * 3, (yy + 1) * sw * 3), ((y0 + yy) * W + x0) * 3) }
+          const ox = Math.floor((lay.pw - pw) / 2), oy = Math.floor((lay.ph - ph) / 2)
+          blit(left, pw, ph, lay.lx + ox, lay.y + oy)
+          blit(right, pw, ph, lay.rx + ox, lay.y + oy)
+          pair = out
+        } else if (tag === 'truest') { // as you see it: each mark the weight of a terminal cell, drawn flat as the terminal draws it (nothing added), its light then put in the terminal's colour depth (below)
           const scene = paintingScene(p, W, H, { reveal: 1, theme })
           await $.fs.write(`${folder}/${name}.svg`, sceneSVG(scene, W, H, { theme, title: p.title, caption, floor: 0.6 * cellRes(W), levels: truestLevels }))
           const raster = createRaster(W, H)
@@ -926,20 +841,10 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
         written.push(`${name}.svg`)
         step(0.75, `setting it in a PNG${which}`)
         // the PNG: the pixels flattened onto the ground the same way her cells are, handed to the python helper as text
-        const flat = await toRGB8Async(px as never, ground(), pause)
+        const flat = pair ?? await toRGB8Async(px as never, ground(), pause)
         if (tag === 'truest') posterize(flat, truestLevels) // the terminal's colour depth: its bands are what you see
         const { rgb, H: fullH } = caption ? withCaption(flat, W, H, caption, ground(), { light: theme === 'light' }) : { rgb: flat, H }
-        // in parts of at most 3 MB of text each: one write may carry 4 MiB, and a 4k picture is far more than that
-        const b64 = await base64Async(rgb, pause), PART = 3_000_000, parts = Math.ceil(b64.length / PART)
-        const b64Path = `${folder}/${name}.rgb.b64`
-        for (let k = 0; k < parts; k++) await $.fs.write(`${b64Path}.${k}`, b64.slice(k * PART, (k + 1) * PART))
-        let png = false
-        try {
-          const proc = $.process.spawn({ argv: ['python3', `${$.plugin.root}/link/spark_png.py`, b64Path, `${folder}/${name}.png`, String(W), String(fullH), String(parts)] })
-          for await (const _ of proc) { /* its lines are not needed */ }
-          const end = await proc.result
-          png = (end as { code?: number } | null)?.code === 0
-        } catch { png = false }
+        const png = await writePNG($, folder, name, rgb, W, fullH, pause)
         if (png) written.push(`${name}.png`)
         else { note = note || 'no PNG: python3 was not found (the SVG opens in any browser, at any size)' }
         converted.push({ file: png ? `${name}.png` : `${name}.svg`, title: p.title || 'untitled', when: new Date().toTimeString().slice(0, 5), mode: tag })
@@ -963,7 +868,7 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
   // (a command has ten seconds of its own time), and Spark says in the conversation when it is done (/spark state shows
   // how far it has got). One faithful, refined or interpretive picture at HD is quick and comes back at once
   const calls = jobs.filter((j) => revisits(j.way)).length
-  if (calls >= 2 || jobs.length >= 2 || width > SIZES.hd! || jobs.some((j) => j.way === 'truest' || j.way === 'layered')) {
+  if (calls >= 2 || jobs.length >= 2 || width > SIZES.hd! || jobs.some((j) => j.way === 'truest' || j.way === 'layered' || j.way === 'side')) {
     const est = jobsEstimate(jobs)
     convertProgress = { done: 0, total: jobs.length, what: said, stage: 'converting' }
     progressRedraw($, true)
@@ -1482,7 +1387,8 @@ const HELP = [
   '/spark story   the session\'s paintings told again in order, each laid down anew (no tokens); /spark story again ends it',
   '/spark copy    what you last said to Spark and her answer, whole, onto your clipboard (or ⧉ copy under it)',
   '/spark prism   painting with Prism: her paintings this session join the story, converts and rolls, credited to her; /spark prism off | on | <folder>',
-  '/spark convert the painting made large, SVG and PNG, into the convert folder: click what (this painting, every way, all paintings, the roll) then which way (truest, faithful, refined, interpretive, each with its token cost), or say it: /spark convert truest 4k, every, all refined, roll truest hd, roll short (upright, for YouTube Shorts)',
+  '/spark save    the painting showing, kept as the terminal showed it (PNG and SVG of its cells) and as JSON (its marks), no tokens; or ⤓ save above her painting',
+  '/spark convert the painting made large, SVG and PNG, into the convert folder: click what (this painting, every way, all paintings, the roll) then which way (truest, faithful, refined, interpretive, each with its token cost), or say it: /spark convert truest 4k, side (as the terminal showed it, beside it made large), every, all refined, roll truest hd, roll short (upright, for YouTube Shorts)',
 ].join('\n')
 
 // focus asks for about 60% of the terminal (at least 64 columns, and always 40 left for the conversation), and the full
@@ -1627,7 +1533,7 @@ async function sparkRun($: EngineInterface, e: { args: string; presentation?: { 
     }
   }
   else if (word === 'state') {
-    text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · hd ${hd ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${feed.on ? ` · studio feed${feed.ended ? ' (ended)' : ''}` : ''}${paintOn ? ' · paint on' + (paintWay === 'free' ? ` · free${paintEvery > 0 ? ` every ${paintEvery} min` : ''}` : '') + (paintSpent.calls ? ` (${spentText()})` : '') : ''}${convertProgress ? ` · converting ${convertProgress.done} of ${convertProgress.total} (${convertProgress.what})` : ''}\n` + (reflection ? `last reflection (sent to the painter): ${reflection}\n` : '') + recent.join('\n')
+    text = liveFrame().hover + '\n' + `palette ${palette} · theme ${theme === 'auto' ? 'auto→' + hostTheme : theme} · calm ${calm ? 'on' : 'off'} · hd ${hd ? 'on' : 'off'} · sound ${sound} · status ${statusOn ? 'on' : 'off'} · murmur ${murmurOn ? 'on' : 'off'} · link ${linkOn ? linkStatus : 'off'}${paintOn ? ' · paint on' + (paintWay === 'free' ? ` · free${paintEvery > 0 ? ` every ${paintEvery} min` : ''}` : '') + (paintSpent.calls ? ` (${spentText()})` : '') : ''}${convertProgress ? ` · converting ${convertProgress.done} of ${convertProgress.total} (${convertProgress.what})` : ''}\n` + (reflection ? `last reflection (sent to the painter): ${reflection}\n` : '') + recent.join('\n')
   }
   else if (word === 'link') {
     if (arg === 'on' || arg === 'off') {
@@ -1640,6 +1546,7 @@ async function sparkRun($: EngineInterface, e: { args: string; presentation?: { 
       text = 'link ' + (linkOn ? linkStatus : 'off') + (linkOn && linkView ? ' · ' + linkLine(linkView) : '') + (linkWanted !== null ? ' (SPARK_LINK overrides the setting)' : '')
     } else text = 'link takes: on | off | status'
   }
+  else if (word === 'save') text = await savePainting($)
   else if (word === 'convert') text = await convertPainting($, e.args.trim().toLowerCase().split(/\s+/).slice(1), e.args.trim().split(/\s+/).slice(1))
   else if (word === 'prism') { // painting with Prism: where her paintings are read from, on or off
     const rest = e.args.trim().split(/\s+/).slice(1).join(' ')
@@ -1738,7 +1645,7 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await refreshTheme($)
-    await $.command.register({ name: 'spark', description: 'Spark, Claude\'s living presence: /spark [side|top|focus|kitty|hd|state|calm|theme|palette|sound|murmur|status|replay|ask|link|paint|story|prism|copy|convert|help]', immediate: true })
+    await $.command.register({ name: 'spark', description: 'Spark, Claude\'s living presence: /spark [side|top|focus|kitty|hd|state|calm|theme|palette|sound|murmur|status|replay|ask|link|paint|story|prism|copy|save|convert|help]', immediate: true })
     const wanted = (await $.env.get('SPARK_LINK').catch(() => undefined))?.trim().toLowerCase()
     linkWanted = wanted === '1' || wanted === 'on' ? true : wanted === '0' || wanted === 'off' ? false : null
     if (linkWanted !== null) linkOn = linkWanted
@@ -1746,9 +1653,7 @@ export const register: Register = (on, options) => {
     $.clock.every(50, () => void paint($))
     // a session just begun: a plugin reloaded mid-conversation (an update) finds turns already taken, and stays quiet
     welcome = welcomeOn && (await $.session.turns().catch(() => 0)) === 0
-    await quietly(() => startFeed($)) // inside Studio: her feed, from the moment the session starts
     emit({ type: 'session.wake' })
-    await quietly(() => flushFeed($, true)) // the first live.json now, so Studio finds her before any prompt
     await cue($, 'wake', 'full')
     return next(e)
   })
@@ -1759,7 +1664,6 @@ export const register: Register = (on, options) => {
   // a /clear ends the conversation without a new session.start: the stars are gone and Spark wakes again
   on('session.end', async ($, e, next) => {
     if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full'); painting = null; paintSite = null; lastTurn = null; turnsSeen = 0; reflection = ''; spoken = ''; talk = null; story.length = 0; storyOn = null; openingMade = false; welcome = welcomeOn; $.ui.invalidate('ui.render') }
-    else await quietly(() => endFeed($)) // the session is over: Studio takes her off the screen
     const res = await next(e)
     if (e.reason === 'clear' && linkOn) { await stopLink(); await startLink($) } // a new conversation is a new instance
     return res
@@ -1923,6 +1827,7 @@ export const register: Register = (on, options) => {
         if (!(paintOn && !replay && !focusMode && story.length > 0 && width >= 28 && spare >= (busy ? 11 : 10))) return [] // only where the painting keeps room of its own
         const row = Box({ flexDirection: 'row', justifyContent: 'flex-end', columnGap: 2, width, children: [
           tool('spark-tool-story', storyOn ? '■ story' : '▶ story', 'story'),
+          ...(width >= 44 ? [tool('spark-tool-save', '⤓ save', 'save')] : []), // the painting as it is, kept: no menus
           tool('spark-tool-convert', '⇪ convert', 'convert'),
           tool('spark-tool-roll', '◎ roll', 'convert roll'),
           // what she paints, and a press to change it: ✦ free (hers, on her rhythm) or ◇ work (each turn's expression)
@@ -2074,7 +1979,6 @@ export const register: Register = (on, options) => {
     const left = art
       ? Box({ flexDirection: 'row', columnGap: 1, alignItems: 'center', children: [art, Box({ flexDirection: 'column', children: words })] })
       : Box({ flexDirection: 'row', columnGap: 1, children: [Text({ children: [f.glyph] }), ...words] })
-    if (below && feed.on && asksSomething(below)) noteFrom($, below) // inside Studio, the heads-up is left for it too
     if (below && asksSomething(below)) // Spark speaking: the offer as its bubble, joined to it
       return Box({ flexDirection: 'row', columnGap: 1, children: [left, Text({ children: ['╶─'], dimColor: true }), below as never] })
     return Box({ flexDirection: 'row', columnGap: 2, children: below ? [left, below as never] : [left] })

@@ -110,6 +110,8 @@ This is separate from the plugin: installing Spark any other way does not add it
 | `/spark paint free` / `work` | What she paints: **free**, her own paintings of nothing in the conversation, on a rhythm of her own, one now; or **work**, each turn's expression, as before (below). |
 | `/spark story` | The session's paintings told again, in order, each laid down anew, once through (no tokens). Under the painting: pause, back, next, end; or `/spark story pause \| play \| next \| back \| end`. |
 | `/spark convert` | The painting made large, as SVG and PNG, into the convert folder (below): click what (this painting, every way, all paintings, the roll), then which way (truest, faithful, refined, interpretive), each with its token cost beside it. Or say it: `/spark convert layered 4k`, `every`, `all refined`. |
+| `/spark save` | The painting showing, kept as it is, no menus and no tokens: as the terminal showed it, cell by cell (`-terminal.png`, and an SVG of its blocks that stays crisp at any size), and as its marks (`.json`, the original a redraw elsewhere can start from). Or **⤓ save** at the top of her pane. |
+| `/spark convert side` | Side by side: the painting as the terminal showed it, beside it made large (truest), on one picture with the caption under both, for a post (`all side` for every painting). |
 | `/spark convert roll short` | The roll upright, 1080 x 1920, for YouTube Shorts and phones: each painting large with its caption right under it, the title card upright too (`-short.mp4`). Spark says if it runs past the 3 minutes a Short can be. |
 | `/spark convert roll` | Every painting of the session as a clip, in any of the four ways: each laid down mark by mark, held with its title for a bar or two of its own, crossfaded into the next (MP4 with ffmpeg; `roll truest hd` for 1080p). |
 | `/spark copy` | What you last said to Spark and her answer, whole, onto your clipboard (or press ⧉ copy under her answer). A terminal's own selection copies screen rows, so beside the conversation it takes half of each. |
@@ -145,7 +147,7 @@ on, when a turn of 3 seconds or more lands, a small sub-agent paints Spark's exp
 pane, laid down mark by mark, with a few words of hers underneath.
 
 **Her tools.** Once there is a painting, small buttons sit at the top of her pane, right-aligned: **▶ story**
-(■ story while it plays, to end it), **⇪ convert**, **◎ roll**, and, where there is room, **✦ free** / **◇ work** (what she paints, a press to switch). Each runs `/spark` as if typed, its menus asked as
+(■ story while it plays, to end it), **⤓ save** (where there is room), **⇪ convert**, **◎ roll**, and, where there is room, **✦ free** / **◇ work** (what she paints, a press to switch). Each runs `/spark` as if typed, its menus asked as
 usual, and its answer is a line of hers in the conversation. They only appear where the painting keeps room of its own. While a convert or a roll is being made, a bar under them shows how far it has got and what
 Spark is doing, in her own words (laying down “the lamp…” · 3/7, raising the title, finding its music, stitching the
 roll together), with the percentage.
@@ -283,8 +285,8 @@ the words themselves. The last reflection shows in `/spark state`.
   (wide and short) Spark and her painting sit side by side. The painter is told the shape it is painting for; afterwards
   a painting is fitted and centred, never stretched. With only a little room you see its title; with none it waits.
 - **Nothing is cut short.** Spark's state line and the painting's title wrap instead of ending in "…", and the layout
-  counts their rows first. The painter stays out of focus, the top strip and the replay. Nothing of it is written
-  anywhere, and `/clear` empties it with the stars.
+  counts their rows first. The painter stays out of focus, the top strip and the replay. Nothing is written anywhere,
+  and `/clear` empties it with the stars.
 
 ### From the wall
 
@@ -391,9 +393,7 @@ thinks and soft bubbles while it really writes, stopping on its own within a cou
 ## Privacy
 
 Spark writes no files and makes no network request of its own. Everything it knows is in memory and gone when Claude Code
-exits. Inside Cyclops Studio only (`CYCLOPS_STUDIO=1`), she writes her events, as kinds and counts, never content, to a
-small feed Studio draws her from (`~/.local/state/cyclops-presence/<session>/spark/`). The other exception is Cyclops
-Link, only while you have it on: then Spark's helper writes her coarse state to one
+exits. The one exception is Cyclops Link, only while you have it on: then Spark's helper writes her coarse state to one
 small file other presences on this machine can read. The painter, only while you have it on, makes one short model call
 per painting through your own session, with the turn's shape and a short excerpt of the reply. `/spark convert`, only
 when you run it, writes a painting's SVG and PNG into the convert folder. See [docs/PRIVACY.md](docs/PRIVACY.md).
