@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.7.14
+
+- **Free paintings: you choose what she paints.** Inspired by how Prism paints, the painter has two ways now:
+  - **work** (as before, and the default): her opening, then each turn's expression, and a live one in a long turn;
+  - **free**: every painting is hers, the way her opening is, of nothing in the conversation. Each is seeded only by
+    the hour, the month, a word drawn at random and the names of her last few paintings, so they can run on as a
+    series, answer each other or break away. She paints them on a rhythm of her own, one every `paintEvery` minutes
+    (5 by default), while her painting can be seen and you are around (a turn going, or something done in the last 30
+    minutes). Left alone she rests, so no tokens go on paintings nobody is there to see. With `paintEvery` at 0 she
+    paints one of her own at the end of each turn instead.
+  Choose with the new **Paintings** setting, `/spark paint free` (which paints one now) and `/spark paint work`, or a
+  press of her new fourth tool, **✦ free** / **◇ work**, which shows the way she paints and switches it. The story names
+  a free painting `· her own`; `/spark state` says `free every 5 min`.
+
 ## 1.7.13
 
 - **Truest keeps the terminal's colour depth, and adds nothing of its own.** Studying a real truest convert beside the
