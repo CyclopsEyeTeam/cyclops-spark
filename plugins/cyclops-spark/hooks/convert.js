@@ -72,7 +72,9 @@ const hex = (c) => '#' + c.map((v) => Math.round(Math.max(0, Math.min(1, v)) * 2
 // The same mapping the raster uses, so the SVG and the PNG are the one picture.
 // `layers` (layered): the scene in depth, back to front, each [scene, depth 0..1]; drawn with the far ones softened,
 // each nearer one's shadow on those behind, and the brightest light blooming, as hooks/layered.js draws the PNG
-export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '', caption = null, floor = 0.6, layers = null } = {}) {
+// `levels`: the terminal's colour depth (see posterize in render-raster.js), kept in the SVG by a discrete transfer:
+// thirty equal steps of input, each sent to the nearest of `levels`, so it rounds as the PNG does
+export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '', caption = null, floor = 0.6, layers = null, levels = 0 } = {}) {
   const scale = Math.min(W, H) / 2.4, ox = W / 2, oy = H / 2
   const fl = Math.max(0.6, floor), fw = Math.max(0.9, floor * 1.5) // the thinnest a dot (radius) or a stroke (width) is drawn
   const X = (x) => +(ox + x * scale).toFixed(2), Y = (y) => +(oy + y * scale).toFixed(2), R = (r) => +(r * scale).toFixed(2)
@@ -159,12 +161,15 @@ export function sceneSVG(scene, W, H, { theme = 'dark', ground = null, title = '
     `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H + strip}" viewBox="0 0 ${W} ${H + strip}">`,
     title ? `<title>${esc(title)}</title>` : '',
     dark ? '<style>.add>*{mix-blend-mode:screen;mix-blend-mode:plus-lighter}</style>' : '',
-    `<rect width="${W}" height="${H + strip}" fill="${bg}"/>`,
+    levels > 1 && levels < 256 ? `<defs><filter id="levels" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB"><feComponentTransfer>${['R', 'G', 'B'].map((ch) => `<feFunc${ch} type="discrete" tableValues="${Array.from({ length: 2 * (levels - 1) }, (_, k) => +(Math.ceil(k / 2) / (levels - 1)).toFixed(4)).join(' ')}"/>`).join('')}</feComponentTransfer></filter></defs><g filter="url(#levels)">` : '',
+    `<rect width="${W}" height="${H}" fill="${bg}"/>`,
     defs.length ? `<defs>${defs.join('')}</defs>` : '',
     // on a dark ground every mark adds its light to what is already there, as the terminal draws it: plus-lighter where
     // the viewer has it (browsers), screen (nearly it) elsewhere; each mark on its own, so a glow brightens the hill it
     // sits on. On a light ground each goes over the last, as paper
     inner,
+    levels > 1 && levels < 256 ? '</g>' : '',
+    caption ? `<rect y="${H}" width="${W}" height="${strip}" fill="${bg}"/>` : '',
     text,
     '</svg>',
     '',

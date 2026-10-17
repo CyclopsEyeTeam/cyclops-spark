@@ -10,5 +10,6 @@ export function spill(r: number, g: number, b: number, out: number[]): number[]
 export function toRGBA8(r: Raster): Uint8Array
 export function toRGB8(r: Raster, ground: number[]): Uint8Array
 export function base64(bytes: Uint8Array): string
+export function posterize(rgb: Uint8Array, levels: number): Uint8Array
 export function base64Async(bytes: Uint8Array, pause: () => Promise<unknown>, slice?: number): Promise<string>
 export function toRGB8Async(r: Raster, ground: number[], pause: () => Promise<unknown>, rows?: number): Promise<Uint8Array>
