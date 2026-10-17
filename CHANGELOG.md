@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.7.12
+
+- **Painting with Prism.** Prism paints with the same brush, saving her paintings as JSON files of the same marks in
+  `prism-paintings` in the project. The ones she paints during your session now join Spark's story in the order they
+  were painted. Spark's own checker reads them, clamping every mark, and they are never changed.
+  - `/spark story` tells both, marking hers `· Prism’s`.
+  - A convert of one of hers is captioned `Prism · date · way`.
+  - The roll is the two of them, each credited under her own paintings, with "Spark & Prism" on the title card.
+  - Spark picks up anything new from her when a turn ends, or when you open the story, a convert or the roll.
+  - `/spark prism` says what is linked. `/spark prism off | on | <folder>` turns it off or on, or points it at another
+    folder; the Prism's paintings setting does the same.
+- **And Spark shares hers.** While Prism's folder is there, each painting Spark makes is also written in the same form
+  into `spark-paintings` as `NN-title.json`, for Prism to read: title, mood, mirror, marks, tokens, model, time, `by`
+  and shape. Only the painting goes, never anything of the work. Without her folder, or with `/spark prism off`,
+  nothing is written.
+
 ## 1.7.11
 
 - **Spark's adventures as Shorts.** `/spark convert roll short` (also `shorts` or `vertical`, with any way:
