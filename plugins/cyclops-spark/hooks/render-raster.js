@@ -332,6 +332,19 @@ export async function toRGB8Async(r, ground, pause, rows = 64) {
   return out
 }
 
+// THE TERMINAL'S COLOUR DEPTH. Her painting, as the terminal shows it beside the conversation, has 16 levels a channel:
+// measured from a screenshot, 99% of its pixels sit exactly on them (0, 17, 34 … 255), while the conversation's text
+// beside it does not. So a smooth gradient or a wide glow is seen as bands, each a step of one level, and where the three
+// channels step at different places the bands turn hue (a plum ground going navy, then near black). That is all the
+// "layers" on her floor are: no geometry of hers, only how her light is shown. Truest keeps it: RGB bytes, in place, each
+// rounded to the nearest of `levels` (none when levels is 0 or 256 or more)
+export function posterize(rgb, levels) {
+  if (!levels || levels >= 256) return rgb
+  const step = 255 / (levels - 1)
+  for (let i = 0; i < rgb.length; i++) rgb[i] = Math.round(Math.round(rgb[i] / step) * step)
+  return rgb
+}
+
 // any terminal: Raster cells [codePoint, fg, bg] — '▀' top pixel as fg, bottom as bg; the terminal's own default
 // background where a pixel is (nearly) empty, so the entity sits on whatever the terminal's ground is.
 export const DEFAULT = 0x01000000
