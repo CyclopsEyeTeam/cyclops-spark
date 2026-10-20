@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.20
+
+- **Her painting fills its room.** A painting kept its own shape exactly, so where the room under or beside Spark was
+  wider than that shape (fewer rows than its width wanted), it sat in the middle with gaps at its sides. Now it spreads
+  to fill the width, up to about a third wider: its marks move apart across the room, while every dot, ring and glow
+  keeps its size and stays round (a painting is placed by its canvas and sized by its short side), so it reads as the
+  same painting. Converts, rolls and saves still use its own shape.
+
 ## 1.7.19
 
 - **Save her painting as it is: `/spark save`, or ⤓ save at the top of her pane.** No menus, no tokens. Into the convert
