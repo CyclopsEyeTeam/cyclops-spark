@@ -1212,6 +1212,7 @@ function paintRowsAt(width: number, room: number): number {
   const full = Math.min(60, Math.floor(width / (2 * (SHAPES[p.shape] ?? 2))))
   return Math.max(0, Math.min(full, room - (paintNeed(width) - full)))
 }
+const FILL_WIDE = 1.35 // how much wider than its own shape a painting may spread to fill its room (sizes and roundness kept)
 const SPARK_SHARE = 0.5 // with a painting below her, Spark keeps at least this share of the rows (and never more than her own size)
 
 // centreAt: beside Spark, the row (from the top of this block) her drawing is centred on: the painting is lowered, as far
@@ -1273,7 +1274,10 @@ function paintBlock(els: any, width: number, room0: number, centreAt = -1): any[
   const a = SHAPES[painting.shape] ?? 2 // width over height, in pixels (a cell is one pixel wide, two tall)
   const rows = Math.min(free, Math.floor(width / (2 * a)))
   if (rows < 3) return [caption, ...spent, ...talkEls]
-  const columns = Math.max(4, Math.min(width, Math.round(rows * 2 * a))) // its own shape: fitted, never stretched
+  // its own shape, as large as fits; and where the room is wider than that (fewer rows than its width would want), it
+  // fills the width, up to FILL_WIDE wider: the marks spread across it while every dot, ring and glow keeps its size and
+  // roundness (paintingScene places by the canvas, sizes by its short side), so it reads as the same painting, with no gap
+  const columns = Math.max(4, Math.min(width, Math.round(rows * 2 * a * FILL_WIDE)))
   const fr = paintFrame(columns, rows)
   const art = fr.cells
     ? Raster({ key: 'painting', columns, rows, cells: fr.cells })
