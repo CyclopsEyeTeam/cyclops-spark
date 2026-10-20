@@ -283,7 +283,7 @@ the words themselves. The last reflection shows in `/spark state`.
   takes a tall or square shape to fill the room it has. Pull the pane wider and, once side by side makes them both
   larger, Spark and her painting sit next to each other, the painting lowered so its middle meets hers. Above the prompt on a small terminal
   (wide and short) Spark and her painting sit side by side. The painter is told the shape it is painting for; afterwards
-  a painting is fitted and centred, never stretched. With only a little room you see its title; with none it waits.
+  a painting is fitted and centred; where its room is wider than its shape, it spreads to fill the width (up to about a third wider: its marks move apart, while every dot, ring and glow keeps its size and stays round), so no gaps are left at its sides. With only a little room you see its title; with none it waits.
 - **Nothing is cut short.** Spark's state line and the painting's title wrap instead of ending in "…", and the layout
   counts their rows first. The painter stays out of focus, the top strip and the replay. Nothing is written anywhere,
   and `/clear` empties it with the stars.

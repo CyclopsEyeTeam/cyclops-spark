@@ -87,7 +87,8 @@ test('/spark paint: on, one painting now, then each turn worth painting, by Haik
   const art = await term.find({ type: 'Raster', key: 'painting' })
   expect(art).toBeDefined()
   expect(art?.props.columns).toBeLessThanOrEqual(43)
-  expect(art?.props.columns).toBe(art?.props.rows * 4) // its own shape (wide here: nothing was known of the room yet), never stretched
+  expect(art?.props.columns).toBeGreaterThanOrEqual(art?.props.rows * 4) // its own shape (wide here: nothing was known of the room yet),
+  expect(art?.props.columns).toBeLessThanOrEqual(Math.round(art?.props.rows * 4 * 1.35)) // spread a little at most, to fill the width
   expect(await term.find({ type: 'Text', text: /✎ a long climb, then light/ })).toBeDefined()
   await term.unmount()
   expect(writes).toEqual([]) // nothing of it is written anywhere
@@ -346,7 +347,7 @@ test('text is never cut short: the state line and the painting title wrap, and t
   await cmd($, 'paint off')
 })
 
-test('the canvas takes the shape of its room: a tall side pane gets a tall painting, composed for it and never stretched', async ($, on) => {
+test('the canvas takes the shape of its room: a tall side pane gets a tall painting, composed for it (spread a little at most to fill the width)', async ($, on) => {
   const { asks } = engine(on)
   await cmd($, 'paint off'); await cmd($, 'paint') // nothing known of the room yet: wide
   expect(asks.at(-1)!.prompt).toMatch(/about twice as wide as tall/)
@@ -356,9 +357,35 @@ test('the canvas takes the shape of its room: a tall side pane gets a tall paint
   expect(asks.at(-1)!.prompt).toMatch(/about twice as tall as wide \(about 43 by \d+ pixels\)/)
   term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(44, 60) })
   const art = (await term.find({ type: 'Raster', key: 'painting' }))!
-  expect(art.props.columns).toBe(art.props.rows) // tall: as many columns as rows is twice as tall as wide in pixels
+  expect(art.props.columns).toBeGreaterThanOrEqual(art.props.rows) // tall: as many columns as rows is twice as tall as wide in pixels,
+  expect(art.props.columns).toBeLessThanOrEqual(Math.round(art.props.rows * 1.35)) // spread at most a third wider to fill the width
   expect(art.props.rows).toBeGreaterThan(20) // it fills the room it was painted for
   await term.unmount()
+  await cmd($, 'paint off')
+})
+
+test('a room wider than the painting: it fills the width (up to a third wider), its marks spread, every dot and ring kept round, no gaps at its sides', async ($, on) => {
+  engine(on)
+  await cmd($, 'paint off'); await cmd($, 'paint') // wide (2:1)
+  let seen = 0
+  for (const [c, r] of [[64, 24], [90, 22], [130, 22]] as Array<[number, number]>) {
+    const term = await $.ui.mount({ plugin: 'cyclops-spark', surface: 'terminal', ...pane(c, r) })
+    const art = await term.find({ type: 'Raster', key: 'painting' })
+    await term.unmount()
+    if (!art) continue
+    seen++
+    const { columns, rows } = art.props as { columns: number; rows: number }
+    // for its shape (2:1, 1:1 or 1:2 in pixels, a cell 1 x 2): at least its own width, at most a third wider, and either
+    // its room's whole width (under Spark, or beside her) or as wide as it may spread
+    const beside = c - 2 - Math.max(16, Math.floor((c - 2) * 0.45))
+    expect([2, 1, 0.5].some((a) => { const own = Math.round(rows * 2 * a), most = Math.round(rows * 2 * a * 1.35); return columns >= Math.min(beside, own) && columns <= most && (columns === c - 1 || columns === beside || columns === most) })).toBe(true)
+  }
+  expect(seen).toBeGreaterThan(0)
+  // the marks spread with the canvas; their sizes go by its short side, so a ring is as round on a wider canvas
+  const p = { title: 't', mirror: 'none', marks: [{ k: 'ring', x: 0.75, y: 0.5, r: 0.1, w: 0.02, c: [1, 1, 1], a: 1 }] } as never
+  const narrow = paintingScene(p, 80, 40) as Array<{ x: number; r: number }>, wide = paintingScene(p, 100, 40) as Array<{ x: number; r: number }>
+  expect(wide[0]!.r).toBe(narrow[0]!.r)
+  expect(wide[0]!.x).toBeGreaterThan(narrow[0]!.x)
   await cmd($, 'paint off')
 })
 
