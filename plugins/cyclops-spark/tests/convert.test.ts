@@ -35,7 +35,7 @@ const pane = (bodyColumns: number, bodyRows: number) => ({
 }) as const
 
 type Ask = { system: string; prompt: string }
-function engine(on: On, { python = true, revisit = REFINED, ffmpeg = true }: { python?: boolean; revisit?: string; ffmpeg?: boolean } = {}) {
+function engine(on: On, { python = true, revisit = REFINED, ffmpeg = true, failWrite }: { python?: boolean; revisit?: string; ffmpeg?: boolean; failWrite?: RegExp } = {}) {
   mock.store(on)
   mock.clock(on)
   const asks: Ask[] = []
@@ -47,7 +47,7 @@ function engine(on: On, { python = true, revisit = REFINED, ffmpeg = true }: { p
     const text = /You are given one of your own small paintings/.test(String(x.system)) ? revisit : PAINTING
     return loose({ value: { isAnswered: true, text, usage: { input_tokens: 900, output_tokens: 700, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } })
   })
-  on('fs.write', async (_$, e) => { const { path, text } = e as { path: string; text: string }; files.set(path, text); return loose({ value: undefined }) })
+  on('fs.write', async (_$, e) => { const { path, text } = e as { path: string; text: string }; if (failWrite?.test(path)) throw new Error('disk full'); files.set(path, text); return loose({ value: undefined }) })
   on('session.root', async () => loose({ value: '/home/t/zilo' }))
   on('process.spawn', async function* (_$, e) {
     const argv = [...(e as { argv: readonly string[] }).argv]
@@ -69,15 +69,15 @@ function engine(on: On, { python = true, revisit = REFINED, ffmpeg = true }: { p
 // a conversion that goes on beside the work: wait (in real time) until it has said it is done
 const until = async (done: () => boolean) => { for (let i = 0; i < 400 && !done(); i++) { await settle(); await new Promise((r) => setTimeout(r, 0)) } }
 
-test('faithful: the same marks drawn large, SVG written by Spark and PNG by the helper, into the convert folder; no model is asked', async ($, on) => {
+test('faithful: the same marks drawn large, SVG written by Spark and PNG by the helper, into the convert folder; no model is asked', { options: { convertSvg: true } }, async ($, on) => {
   const { asks, files, spawns } = engine(on)
   expect(await say($, 'convert')).toMatch(/^no paintings yet this session/)
   await cmd($, 'paint'); await settle()
   const before = asks.length
   const out = await say($, 'convert faithful 320')
-  expect(out).toMatch(/^converted \(faithful, 320 wide\) into \/home\/t\/zilo\/spark-paintings: 01-a-fox-under-three-moons-faithful\.svg, 01-a-fox-under-three-moons-faithful\.png, index\.html$/)
+  expect(out).toMatch(/^converted \(faithful, 320 wide\) into \/home\/t\/zilo\/spark-paintings\/zilo: 01-a-fox-under-three-moons-faithful\.png, 01-a-fox-under-three-moons-faithful\.svg, index\.html$/)
   expect(asks.length).toBe(before) // nothing asked of any model
-  const svg = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.svg')!
+  const svg = files.get('/home/t/zilo/spark-paintings/zilo/01-a-fox-under-three-moons-faithful.svg')!
   expect(svg).toMatch(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="320" height="230"/) // wide: 2:1, the painting's own shape, and the caption strip under it
   expect(svg).toMatch(/<text [^>]*font-style="italic">a fox under three moons<\/text><text [^>]*>Spark · \d{1,2} \w{3} \d{4} · faithful<\/text>/) // the caption, on the picture
   expect(svg).toContain('<title>a fox under three moons</title>')
@@ -92,28 +92,28 @@ test('faithful: the same marks drawn large, SVG written by Spark and PNG by the 
   expect(spawns).toHaveLength(1)
   expect(spawns[0]![0]).toBe('python3')
   expect(spawns[0]![1]).toMatch(/\/link\/spark_png\.py$/)
-  expect(spawns[0]!.slice(2)).toEqual(['/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.rgb.b64', '/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.png', '320', '230', '1']) // one part: a small picture
-  expect(files.has('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.rgb.b64')).toBe(false) // the bytes go in numbered parts, never one file
-  const b64 = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.rgb.b64.0')!
+  expect(spawns[0]!.slice(2)).toEqual(['/home/t/zilo/spark-paintings/zilo/01-a-fox-under-three-moons-faithful.rgb.b64', '/home/t/zilo/spark-paintings/zilo/01-a-fox-under-three-moons-faithful.png', '320', '230', '1']) // one part: a small picture
+  expect(files.has('/home/t/zilo/spark-paintings/zilo/01-a-fox-under-three-moons-faithful.rgb.b64')).toBe(false) // the bytes go in numbered parts, never one file
+  const b64 = files.get('/home/t/zilo/spark-paintings/zilo/01-a-fox-under-three-moons-faithful.rgb.b64.0')!
   expect(b64.length).toBe(Math.ceil((320 * 230 * 3) / 3) * 4) // base64 of exactly W×H×3 bytes, the caption strip included
-  const page = files.get('/home/t/zilo/spark-paintings/index.html')!
+  const page = files.get('/home/t/zilo/spark-paintings/zilo/index.html')!
   expect(page).toContain('<img src="01-a-fox-under-three-moons-faithful.png" alt="a fox under three moons">')
   expect(page).toContain('faithful')
   await cmd($, 'paint off')
 })
 
-test('refined and interpretive ask the painter once, with its own program, and may use more marks; what comes back is drawn large', async ($, on) => {
+test('refined and interpretive ask the painter once, with its own program, and may use more marks; what comes back is drawn large', { options: { convertSvg: true } }, async ($, on) => {
   const { asks, files } = engine(on)
   await cmd($, 'paint'); await settle()
   const n0 = asks.length
-  expect(await say($, 'convert refined 256')).toMatch(/^converted \(refined, 256 wide\) into .*01-the-fox-closer-refined\.svg, 01-the-fox-closer-refined\.png, index\.html$/) // the first conversion of this session
+  expect(await say($, 'convert refined 256')).toMatch(/^converted \(refined, 256 wide\) into .*01-the-fox-closer-refined\.png, 01-the-fox-closer-refined\.svg, index\.html$/) // the first conversion of this session
   expect(asks.length).toBe(n0 + 1)
   const ask = asks.at(-1)!
   expect(ask.system).toMatch(/refined, for a large canvas: keep its subject, composition and colours/)
   expect(ask.prompt).toContain('"a fox under three moons" (mirror: x)')
   expect(ask.prompt).toMatch(/"k":"curve","pts":\[\[0\.05,0\.9\]/) // its own marks, given back
   expect(ask.prompt).toMatch(/Use up to 240 marks/)
-  const svg = files.get('/home/t/zilo/spark-paintings/01-the-fox-closer-refined.svg')!
+  const svg = files.get('/home/t/zilo/spark-paintings/zilo/01-the-fox-closer-refined.svg')!
   expect((svg.match(/<circle/g) || []).length).toBe(150) // more marks than the pane allows: kept
   expect(await say($, 'convert interpretive 256')).toMatch(/interpretive, 256 wide/)
   expect(asks.at(-1)!.system).toMatch(/revisit it freely: a new work derived from the original/)
@@ -133,15 +133,15 @@ test('all converts every painting of the session faithfully, in order; a size wo
   expect(out).toMatch(/01-a-fox-under-three-moons-faithful\.svg, 02-a-fox-under-three-moons-faithful\.svg, index\.html\. no PNG: python3 was not found/)
   expect([...files.keys()].filter((f) => f.endsWith('.svg'))).toHaveLength(2)
   expect(spawns).toHaveLength(2)
-  const page = files.get('/home/t/zilo/spark-paintings/index.html')!
+  const page = files.get('/home/t/zilo/spark-paintings/zilo/index.html')!
   expect(page).toContain('<img src="01-a-fox-under-three-moons-faithful.svg"') // the SVG stands in for the PNG
   await cmd($, 'paint off')
 })
 
-test('the convert folder setting is honoured, relative to the project or absolute', { options: { convertFolder: '/home/t/Pictures/spark' } }, async ($, on) => {
+test('the convert folder setting is honoured, relative to the project or absolute', { options: { convertFolder: '/home/t/Pictures/spark', convertSvg: true } }, async ($, on) => {
   const { files } = engine(on)
   await cmd($, 'paint'); await settle()
-  expect(await say($, 'convert faithful 256')).toMatch(/into \/home\/t\/Pictures\/spark:/)
+  expect(await say($, 'convert faithful 256')).toMatch(/into \/home\/t\/Pictures\/spark\/zilo:/)
   expect([...files.keys()].every((f) => f.startsWith('/home/t/Pictures/spark/'))).toBe(true)
   await cmd($, 'paint off')
 })
@@ -195,7 +195,7 @@ test('the pieces: slugs, canvases, the flattened bytes, and an SVG that stands o
   expect(rq.prompt).not.toContain('seed') // the painter sees its marks, not the renderer's bookkeeping
 })
 
-test('a bare /spark convert asks what, then which way, in Claude Code\'s own dialog, each with its cost, and does what you click; dismissed, it does nothing', async ($, on) => {
+test('a bare /spark convert asks what, then which way, in Claude Code\'s own dialog, each with its cost, and does what you click; dismissed, it does nothing', { options: { convertSvg: true } }, async ($, on) => {
   const { files, asks } = engine(on)
   const answers: string[] = []
   const asked: Array<{ question: string; labels: string[] }> = []
@@ -231,7 +231,7 @@ test('a bare /spark convert asks what, then which way, in Claude Code\'s own dia
   await cmd($, 'paint off')
 })
 
-test('the caption is drawn on the picture itself: the title bright, the line under it dim, in a small bitmap font scaled to the width; off by the setting', async ($, on) => {
+test('the caption is drawn on the picture itself: the title bright, the line under it dim, in a small bitmap font scaled to the width; off by the setting', { options: { convertSvg: true } }, async ($, on) => {
   const lines = captionLines('Long climb, nothing lost', 'refined', '14 Oct 2026')
   expect(lines).toEqual([{ text: 'Long climb, nothing lost', dim: false }, { text: 'Spark · 14 Oct 2026 · refined', dim: true }])
   expect(captionHeight(1920)).toBe(4 * 4 + 2 * (11 * 4 + 12) + 12) // scale 4 at 1920 wide
@@ -254,21 +254,21 @@ test('the caption is drawn on the picture itself: the title bright, the line und
   expect(sceneSVG(paintingScene(p, 200, 100), 200, 100, { caption: lines })).toMatch(/height="1\d\d"/)
 })
 
-test('the caption setting off: the picture alone', { options: { convertCaption: false } }, async ($, on) => {
+test('the caption setting off: the picture alone', { options: { convertCaption: false, convertSvg: true } }, async ($, on) => {
   const { files, spawns } = engine(on)
   await cmd($, 'paint'); await settle()
   await say($, 'convert faithful 320')
   expect(spawns[0]!.slice(4)).toEqual(['320', '160', '1'])
-  expect(files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.svg')!).not.toContain('<text')
+  expect(files.get('/home/t/zilo/spark-paintings/zilo/01-a-fox-under-three-moons-faithful.svg')!).not.toContain('<text')
   await cmd($, 'paint off')
 })
 
-test('a big picture goes to the helper in parts, each under what one write may carry, numbered in order', async ($, on) => {
+test('a big picture goes to the helper in parts, each under what one write may carry, numbered in order', { options: { convertSvg: true } }, async ($, on) => {
   const { files, spawns } = engine(on)
   await cmd($, 'paint'); await settle()
   expect(await say($, 'convert faithful 1600')).toMatch(/^converted \(faithful, 1600 wide\)/)
   const [, , b64Path, , w, h, parts] = spawns[0]!
-  expect(b64Path).toBe('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-faithful.rgb.b64')
+  expect(b64Path).toBe('/home/t/zilo/spark-paintings/zilo/01-a-fox-under-three-moons-faithful.rgb.b64')
   const total = Math.ceil((Number(w) * Number(h) * 3) / 3) * 4
   expect(total).toBeGreaterThan(4 * 1024 * 1024) // the whole would not fit one write
   expect(Number(parts)).toBe(Math.ceil(total / 3_000_000))
@@ -307,10 +307,11 @@ test('all paintings, every way, and the costs: what then which way; anything wit
   // this painting every way: four pictures, two of them painter calls
   let n0 = asks.length
   answers.push('Every way')
-  expect(await say($, 'convert 256')).toMatch(/^converting this painting every way, 256 wide, into \/home\/t\/zilo\/spark-paintings: 2 painter calls, about \d+(\.\d)?k tokens/)
+  expect(await say($, 'convert 256')).toMatch(/^converting this painting every way, 256 wide, into \/home\/t\/zilo\/spark-paintings\/zilo: 2 painter calls, about \d+(\.\d)?k tokens/)
   await until(() => logs.length >= 2)
   expect(asks.length).toBe(n0 + 2)
-  for (const w of ['truest', 'faithful', 'refined', 'interpretive']) expect([...files.keys()].some((f) => f.endsWith(`-${w}.svg`))).toBe(true)
+  for (const w of ['truest', 'faithful', 'refined', 'interpretive']) expect([...files.keys()].some((f) => f.endsWith(`-${w}.rgb.b64.0`))).toBe(true) // each its PNG
+  expect([...files.keys()].some((f) => f.endsWith('.svg'))).toBe(false) // and no SVG: only with the convertSvg setting
   expect(logs.at(-1)).toMatch(/^Spark: converted \(every way, 256 wide\)/)
   expect(toasts.at(-1)).toBe('Spark: converted this painting every way')
   // now the costs are from what those calls really used: 900 + 700 tokens each, as the mock answers
@@ -336,32 +337,32 @@ test('all paintings, every way, and the costs: what then which way; anything wit
   await cmd($, 'paint off')
 })
 
-test('truest: the painting as you see it in the terminal: each mark the weight of a terminal cell, drawn flat, its light in the terminal\'s colour depth (16 levels a channel, the bands you see); nothing added; no tokens, beside the work', async ($, on) => {
+test('truest: the painting as you see it in the terminal: each mark the weight of a terminal cell, drawn flat, its light in the terminal\'s colour depth (16 levels a channel, the bands you see); nothing added; no tokens, beside the work', { options: { convertSvg: true } }, async ($, on) => {
   const { files, spawns, logs, asks } = engine(on)
   await cmd($, 'paint'); await settle()
   const n0 = asks.length
   expect(await say($, 'convert truest 320')).toMatch(/^converting this painting, truest, 320 wide, into .*: no tokens\. It goes on beside the work/)
   await until(() => logs.length >= 1)
   expect(asks.length).toBe(n0)
-  expect(logs.at(-1)).toMatch(/^Spark: converted \(truest, 320 wide\) into .*01-a-fox-under-three-moons-truest\.svg, 01-a-fox-under-three-moons-truest\.png, index\.html$/)
-  const svg = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-truest.svg')!
+  expect(logs.at(-1)).toMatch(/^Spark: converted \(truest, 320 wide\) into .*01-a-fox-under-three-moons-truest\.png, 01-a-fox-under-three-moons-truest\.svg, index\.html$/)
+  const svg = files.get('/home/t/zilo/spark-paintings/zilo/01-a-fox-under-three-moons-truest.svg')!
   expect(svg).toContain('<filter id="levels"') // the colour depth, in the SVG too
   expect(svg).toMatch(/<feFuncR type="discrete" tableValues="0 0\.0667 0\.0667 0\.1333/) // rounding to sixteen levels
   for (const added of ['<filter id="shadow"', '<filter id="bloom"', '<filter id="soft0"']) expect(svg).not.toContain(added) // no shadows, bloom or softening: the renderer's, not the painting's
   expect(spawns.at(-1)!.slice(4, 6)).toEqual(['320', String(160 + captionHeight(320))])
   // the PNG's bytes: the picture (above its caption) wholly on the sixteen levels
-  const b64 = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-truest.rgb.b64.0')!
+  const b64 = files.get('/home/t/zilo/spark-paintings/zilo/01-a-fox-under-three-moons-truest.rgb.b64.0')!
   const bin = atob(b64), bytes = Array.from({ length: 320 * 160 * 3 }, (_, i) => bin.charCodeAt(i))
   expect(bytes.every((v) => v % 17 === 0)).toBe(true)
   await cmd($, 'paint off')
 })
 
-test('layered, the depth pass truest grew out of, is kept as a word to compare: its layers, the far ones softened, shadows, the bloom', async ($, on) => {
+test('layered, the depth pass truest grew out of, is kept as a word to compare: its layers, the far ones softened, shadows, the bloom', { options: { convertSvg: true } }, async ($, on) => {
   const { files, logs } = engine(on)
   await cmd($, 'paint'); await settle()
   expect(await say($, 'convert layered 320')).toMatch(/^converting this painting, layered, 320 wide/)
   await until(() => logs.length >= 1)
-  const svg = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-layered.svg')!
+  const svg = files.get('/home/t/zilo/spark-paintings/zilo/01-a-fox-under-three-moons-layered.svg')!
   expect(svg).toContain('<filter id="shadow"')
   expect(svg).toContain('<filter id="soft0"') // the farthest layer softened
   expect(svg).toContain('<filter id="bloom"')
@@ -419,7 +420,7 @@ test('/spark convert roll: every painting laid down, held and crossfaded into a 
   const started = await say($, 'convert roll faithful 320')
   const holds = rollHolds([parsePainting(PAINTING)!, parsePainting(PAINTING)!]) // each painting's own hold, set by the music
   expect(holds[1]!).toBeGreaterThan(holds[0]!) // the last held longest
-  expect(started).toMatch(new RegExp(`^rolling all 2 paintings into a clip, faithful, 320x180 MP4, about ${Math.round(3.5 - 0.6 + 4 + holds[0]! + holds[1]! - 0.6)} s long, into /home/t/zilo/spark-paintings: opening with a title card, “zilo”, then each laid down, held with its title for a bar or two of its own \\(the last longest\\), then crossfaded into the next, to music of its own, read from the paintings\\. No tokens\\.`)) // the title: the project's folder
+  expect(started).toMatch(new RegExp(`^rolling all 2 paintings into a clip, faithful, 320x180 MP4, about ${Math.round(3.5 - 0.6 + 4 + holds[0]! + holds[1]! - 0.6)} s long, into /home/t/zilo/spark-paintings/zilo: opening with a title card, “zilo”, then each laid down, held with its title for a bar or two of its own \\(the last longest\\), then crossfaded into the next, to music of its own, read from the paintings\\. No tokens\\.`)) // the title: the project's folder
   expect(await say($, 'convert roll faithful 320')).toMatch(/^Spark is still converting: \d of 2 \(the roll, faithful\)/)
   await until(() => logs.length >= 1)
   expect(asks.length).toBe(n0) // nothing asked of any model
@@ -427,7 +428,7 @@ test('/spark convert roll: every painting laid down, held and crossfaded into a 
   const helper = spawns.filter((a) => a[0] === 'python3')
   expect(helper.map((a) => a[2])).toEqual(['segment', 'segment', 'segment', 'music', 'join']) // one painting at a time, the title card, its music, then the whole
   const work = helper[0]![3]!
-  expect(work).toMatch(/^\/home\/t\/zilo\/spark-paintings\/\.spark-roll-\d{4}-\d\d-\d\d-\d{4}$/)
+  expect(work).toMatch(/^\/home\/t\/zilo\/spark-paintings\/zilo\/\.spark-roll-\d{4}-\d\d-\d\d-\d{4}$/)
   expect(helper[0]!.slice(4)).toEqual(['1', '24', '320', '180', '1', '12', String(holds[0])]) // 24 frames laid down at 12 a second, then held for its own time; the first painting second in the clip
   expect(helper[2]!.slice(4)).toEqual(['0', '12', '320', '180', '1', '12', '2.5']) // the title card: up over 12 frames, then held, first in the clip
   // the music: a score read from the paintings, played into a WAV, laid under the clip
@@ -438,7 +439,7 @@ test('/spark convert roll: every painting laid down, held and crossfaded into a 
   expect(Math.abs(score.chords[0].t - 2.9)).toBeLessThan(1e-6) // the first painting's chord as it comes in
   expect(helper[3]!.slice(3)).toEqual([`${work}/score.json`, `${work}/music.wav`])
   expect(helper[4]!.slice(4)).toEqual(['3', helper[4]![5]!, [3.5, 2 + holds[0]!, 2 + holds[1]!].join(','), '0.6', `${work}/music.wav`]) // a length for each part
-  expect(helper[4]![5]).toMatch(/\/spark-paintings\/spark-roll-\d{4}-\d\d-\d\d-\d{4}-faithful\.mp4$/)
+  expect(helper[4]![5]).toMatch(/\/spark-paintings\/zilo\/spark-roll-\d{4}-\d\d-\d\d-\d{4}-faithful\.mp4$/)
   // the frames: 24 a painting, the whole frame as base64 text
   const frames = [...files.keys()].filter((f) => f.startsWith(work + '/') && f.includes('.b64.'))
   expect(frames).toHaveLength(48 + 12)
@@ -460,9 +461,9 @@ test('/spark convert roll: every painting laid down, held and crossfaded into a 
   let differ = 0
   for (let i = 0; i < first.length; i++) if (first[i] !== rgb[i]) differ++
   expect(differ).toBeGreaterThan(1000) // laid down mark by mark: the first frame is not the last
-  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings \(faithful\), opening with “zilo”, into \/home\/t\/zilo\/spark-paintings\/spark-roll-.*-faithful\.mp4 \(320x180 MP4, with its own music in [A-G][b#]? (major|dorian|aeolian), 9 s\), and the gallery page$/)
+  expect(logs.at(-1)).toMatch(/^Spark: rolled 2 paintings \(faithful\), opening with “zilo”, into \/home\/t\/zilo\/spark-paintings\/zilo\/spark-roll-.*-faithful\.mp4 \(320x180 MP4, with its own music in [A-G][b#]? (major|dorian|aeolian), 9 s\), and the gallery page$/)
   expect(toasts.at(-1)).toBe('Spark: the roll is ready (2 paintings, faithful)')
-  expect(files.get('/home/t/zilo/spark-paintings/index.html')).toMatch(/<video src="spark-roll-.*-faithful\.mp4" controls loop muted playsinline><\/video>/)
+  expect(files.get('/home/t/zilo/spark-paintings/zilo/index.html')).toMatch(/<video src="spark-roll-.*-faithful\.mp4" controls loop muted playsinline><\/video>/)
   await cmd($, 'paint off')
 })
 
@@ -760,7 +761,7 @@ function prismFolder(on: On, files: Map<string, string>, startedAt: number) {
   return dir
 }
 
-test('painting with Prism: her paintings of this session join the story in order, credited to her; converts and the roll carry her name; her files are only read', { timeoutMs: 30000 }, async ($, on) => {
+test('painting with Prism: her paintings of this session join the story in order, credited to her; converts and the roll carry her name; her files are only read', { timeoutMs: 30000, options: { convertSvg: true } }, async ($, on) => {
   const startedAt = Date.now() - 60_000
   const prism = new Map<string, string>()
   const dir = prismFolder(on, prism, startedAt)
@@ -833,35 +834,35 @@ test('terminal cells as pixels: each cell a block, its quarters in its two colou
   expect(lay.ph).toBe(Math.round(lay.pw / 2))
 })
 
-test('/spark save: the painting showing, kept as the terminal showed it (PNG and a crisp SVG of its cells) and as its marks (JSON); no menus, no tokens', async ($, on) => {
+test('/spark save: the painting showing, kept as the terminal showed it (PNG and a crisp SVG of its cells) and as its marks (JSON); no menus, no tokens', { options: { convertSvg: true } }, async ($, on) => {
   const { asks, files, spawns } = engine(on)
   expect(await say($, 'save')).toMatch(/^no paintings yet this session/)
   await cmd($, 'paint'); await settle()
   const n0 = asks.length
   const out = await say($, 'save')
-  expect(out).toMatch(/^saved “a fox under three moons” as the terminal showed it \(\d+ x \d+ cells, \d+ x \d+\) into \/home\/t\/zilo\/spark-paintings: 01-a-fox-under-three-moons-terminal\.png, 01-a-fox-under-three-moons-terminal\.svg, 01-a-fox-under-three-moons\.json$/)
+  expect(out).toMatch(/^saved “a fox under three moons” as the terminal showed it \(\d+ x \d+ cells, \d+ x \d+\) into \/home\/t\/zilo\/spark-paintings\/zilo: 01-a-fox-under-three-moons-terminal\.png, 01-a-fox-under-three-moons-terminal\.svg, 01-a-fox-under-three-moons\.json$/)
   expect(asks.length).toBe(n0) // no tokens
-  const svg = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-terminal.svg')!
+  const svg = files.get('/home/t/zilo/spark-paintings/zilo/01-a-fox-under-three-moons-terminal.svg')!
   expect(svg).toMatch(/^<svg [^>]*shape-rendering="crispEdges"/)
   expect((svg.match(/<rect /g) ?? []).length).toBeGreaterThan(100) // block by block
-  const json = JSON.parse(files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons.json')!)
+  const json = JSON.parse(files.get('/home/t/zilo/spark-paintings/zilo/01-a-fox-under-three-moons.json')!)
   expect(json.title).toBe('a fox under three moons')
   expect(json.marks.length).toBeGreaterThan(0)
   expect(json.by).toBe('spark')
   const png = spawns.find((a) => a[3]?.endsWith('-terminal.png'))!
   const [cols, rows] = /\((\d+) x (\d+) cells/.exec(out)!.slice(1).map(Number)
   expect([Number(png[4]), Number(png[5])]).toEqual([cols! * 16, rows! * 32]) // a cell 16 x 32
-  expect(files.get('/home/t/zilo/spark-paintings/index.html')).toContain('01-a-fox-under-three-moons-terminal.png')
+  expect(files.get('/home/t/zilo/spark-paintings/zilo/index.html')).toContain('01-a-fox-under-three-moons-terminal.png')
   await cmd($, 'paint off')
 })
 
-test('/spark convert side: her terminal cells beside the painting made large (truest), one picture with the caption under both', async ($, on) => {
+test('/spark convert side: her terminal cells beside the painting made large (truest), one picture with the caption under both', { options: { convertSvg: true } }, async ($, on) => {
   const { files, spawns, logs } = engine(on)
   await cmd($, 'paint'); await settle()
   expect(await say($, 'convert roll side')).toMatch(/^side by side is for a painting or all of them, not the roll/)
   const out = await say($, 'convert side 960')
   await until(() => logs.some((l) => /^Spark: converted/.test(l)) || /^converted/.test(out))
-  const svg = files.get('/home/t/zilo/spark-paintings/01-a-fox-under-three-moons-side.svg')!
+  const svg = files.get('/home/t/zilo/spark-paintings/zilo/01-a-fox-under-three-moons-side.svg')!
   expect(svg).toBeDefined()
   expect(svg).toContain('<svg xmlns="http://www.w3.org/2000/svg" x=') // the truest painting, nested on the right
   expect(svg).toContain('feComponentTransfer') // in the terminal's colour depth
@@ -870,5 +871,101 @@ test('/spark convert side: her terminal cells beside the painting made large (tr
   const lay = sideLayout('wide', 960)
   expect(Number(png[4])).toBe(960)
   expect(Number(png[5])).toBeGreaterThan(lay.H) // the picture, and the caption strip under it
+  await cmd($, 'paint off')
+})
+
+// ---------------------------------------------------------------- each conversation keeps its own (1.7.21)
+// the dialog's answers, in order: each the start of the label to click
+function answering(on: On) {
+  const answers: string[] = []
+  const asked: Array<{ question: string; labels: string[] }> = []
+  on('tool.call', { tool: 'AskUserQuestion' }, async (_$, e) => {
+    const q = (e as { questions: Array<{ question: string; options: Array<{ label: string }> }> }).questions
+    asked.push({ question: q[0]!.question, labels: q[0]!.options.map((o) => o.label) })
+    const a = answers.shift()
+    if (a === undefined) return loose({ result: 'dismissed', isError: true })
+    const label = q[0]!.options.map((o) => o.label).find((l) => l.startsWith(a)) ?? a
+    return loose({ result: { questions: q, answers: { [q[0]!.question]: label } } })
+  })
+  return { answers, asked }
+}
+
+test('each conversation keeps its own paintings: a /clear (FreshEye opening a fresh one) puts them on the shelf, a /resume back takes them down again', async ($, on) => {
+  engine(on)
+  let id = 'first'
+  on('session.id', async () => loose({ value: id }))
+  on('session.end', async (_$, e) => loose({ sessionId: (e as { sessionId: string }).sessionId }))
+  await cmd($, 'paint'); await say($, 'paint'); await settle()
+  expect(await say($, 'story')).toMatch(/^story: 2 paintings/)
+  await say($, 'story end')
+  // FreshEye opens a fresh conversation: to Spark, a /clear
+  await $.session.end(loose({ reason: 'clear', sessionId: 'first', resume: { id: 'first' } }))
+  id = 'fresh'
+  expect(await say($, 'story')).toMatch(/^no paintings yet this session/) // a fresh conversation starts clean
+  await say($, 'paint'); await settle()
+  expect(await say($, 'story')).toMatch(/^story: 1 painting /)
+  await say($, 'story end')
+  // and switches back: a /resume. The first conversation's two come back, the fresh one's goes on the shelf
+  await $.session.end(loose({ reason: 'resume', sessionId: 'fresh', resume: { id: 'fresh' } }))
+  id = 'first'
+  expect(await say($, 'story')).toMatch(/^story: 2 paintings/)
+  await say($, 'story end')
+  // a real /clear still lets this conversation's go from the story
+  await $.session.end(loose({ reason: 'clear', sessionId: 'first', resume: { id: 'first' } }))
+  id = 'third'
+  expect(await say($, 'story')).toMatch(/^no paintings yet this session/)
+  await cmd($, 'paint off')
+})
+
+test('all since the session began: every painting of every conversation of this session, after a /clear too, named by its own number', async ($, on) => {
+  const { files, logs } = engine(on)
+  const { answers, asked } = answering(on)
+  let id = 'first'
+  on('session.id', async () => loose({ value: id }))
+  on('session.end', async (_$, e) => loose({ sessionId: (e as { sessionId: string }).sessionId }))
+  await cmd($, 'paint'); await say($, 'paint'); await settle() // paintings 1 and 2
+  await $.session.end(loose({ reason: 'clear', sessionId: 'first', resume: { id: 'first' } }))
+  id = 'fresh'
+  await say($, 'paint'); await settle() // painting 3, in the fresh conversation
+  // the menu: all of them, then which: this conversation's one, or all three
+  answers.push('All paintings', 'All 3 paintings since', 'Faithful')
+  expect(await say($, 'convert 256')).toMatch(/^converting all 3 paintings, faithful, 256 wide, into \/home\/t\/zilo\/spark-paintings\/zilo: no tokens/)
+  expect(asked[0]!.labels).toContain('All paintings…')
+  expect(asked[1]!.labels).toEqual(["This conversation's 1 painting", 'All 3 paintings since the session began'])
+  await until(() => logs.length >= 1)
+  expect(logs.at(-1)).toMatch(/^Spark: converted \(all since the session began, faithful, 256 wide\) into \/home\/t\/zilo\/spark-paintings\/zilo: 01-a-fox-under-three-moons-faithful\.png, 02-a-fox-under-three-moons-faithful\.png, 03-a-fox-under-three-moons-faithful\.png, index\.html$/)
+  // typed: all is this conversation's, all since is every one
+  expect(await say($, 'convert all faithful 256')).toMatch(/^converting all 1 painting, faithful|^converted \(all, faithful, 256 wide\)/)
+  await until(() => logs.length >= 2)
+  expect(await say($, 'convert all since faithful 256')).toMatch(/^converting all 3 paintings, faithful/)
+  await until(() => logs.length >= 3)
+  expect([...files.keys()].filter((f) => f.endsWith('.svg'))).toEqual([]) // only PNGs
+  const page = files.get('/home/t/zilo/spark-paintings/zilo/index.html')!
+  expect(page.match(/<figure>/g)).toHaveLength(3) // a picture made again replaces its entry: three paintings, three cards
+  await cmd($, 'paint off')
+})
+
+test('the pictures go into a folder of their own: named after the conversation (/rename), else the project; the convert folder can be anywhere', { options: { convertFolder: '~/Pictures/Spark' } }, async ($, on) => {
+  const { files } = engine(on)
+  on('command.run', { command: 'rename' }, async () => ({ text: 'renamed' }))
+  on('env.get', async (_$, e) => loose({ value: (e as { name: string }).name === 'HOME' ? '/home/t' : undefined })) // ~ is the home folder
+  await cmd($, 'paint'); await settle()
+  expect(await say($, 'convert faithful 256')).toMatch(/^converted \(faithful, 256 wide\) into \/home\/t\/Pictures\/Spark\/zilo: 01-a-fox-under-three-moons-faithful\.png, index\.html$/)
+  await $.command.run(loose({ command: 'rename', args: 'Night shift / v2', origin: { kind: 'person' }, presentation: {} }))
+  expect(await say($, 'convert faithful 256')).toMatch(/^converted \(faithful, 256 wide\) into \/home\/t\/Pictures\/Spark\/Night shift v2: 01-a-fox-under-three-moons-faithful\.png, index\.html$/)
+  expect(await say($, 'save')).toMatch(/into \/home\/t\/Pictures\/Spark\/Night shift v2: 01-a-fox-under-three-moons-terminal\.png, 01-a-fox-under-three-moons\.json$/)
+  // each folder's gallery holds only what was made into it
+  expect(files.get('/home/t/Pictures/Spark/zilo/index.html')!.match(/<figure>/g)).toHaveLength(1)
+  expect(files.get('/home/t/Pictures/Spark/Night shift v2/index.html')!.match(/<figure>/g)).toHaveLength(2)
+  await cmd($, 'paint off')
+})
+
+test('one picture that cannot be made is skipped and said; the rest are made, and the gallery page is written', async ($, on) => {
+  const { files, logs } = engine(on, { failWrite: /\/02-[^/]*\.rgb\.b64/ })
+  await cmd($, 'paint'); await say($, 'paint'); await say($, 'paint'); await settle()
+  expect(await say($, 'convert all faithful 256')).toMatch(/^converting all 3 paintings, faithful/)
+  await until(() => logs.length >= 1)
+  expect(logs.at(-1)).toMatch(/^Spark: converted \(all, faithful, 256 wide\) into .*: 01-a-fox-under-three-moons-faithful\.png, 03-a-fox-under-three-moons-faithful\.png, index\.html\. 1 could not be made: “a fox under three…” \(.+\)$/)
+  expect(files.get('/home/t/zilo/spark-paintings/zilo/index.html')!.match(/<figure>/g)).toHaveLength(2)
   await cmd($, 'paint off')
 })

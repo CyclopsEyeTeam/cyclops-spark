@@ -760,9 +760,10 @@ test('the story is told once through, then held on the last page; its controls (
   await page('story-back'); expect((await page()).where).toMatch(/2 of 3/)
   // the held page is what convert makes large
   const n0 = asks.length
-  expect(await say($, 'convert faithful 320')).toMatch(/^converted \(faithful, 320 wide\) into .*: 01-two-faithful\.svg/)
+  expect(await say($, 'convert faithful 320')).toMatch(/^converted \(faithful, 320 wide\) into .*: 02-two-faithful\.png/)
   expect(asks.length).toBe(n0)
-  expect(writes.some((w) => w.endsWith('/01-two-faithful.svg'))).toBe(true)
+  expect(writes.some((w) => w.endsWith('/spark-paintings/zilo/02-two-faithful.rgb.b64.0'))).toBe(true) // its PNG, named by its number, in the project's folder
+  expect(writes.some((w) => w.endsWith('.svg'))).toBe(false) // only the PNG unless the SVG is asked for
   expect(await say($, 'story play')).toMatch(/^story goes on from page 2 of 3/)
   expect((await page()).where).toMatch(/^story · 2 of 3 · \d\d:\d\d$/)
   expect(await say($, 'story pause')).toMatch(/^story held on page 2 of 3/)
