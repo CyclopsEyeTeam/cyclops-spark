@@ -109,7 +109,7 @@ This is separate from the plugin: installing Spark any other way does not add it
 | `/spark paint off` | Stops the painter and empties the room below Spark. |
 | `/spark paint free` / `work` | What she paints: **free**, her own paintings of nothing in the conversation, on a rhythm of her own, one now; or **work**, each turn's expression, as before (below). |
 | `/spark story` | The session's paintings told again, in order, each laid down anew, once through (no tokens). Under the painting: pause, back, next, end; or `/spark story pause \| play \| next \| back \| end`. |
-| `/spark convert` | The painting made large, as SVG and PNG, into the convert folder (below): click what (this painting, every way, all paintings, the roll), then which way (truest, faithful, refined, interpretive), each with its token cost beside it. Or say it: `/spark convert layered 4k`, `every`, `all refined`. |
+| `/spark convert` | The painting made large, as a PNG, into a folder of its own in the convert folder (below): click what (this painting, every way, all paintings, the roll), then which way (truest, faithful, refined, interpretive), each with its token cost beside it. Or say it: `/spark convert layered 4k`, `every`, `all refined`, `all since faithful` (every painting since the session began). |
 | `/spark save` | The painting showing, kept as it is, no menus and no tokens: as the terminal showed it, cell by cell (`-terminal.png`, and an SVG of its blocks that stays crisp at any size), and as its marks (`.json`, the original a redraw elsewhere can start from). Or **⤓ save** at the top of her pane. |
 | `/spark convert side` | Side by side: the painting as the terminal showed it, beside it made large (truest), on one picture with the caption under both, for a post (`all side` for every painting). |
 | `/spark convert roll short` | The roll upright, 1080 x 1920, for YouTube Shorts and phones: each painting large with its caption right under it, the title card upright too (`-short.mp4`). Spark says if it runs past the 3 minutes a Short can be. |
@@ -164,7 +164,7 @@ paintings as JSON files of the same marks in `prism-paintings` in the project. T
 join Spark's story in the order they were painted, marked `· Prism’s`. Converting one of hers credits her on the
 picture, and the roll is the two of them, with "Spark & Prism" on its title card. Her files are only read. While her
 folder is there, Spark shares hers the same way: each new painting is also written as `NN-title.json` into
-`spark-paintings`, containing only the painting, never the work. `/spark prism` shows what is linked; `/spark prism off`,
+the project's `spark-paintings` (wherever the convert folder is), containing only the painting, never the work. `/spark prism` shows what is linked; `/spark prism off`,
 `on`, or `/spark prism <folder>` changes it, as does the Prism's paintings setting.
 
 **Her opening.** The first painting of a conversation is not of the work: at the start there is next to nothing to
@@ -239,11 +239,16 @@ the words themselves. The last reflection shows in `/spark state`.
   the canvas keeps the painting's shape, and the picture is drawn exactly as the terminal draws it: on a dark ground
   every mark adds its light to what is under it (a glow brightens the hill it sits on, two lights make white), on a
   light one each goes over the last; specks and fine lines keep a small floor so they stay visible at full size. Each
-  one is written as an SVG (every mark a vector, any size without loss; its marks add their light the same way, with
-  `plus-lighter` in a browser and `screen` in viewers without it) and a PNG (through a small python helper, the only
-  way to write bytes from the plugin; without python3 you get the SVG),
-  plus an `index.html` gallery of the session's conversions, into the **Convert folder** setting (`spark-paintings`
-  inside the project by default, or an absolute path). The caption is on the picture itself: the title, and under it
+  one is written as a PNG (through a small python helper, the only way to write bytes from the plugin), named by the
+  painting's own number (`07-a-lamp-kept-lit-faithful.png`), plus an `index.html` gallery of what was made there. The
+  **SVG beside each PNG** setting adds an SVG too (every mark a vector, any size without loss; its marks add their light
+  the same way, with `plus-lighter` in a browser and `screen` in viewers without it); without python3 you get the SVG
+  in place of the PNG. They go into a folder of their own inside the **Convert folder** setting (`spark-paintings`
+  inside the project by default, or a path such as `~/Pictures/Spark`), named after the conversation (the name you
+  gave it with `/rename`) or, without one, after the folder Claude Code was started in, so the pictures sit together.
+  **All** asks, when there are more, whether you mean this conversation's paintings or every one since the session
+  began (after a `/clear`, or a FreshEye conversation, there are more). One painting that cannot be made is skipped and
+  said; the rest are made. The caption is on the picture itself: the title, and under it
   `Spark · the date · the way`, in a small bitmap font sized to the picture (the **Caption** setting turns it off).
   This is the one time Spark writes files, and only when you ask.
 - **The roll: `/spark convert roll`.** Every painting of the session as one clip, in any of the four ways (it asks
@@ -255,7 +260,7 @@ the words themselves. The last reflection shows in `/spark state`.
   painting at a time, to a small helper (`link/spark_roll.py`) that makes the MP4 with **ffmpeg**
   (`sudo apt install ffmpeg`). Without ffmpeg you get a smaller animated PNG (640x360) that plays in any browser, and
   Spark says how to get the MP4. It asks nothing of any model, goes on beside your work (`/spark state` shows how far),
-  lands in the convert folder as `spark-roll-<date>-<time>-<way>.mp4`, and plays in the gallery page.
+  lands in the same folder as the pictures as `spark-roll-<date>-<time>-<way>.mp4`, and plays in the gallery page.
   **It opens with a title card**: the Cyclops eye over a glow in the session's own colour, the title large in the
   bitmap font, and under it `Spark · the date · 19 paintings · music in F major`; it comes up over a second, holds,
   and crossfades into the first painting while the music opens on the key's home chord and a few rising bells. The
@@ -269,7 +274,9 @@ the words themselves. The last reflection shows in `/spark state`.
   placed left or right where it sits, as loud as its light. The helper plays it with small instruments of its own
   (quick with numpy, and it works without), and ffmpeg lays it under the clip with a little echo. The **Music in the
   roll** setting turns it off; the animated PNG has none.
-- **The story of the session.** Every painting of the session is kept (in memory only) in the order it came.
+- **The story of the session.** Every painting of the conversation is kept (in memory only) in the order it came.
+  Each conversation keeps its own: a `/clear` (FreshEye opening a fresh conversation is one) puts them on a shelf, and
+  a `/resume` back to that conversation (FreshEye switching back) brings them back.
   `/spark story` tells them again in her pane, each laid down mark by mark as it first was and held for a few seconds,
   with where it is in the story and when it was painted (`story · 3 of 9 · 21:01`), once through, then held on the
   last. While it is on, a row of small controls sits under its line: **pause** holds the page showing (`· held`), so
@@ -286,7 +293,7 @@ the words themselves. The last reflection shows in `/spark state`.
   a painting is fitted and centred; where its room is wider than its shape, it spreads to fill the width (up to about a third wider: its marks move apart, while every dot, ring and glow keeps its size and stays round), so no gaps are left at its sides. With only a little room you see its title; with none it waits.
 - **Nothing is cut short.** Spark's state line and the painting's title wrap instead of ending in "…", and the layout
   counts their rows first. The painter stays out of focus, the top strip and the replay. Nothing is written anywhere,
-  and `/clear` empties it with the stars.
+  and `/clear` empties it with the stars (its paintings go on the shelf, for a `/resume` back).
 
 ### From the wall
 
@@ -396,7 +403,7 @@ Spark writes no files and makes no network request of its own. Everything it kno
 exits. The one exception is Cyclops Link, only while you have it on: then Spark's helper writes her coarse state to one
 small file other presences on this machine can read. The painter, only while you have it on, makes one short model call
 per painting through your own session, with the turn's shape and a short excerpt of the reply. `/spark convert`, only
-when you run it, writes a painting's SVG and PNG into the convert folder. See [docs/PRIVACY.md](docs/PRIVACY.md).
+when you run it, writes a painting's PNG into the convert folder. See [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## Repository layout
 

@@ -53,10 +53,13 @@ Never your prompt, file paths, commands, tool names, model names or ids. The ans
 clamped before it is drawn; its title is shown as plain text. Nothing of it is written anywhere: the last painting is kept
 in memory until painting goes off, `/clear`, or Claude Code exits.
 
-`/spark convert` is the one command that writes files: the painting's SVG, a PNG (written by `link/spark_png.py`, a
-standard-library python helper, from base64 text Spark writes first and the helper removes), and an `index.html`
-gallery, into the convert folder (`spark-paintings` in the project, or the `convertFolder` setting). Only when you run
-it. Its refined and interpretive ways send the painter its own paint program and title (and the builder's last
+`/spark convert` (with save and the roll) is the one command that writes files: the painting's PNG (written by
+`link/spark_png.py`, a standard-library python helper, from base64 text Spark writes first and the helper removes), an
+SVG too with the `convertSvg` setting, and an `index.html` gallery, into a folder of their own inside the convert folder
+(`spark-paintings` in the project, or the `convertFolder` setting), named after the conversation's `/rename` name or the
+project's folder. Only when you run it. To offer every painting since the session began, it reads Spark's own JSON
+records in the project's `spark-paintings` (written only while Prism paints there too); it reads nothing else.
+Its refined and interpretive ways send the painter its own paint program and title (and the builder's last
 reflection, if there is one), nothing of your work.
 
 ## Settings

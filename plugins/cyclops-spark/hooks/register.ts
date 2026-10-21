@@ -17,8 +17,9 @@
 //                  /spark paint turns it on and paints one now, /spark paint off stops it. It sees the turn's shape and a
 //                  short excerpt of the reply. It uses tokens: what it has used shows under the painting
 //   /spark story   the session's paintings told again, in order, each laid down anew (in memory only; no tokens)
-//   /spark convert [faithful|refined|interpretive|all] [hd|4k]: the painting made large, as SVG and PNG, into the
-//                  convert folder (the one time Spark writes files, and only when you ask)
+//   /spark convert [faithful|refined|interpretive|all [since]] [hd|4k]: the painting made large, as a PNG (an SVG too
+//                  with convertSvg), into the convert folder's folder for this conversation (the one time Spark writes
+//                  files, and only when you ask)
 //
 // When a turn ends and you have not acted on it yet, Spark holds the reply out to you (reply ready) until you send a new
 // prompt or copy it with /copy.
@@ -139,9 +140,66 @@ function heldRows(width: number, need: number): number {
 }
 // STORY: every painting of this session, in order, kept in memory (never written), to be told again with /spark story
 // `at`: when it was painted (seconds since 1970), `by`: 'prism' for a painting of Prism's (see PAINTING WITH PRISM)
-type StoryEntry = Painting & { shape: string; cost: number; clock: string; live: boolean; opening?: boolean; free?: boolean; at?: number; by?: 'prism'; src?: string }
+type StoryEntry = Painting & { shape: string; cost: number; clock: string; live: boolean; opening?: boolean; free?: boolean; at?: number; by?: 'prism'; src?: string; num?: number }
+// `num`: her painting's number in this run of Claude Code (her JSON record and its converts carry it in their names)
 const story: StoryEntry[] = []
 const whoPainted = (e: unknown) => (e as { by?: string } | null)?.by === 'prism' ? 'Prism' : 'Spark'
+// EACH CONVERSATION KEEPS ITS OWN. The story belongs to the conversation it was painted in: a /clear (or FreshEye opening
+// a fresh conversation, which is a /clear) puts it on a shelf rather than throwing it away, and a /resume back to that
+// conversation (FreshEye switching back) takes it down again. Still in memory only, never written; gone when Claude Code
+// exits. `storyOwner`: the session id the story on show belongs to ('' until Spark has asked)
+const shelved = new Map<string, StoryEntry[]>()
+const SHELVES = 20 // conversations kept on the shelf; the oldest goes first
+let storyOwner = ''
+async function ownStory($: EngineInterface): Promise<void> {
+  const id = await $.session.id().catch(() => '')
+  if (!id || id === storyOwner) return
+  // another conversation's story goes on the shelf; with no owner yet (the first look, or just after a /clear or a
+  // /resume), whatever is here was painted in this one and stays
+  if (storyOwner && story.length) shelf(storyOwner, story.splice(0))
+  const back = shelved.get(id)
+  if (back) { shelved.delete(id); story.unshift(...back) } // its own come first, in the order painted
+  if (storyOwner || back) storyOn = null // the story told was the other conversation's
+  storyOwner = id
+}
+function shelf(id: string, entries: StoryEntry[]) {
+  if (!id || !entries.length) return
+  shelved.delete(id)
+  shelved.set(id, entries)
+  while (shelved.size > SHELVES) shelved.delete(shelved.keys().next().value!)
+}
+// when this session began (its launch, or a resumed session's first): what counts as "since the session began"
+async function sessionStart($: EngineInterface): Promise<number> {
+  if (!sessionStartMs) sessionStartMs = (await $.session.usage().catch(() => null) as { startedAt?: number } | null)?.startedAt || Date.now()
+  return sessionStartMs
+}
+// Every painting since the session began, in the order painted: this conversation's, the ones on the shelf (other
+// conversations of this run, FreshEye's among them), and Spark's own JSON records in spark-paintings from since then
+// (written while Prism paints here too; see sharePainting), so a restart in between loses none of those. One painting
+// is counted once, however many of these hold it
+async function sinceStart($: EngineInterface): Promise<StoryEntry[]> {
+  await ownStory($)
+  const all = [...story, ...[...shelved.values()].flat()]
+  const seen = new Set(all.map((e) => Math.round((e.at ?? 0) * 1000)))
+  const start = await sessionStart($)
+  const dir = await recordDir($)
+  let entries: Array<{ name: string; kind: string }> = []
+  try { entries = await $.fs.list(dir) as never } catch { entries = [] }
+  for (const { name, kind } of entries) {
+    if (kind !== 'file' || !name.endsWith('.json')) continue
+    try {
+      const d = JSON.parse(String(await $.fs.read(`${dir}/${name}`))) as { title?: string; mirror?: string | null; marks?: Array<Record<string, unknown>>; at?: number; shape?: string; by?: string; tokens?: number }
+      const at = Number(d.at) || 0
+      if (d.by !== 'spark' || !at || at * 1000 < start - 5000 || !Array.isArray(d.marks) || seen.has(Math.round(at * 1000))) continue
+      const p = parsePainting(JSON.stringify({ title: d.title, mirror: d.mirror || 'none', marks: d.marks.map((m) => ({ ...m, c: hexOf(m.c), ...(m.c2 ? { c2: hexOf(m.c2) } : {}) })) }), palette, HD_MARKS)
+      if (!p) continue
+      seen.add(Math.round(at * 1000))
+      const num = Number(/^(\d+)-/.exec(name)?.[1]) || undefined
+      all.push({ ...p, shape: d.shape && d.shape in SHAPES ? d.shape : 'wide', cost: Number(d.tokens) || 0, clock: new Date(at * 1000).toTimeString().slice(0, 5), live: false, at, src: name, ...(num ? { num } : {}) })
+    } catch { /* not a painting Spark can read: left alone */ }
+  }
+  return all.sort((a, b) => (a.at ?? 0) - (b.at ?? 0))
+}
 
 // PAINTING WITH PRISM. Prism (Cyclops Eye Team's Gemini presence) paints too, with the same brush: her paintings are
 // JSON files of the same marks (colours as 0..1 RGB) in her folder, prism-paintings beside Spark's spark-paintings in
@@ -154,9 +212,16 @@ let prismSetting = 'prism-paintings' // the setting's own, for /spark prism on
 const prismSeen = new Set<string>() // her files already looked at (taken into the story, or from before this session)
 let sessionStartMs = 0
 const hexOf = (c: unknown) => Array.isArray(c) ? '#' + c.slice(0, 3).map((v) => Math.round(Math.max(0, Math.min(1, Number(v) || 0)) * 255).toString(16).padStart(2, '0')).join('') : c
+// a folder written with ~ (~/Pictures/Spark): the engine takes paths as they are, so ~ is your home folder only once
+// Spark puts it there; without HOME it is left as written
+async function home($: EngineInterface, path: string): Promise<string> {
+  if (path !== '~' && !path.startsWith('~/')) return path
+  const h = (await $.env.get('HOME').catch(() => undefined))?.replace(/\/+$/, '')
+  return h ? h + path.slice(1) : path
+}
 async function prismDir($: EngineInterface): Promise<string> {
   if (!prismFolder || prismFolder === 'off') return ''
-  if (prismFolder.startsWith('/') || prismFolder.startsWith('~')) return prismFolder
+  if (prismFolder.startsWith('/') || prismFolder.startsWith('~')) return home($, prismFolder)
   const root = await $.session.root().catch(() => '')
   return (root ? root + '/' : '') + prismFolder
 }
@@ -168,9 +233,8 @@ let sharedCount = 0
 async function sharePainting($: EngineInterface, e: StoryEntry, mood: string) {
   const dir = await prismDir($)
   if (!dir || !(await $.fs.exists(dir).catch(() => false))) return
-  const root = await $.session.root().catch(() => '')
-  const mine = convertFolder.startsWith('/') || convertFolder.startsWith('~') ? convertFolder : (root ? root + '/' : '') + convertFolder
-  const name = slug(e.title, ++sharedCount) + '.json'
+  const mine = await recordDir($)
+  const name = slug(e.title, e.num ?? ++sharedCount) + '.json'
   await $.fs.write(`${mine}/${name}`, JSON.stringify({ title: e.title, mood, mirror: e.mirror, marks: e.marks, tokens: e.cost, model: paintModel, at: e.at, by: 'spark', shape: e.shape, ...(e.opening ? { opening: true } : {}) }))
 }
 
@@ -178,7 +242,8 @@ async function sharePainting($: EngineInterface, e: StoryEntry, mood: string) {
 async function syncPrism($: EngineInterface): Promise<number> {
   const dir = await prismDir($)
   if (!dir) return 0
-  if (!sessionStartMs) sessionStartMs = (await $.session.usage().catch(() => null) as { startedAt?: number } | null)?.startedAt || Date.now()
+  await ownStory($) // hers join the story of the conversation on show
+  await sessionStart($)
   let entries: Array<{ name: string; kind: string }> = []
   try { entries = await $.fs.list(dir) as never } catch { return 0 } // no folder (yet): nothing of hers
   let added = 0
@@ -201,7 +266,7 @@ async function syncPrism($: EngineInterface): Promise<number> {
   if (added) logRecent(`prism ${added}`)
   return added
 }
-const STORY_MAX = 60
+const STORY_MAX = 500 // a long day of paintings; only past this does the oldest step out
 const STORY_S = 7 // each painting is laid down again, then held, for this long
 // Told once through, then held on the last page. `paused`: the moment it was held (the page stays), `done`: it reached
 // the end on its own. Controls under the painting, only while it is on: pause/play, back, next, end
@@ -672,10 +737,36 @@ async function writePNG($: EngineInterface, folder: string, name: string, rgb: U
     return (end as { code?: number } | null)?.code === 0
   } catch { return false }
 }
-// where convert and save write: the convert folder, in the project or as written
+// Spark's own record of each painting (JSON, the form she shares with Prism) lives in the project's spark-paintings,
+// where Prism and Cyclops Studio look for it, wherever the convert folder is
+const RECORD_FOLDER = 'spark-paintings'
+async function recordDir($: EngineInterface): Promise<string> {
+  const root = await $.session.root().catch(() => '')
+  return (root ? root + '/' : '') + RECORD_FOLDER
+}
+// A name a folder can have: no slashes or control characters, no leading dots, at most 60 characters
+const folderName = (t: unknown) => String(t ?? '').replace(/[\/\\\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().replace(/^\.+/, '').slice(0, 60).trim()
+// Where convert, save and the roll put their pictures: a folder of their own inside the convert folder, named after the
+// conversation (the name you gave it with /rename) or, without one, after the folder Claude Code was started in. So the
+// pictures sit together, apart from the JSON records
+async function outDir($: EngineInterface): Promise<string> {
+  const root = await $.session.root().catch(() => '')
+  const sub = folderName(sessionName) || folderName(root.replace(/\/+$/, '').split('/').pop()) || 'spark'
+  return `${await convertDir($)}/${sub}`
+}
+// the gallery page of one folder: the pictures made into it this session
+const galleryOf = (folder: string) => galleryHTML(converted.filter((c) => c.dir === folder))
+// one entry per file: a picture made again (the same painting, the same way, into the same folder) replaces its old one
+function noteConverted(entry: { file: string; title: string; when: string; mode: string; dir: string }) {
+  converted = converted.filter((c) => !(c.dir === entry.dir && c.file === entry.file))
+  converted.push(entry)
+}
+// a painting's number in file names: its own (the number its JSON record has), else its place in the list
+const numberOf = (e: unknown, place: number) => (e as { num?: number } | null)?.num || (e as { n?: number } | null)?.n || place
+// the convert folder itself, in the project or as written
 async function convertDir($: EngineInterface): Promise<string> {
   const root = await $.session.root().catch(() => '')
-  return convertFolder.startsWith('/') || convertFolder.startsWith('~') ? convertFolder : (root ? root + '/' : '') + convertFolder
+  return convertFolder.startsWith('/') || convertFolder.startsWith('~') ? home($, convertFolder) : (root ? root + '/' : '') + convertFolder
 }
 // The painting as her pane showed it, cell by cell: her own terminal drawing (four pixels to a cell in HD, or half
 // blocks), its light in the terminal's colour depth, at the size the pane last drew it (columns x rows, a cell twice as
@@ -688,30 +779,31 @@ function terminalCells(p: Painting & { shape: string }, theme: string) {
 }
 const SAVE_CELL = 16 // /spark save: each terminal cell 16 x 32 pixels, so a 44-column painting is 704 wide, blocks crisp
 
-// /spark save (or ⤓ save at the top of her pane): the painting showing, kept as it is, no menus and no tokens. Three files
-// in the convert folder: the painting as the terminal showed it (PNG, and an SVG of its blocks that stays crisp at any
-// size), and the painting itself as JSON (its title and marks, the same format she shares with Prism), the original a
-// redraw elsewhere can start from
+// /spark save (or ⤓ save at the top of her pane): the painting showing, kept as it is, no menus and no tokens. Into the
+// convert folder's folder for this conversation (see outDir): the painting as the terminal showed it (a PNG; an SVG of
+// its blocks too with the convertSvg setting, or when no PNG could be made), and the painting itself as JSON (its title
+// and marks, the same format she shares with Prism), the original a redraw elsewhere can start from
 async function savePainting($: EngineInterface): Promise<string> {
   const p = shownPainting()
   if (!p) return story.length ? 'no painting is showing: /spark story shows them, /spark paint makes one' : 'no paintings yet this session: /spark paint makes one'
   if (convertBusy) return busyText()
   convertBusy = true
   try {
-    const folder = await convertDir($), theme = activeTheme(), g = ground()
+    const folder = await outDir($), theme = activeTheme(), g = ground()
     const { cols, rows, cells } = terminalCells(p, theme)
     const cw = SAVE_CELL, ch = SAVE_CELL * 2, W = cols * cw, H = rows * ch
-    const n = converted.length + 1, base = slug(p.title, n), name = base + '-terminal'
+    const base = slug(p.title, numberOf(p, story.indexOf(p as unknown as StoryEntry) + 1 || 1)), name = base + '-terminal'
     const by = (p as { by?: string }).by === 'prism' ? 'prism' : 'spark'
     const hexG = '#' + g.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('')
     const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    await $.fs.write(`${folder}/${name}.svg`, `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" shape-rendering="crispEdges">\n<title>${esc(p.title || 'untitled')}</title>\n<rect width="${W}" height="${H}" fill="${hexG}"/>\n${cellsSVG(cells, cols, rows, 0, 0, cw, ch, g, truestLevels)}\n</svg>\n`)
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" shape-rendering="crispEdges">\n<title>${esc(p.title || 'untitled')}</title>\n<rect width="${W}" height="${H}" fill="${hexG}"/>\n${cellsSVG(cells, cols, rows, 0, 0, cw, ch, g, truestLevels)}\n</svg>\n`
     await $.fs.write(`${folder}/${base}.json`, JSON.stringify({ title: p.title, mirror: p.mirror, marks: p.marks, shape: p.shape, at: Date.now() / 1000, by, cells: { columns: cols, rows, hd } }))
-    const written = [`${name}.svg`, `${base}.json`]
+    const written = [`${base}.json`]
     const png = await writePNG($, folder, name, cellsToRGB(cells, cols, rows, cw, ch, g, truestLevels), W, H, () => $.clock.now())
     if (png) written.unshift(`${name}.png`)
-    converted.push({ file: png ? `${name}.png` : `${name}.svg`, title: p.title || 'untitled', when: new Date().toTimeString().slice(0, 5), mode: 'as the terminal showed it' })
-    await $.fs.write(`${folder}/index.html`, galleryHTML(converted))
+    if (convertSvg || !png) { await $.fs.write(`${folder}/${name}.svg`, svg); written.splice(png ? 1 : 0, 0, `${name}.svg`) }
+    noteConverted({ file: png ? `${name}.png` : `${name}.svg`, title: p.title || 'untitled', when: new Date().toTimeString().slice(0, 5), mode: 'as the terminal showed it', dir: folder })
+    await $.fs.write(`${folder}/index.html`, galleryOf(folder))
     logRecent('save')
     return `saved “${p.title || 'untitled'}” as the terminal showed it (${cols} x ${rows} cells, ${W} x ${H}) into ${folder}: ${written.join(', ')}` + (png ? '' : '. No PNG: python3 was not found (the SVG opens in any browser, at any size)')
   } catch (err) {
@@ -734,6 +826,9 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
   let called = ''
   const at = words.indexOf('called')
   if (at >= 0) { called = raw.slice(at + 1).join(' ').replace(/^["']|["']$/g, '').trim().slice(0, 60); words = words.slice(0, at) }
+  // `since`: all of them since the session began (every conversation of it, FreshEye's too), not only this conversation's
+  let since = words.includes('since')
+  words = words.filter((w) => w !== 'since')
   let [mode = '', next = '', after = ''] = words
   if (mode === 'three') mode = 'every' // the old word
   let way: Way | '' = ''
@@ -742,25 +837,40 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
   if ((mode === 'all' || mode === 'roll') && (TYPED_WAYS as string[]).includes(next)) { way = next as Way; sizeWord = after } // all refined 4k, roll truest hd
   if ((TYPED_WAYS as string[]).includes(mode)) { way = mode as Way; mode = 'one' }
   const known = ['', 'one', 'every', 'all', 'roll']
-  if (!known.includes(mode)) return 'convert takes: truest | faithful | refined | interpretive | side (as the terminal showed it, beside it made large) | layered (this painting that way; layered is the depth pass, kept to compare) | every (this painting every way) | all [way] (every painting of the session) | roll [way] (every painting as a clip), then a size: hd (1920 wide, the default) or 4k, for the roll hd (1080p). On its own, /spark convert lets you click'
+  if (!known.includes(mode)) return 'convert takes: truest | faithful | refined | interpretive | side (as the terminal showed it, beside it made large) | layered (this painting that way; layered is the depth pass, kept to compare) | every (this painting every way) | all [way] (every painting of this conversation; all since [way]: every one since the session began) | roll [way] (them as a clip; roll since [way]), then a size: hd (1920 wide, the default) or 4k, for the roll hd (1080p). On its own, /spark convert lets you click'
   const stillWidth = (w: string) => w === '' ? SIZES.hd! : SIZES[w] ?? (/^\d{3,4}$/.test(w) ? Math.max(256, Math.min(4096, Number(w))) : 0)
   if (mode === 'roll' && !rollSize(sizeWord)) return 'roll size: hd (1080p, 1920 wide), short (upright 1080 x 1920, for YouTube Shorts), or a width (16:9); 720p (1280 wide) when nothing is said'
   if (mode !== 'roll' && !stillWidth(sizeWord)) return 'convert size: hd (1920 wide) or 4k (3840)'
   const pick = shownPainting()
-  if (!pick && !story.length) return 'no paintings yet this session: /spark paint makes one'
+  // the paintings "all" and the roll can take: this conversation's, and every one since the session began (more, after a
+  // /clear, a FreshEye conversation, or a restart while Prism paints here too)
+  const mine = story.slice(), ever = await sinceStart($)
+  const more = ever.length > mine.length
+  if (!pick && !mine.length && !ever.length) return 'no paintings yet this session: /spark paint makes one'
+  if (!mine.length) since = true // nothing in this conversation: all of them is what there is
   if (!mode) { // the first menu: what
-    const n = story.length
+    const n = mine.length
     const options: Array<[string, string]> = []
     if (pick) options.push(['This painting…', 'one'], [`Every way, this painting · ${costText(WAYS.map((w) => ({ source: pick, way: w })))}`, 'every'])
-    if (n) options.push([`All ${plural(n)}…`, 'all'], [`The roll: all ${n} as a clip…`, 'roll'])
+    if (more) options.push(['All paintings…', 'all'], ['The roll: all as a clip…', 'roll'])
+    else if (n) options.push([`All ${plural(n)}…`, 'all'], [`The roll: all ${n} as a clip…`, 'roll'])
     let choice = ''
     try { choice = await $.ui.ask('What shall Spark make large?', { options: options.map(([l]) => l), header: 'Convert' }) } catch { return 'convert: nothing chosen' }
     const o = options.find(([l]) => l === choice)
     if (!o) return 'convert: nothing chosen'
     mode = o[1]
+    if ((mode === 'all' || mode === 'roll') && more && mine.length) { // then: which of them
+      const which: Array<[string, boolean]> = [[`This conversation's ${plural(mine.length)}`, false], [`All ${plural(ever.length)} since the session began`, true]]
+      let pickWhich = ''
+      try { pickWhich = await $.ui.ask(mode === 'roll' ? 'Which paintings in the roll?' : 'Which paintings?', { options: which.map(([l]) => l), header: 'Which' }) } catch { return 'convert: nothing chosen' }
+      const k = which.find(([l]) => l === pickWhich)
+      if (!k) return 'convert: nothing chosen'
+      since = k[1]
+    }
   }
+  const many = since ? ever : mine // what all and the roll take
   if (!way && mode !== 'every') { // the second: which way
-    const list = mode === 'one' ? (pick ? [pick] : []) : story.slice()
+    const list = mode === 'one' ? (pick ? [pick] : []) : many.slice()
     if (!list.length) return mode === 'one' ? 'no painting is showing: /spark story shows them, /spark paint makes one' : 'no paintings yet this session: /spark paint makes one'
     const q = mode === 'one' ? 'Which way, this painting?' : mode === 'roll' ? `The roll of all ${plural(list.length)}: which way?` : `All ${plural(list.length)}: which way?`
     const w = await askWay($, q, list)
@@ -768,17 +878,21 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
     way = w
   }
   if (mode === 'roll' && way === 'side') return 'side by side is for a painting or all of them, not the roll: /spark convert side, or all side'
-  if (mode === 'roll') return rollPaintings($, way as Way, sizeWord, called)
+  if (mode === 'roll') return rollPaintings($, way as Way, sizeWord, called, many)
   const width = stillWidth(sizeWord)
   if (!width) return 'convert size: hd (1920 wide) or 4k (3840)'
   if (convertBusy) return busyText()
   if (mode !== 'all' && !pick) return story.length ? 'no painting is showing: /spark story shows them, /spark paint makes one' : 'no paintings yet this session: /spark paint makes one'
-  if (mode === 'all' && !story.length) return 'no paintings yet this session: /spark paint makes one'
-  const jobs: Job[] = mode === 'all' ? story.map((source) => ({ source, way: way as Way })) : mode === 'every' ? WAYS.map((w) => ({ source: pick!, way: w })) : [{ source: pick!, way: way as Way }]
-  const said = mode === 'all' ? `all, ${way}` : mode === 'every' ? 'every way' : way
+  if (mode === 'all' && !many.length) return 'no paintings yet this session: /spark paint makes one'
+  // each picture is named by its painting's number: its own, else its place in the list (or in this conversation)
+  const placeOf = (src: unknown) => numberOf(src, mode === 'all' ? many.indexOf(src as StoryEntry) + 1 : (story.indexOf(src as StoryEntry) + 1 || 1))
+  const jobs: Job[] = mode === 'all' ? many.map((source) => ({ source, way: way as Way })) : mode === 'every' ? WAYS.map((w) => ({ source: pick!, way: w })) : [{ source: pick!, way: way as Way }]
+  const said = mode === 'all' ? `all${since && more ? ' since the session began' : ''}, ${way}` : mode === 'every' ? 'every way' : way
   convertBusy = true
-  const folder = await convertDir($)
+  const folder = await outDir($)
   const written: string[] = []
+  const skipped: string[] = [] // pictures that could not be made, with why: the rest go on
+  let made = 0
   let note = ''
   const theme = activeTheme()
   const pause = () => $.clock.now()
@@ -789,80 +903,88 @@ async function convertPainting($: EngineInterface, words: string[], raw: string[
       for (const { source, way: w } of jobs) {
         await pause() // between pictures: let everything else run
         const which = jobs.length > 1 ? ` ${jobAt + 1} of ${jobs.length}` : ''
-        step(0.05, revisits(w) ? `the painter looks again at “${shortTitle(source.title)}”${which}` : `drawing “${shortTitle(source.title)}”${which}`)
-        let p: Painting & { shape: string } = source
-        let tag: string = w
-        if (revisits(w)) { const r = await revisitPainting($, source, w as 'refined' | 'interpretive'); p = r.p; if (!r.ok) { note = r.note; tag = 'faithful' } }
-        if (revisits(w)) step(0.3, `drawing “${shortTitle(p.title)}”${which}`)
-        let [W, H] = canvasFor(p.shape, width)
-        const n = converted.length + 1
-        const name = slug(p.title, n) + '-' + tag
-        const when = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-        const caption = convertCaption ? captionLines(p.title, tag === 'side' ? 'side by side' : tag, when, whoPainted(source)) : null
-        let px: { W: number; H: number; px: Float32Array } | null = null
-        let pair: Uint8Array | null = null // side by side: the two panels, already in RGB
-        if (tag === 'side') { // her pane's cells (as she drew them there: four pixels to a cell, or half blocks), beside truest
-          const lay = sideLayout(p.shape, width); W = lay.W; H = lay.H
-          const { cols, rows, cells } = terminalCells(p, theme)
-          const cw = Math.max(2, Math.floor(Math.min(lay.pw / cols, lay.ph / (rows * 2)))), ch = cw * 2 // a cell twice as tall as wide
-          const pw = cols * cw, ph = rows * ch // the made-large one the same size as the cells, so the two sit level
-          const scene = paintingScene(p, pw, ph, { reveal: 1, theme })
-          const truestSvg = sceneSVG(scene, pw, ph, { theme, floor: 0.6 * cellRes(pw), levels: truestLevels })
-          await $.fs.write(`${folder}/${name}.svg`, sideSVG({ layout: lay, cells, cols, rows, cw, ch, truest: truestSvg, theme, title: p.title, caption, ground: ground(), levels: truestLevels }))
-          step(0.35, `drawing “${shortTitle(p.title)}” large beside it${which}`)
-          const big = createRaster(pw, ph)
-          await big.drawAsync(scene, theme, { res: cellRes(pw), floor: 1 }, pause)
-          const right = posterize(await toRGB8Async(big as never, ground(), pause), truestLevels)
-          const left = cellsToRGB(cells, cols, rows, cw, ch, ground(), truestLevels)
-          const out = new Uint8Array(W * H * 3), g = ground().map((v) => Math.round(v * 255))
-          for (let i = 0; i < W * H; i++) { out[i * 3] = g[0]!; out[i * 3 + 1] = g[1]!; out[i * 3 + 2] = g[2]! }
-          const blit = (src: Uint8Array, sw: number, sh: number, x0: number, y0: number) => { for (let yy = 0; yy < sh; yy++) out.set(src.subarray(yy * sw * 3, (yy + 1) * sw * 3), ((y0 + yy) * W + x0) * 3) }
-          const ox = Math.floor((lay.pw - pw) / 2), oy = Math.floor((lay.ph - ph) / 2)
-          blit(left, pw, ph, lay.lx + ox, lay.y + oy)
-          blit(right, pw, ph, lay.rx + ox, lay.y + oy)
-          pair = out
-        } else if (tag === 'truest') { // as you see it: each mark the weight of a terminal cell, drawn flat as the terminal draws it (nothing added), its light then put in the terminal's colour depth (below)
-          const scene = paintingScene(p, W, H, { reveal: 1, theme })
-          await $.fs.write(`${folder}/${name}.svg`, sceneSVG(scene, W, H, { theme, title: p.title, caption, floor: 0.6 * cellRes(W), levels: truestLevels }))
-          const raster = createRaster(W, H)
-          await raster.drawAsync(scene, theme, { res: cellRes(W), floor: 1 }, pause)
-          px = raster
-        } else if (tag === 'layered') { // the depth pass, kept for comparing: its layers, the far ones softened, shadows, the bloom
-          await $.fs.write(`${folder}/${name}.svg`, sceneSVG([], W, H, { theme, title: p.title, caption, floor: Math.max(layeredFloor(W, H), 0.6 * cellRes(W)), layers: layeredScenes(p, W, H, { theme }) }))
-          px = await layeredRaster(p, W, H, { theme, pause, res: cellRes(W) })
-        } else {
-          const scene = paintingScene(p, W, H, { reveal: 1, theme })
-          const floor = markFloor(W) // specks and fine lines stay visible at full size, as they are in the terminal
-          await $.fs.write(`${folder}/${name}.svg`, sceneSVG(scene, W, H, { theme, title: p.title, caption, floor }))
-          const raster = createRaster(W, H)
-          await raster.drawAsync(scene, theme, { floor }, pause) // exactly as the terminal draws it: light added to light on a dark ground, over on a light one; handing over now and then, so Spark keeps moving
-          px = raster
+        // one picture that cannot be made (a painter call that fails, a write refused) is skipped and said; the rest go on
+        try {
+          step(0.05, revisits(w) ? `the painter looks again at “${shortTitle(source.title)}”${which}` : `drawing “${shortTitle(source.title)}”${which}`)
+          let p: Painting & { shape: string } = source
+          let tag: string = w
+          if (revisits(w)) { const r = await revisitPainting($, source, w as 'refined' | 'interpretive'); p = r.p; if (!r.ok) { note = r.note; tag = 'faithful' } }
+          if (revisits(w)) step(0.3, `drawing “${shortTitle(p.title)}”${which}`)
+          let [W, H] = canvasFor(p.shape, width)
+          const name = slug(p.title, placeOf(source)) + '-' + tag
+          const when = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+          const caption = convertCaption ? captionLines(p.title, tag === 'side' ? 'side by side' : tag, when, whoPainted(source)) : null
+          let px: { W: number; H: number; px: Float32Array } | null = null
+          let pair: Uint8Array | null = null // side by side: the two panels, already in RGB
+          let svg = '' // the SVG, written beside the PNG with the convertSvg setting, or in its place when no PNG could be made
+          if (tag === 'side') { // her pane's cells (as she drew them there: four pixels to a cell, or half blocks), beside truest
+            const lay = sideLayout(p.shape, width); W = lay.W; H = lay.H
+            const { cols, rows, cells } = terminalCells(p, theme)
+            const cw = Math.max(2, Math.floor(Math.min(lay.pw / cols, lay.ph / (rows * 2)))), ch = cw * 2 // a cell twice as tall as wide
+            const pw = cols * cw, ph = rows * ch // the made-large one the same size as the cells, so the two sit level
+            const scene = paintingScene(p, pw, ph, { reveal: 1, theme })
+            const truestSvg = sceneSVG(scene, pw, ph, { theme, floor: 0.6 * cellRes(pw), levels: truestLevels })
+            svg = sideSVG({ layout: lay, cells, cols, rows, cw, ch, truest: truestSvg, theme, title: p.title, caption, ground: ground(), levels: truestLevels })
+            step(0.35, `drawing “${shortTitle(p.title)}” large beside it${which}`)
+            const big = createRaster(pw, ph)
+            await big.drawAsync(scene, theme, { res: cellRes(pw), floor: 1 }, pause)
+            const right = posterize(await toRGB8Async(big as never, ground(), pause), truestLevels)
+            const left = cellsToRGB(cells, cols, rows, cw, ch, ground(), truestLevels)
+            const out = new Uint8Array(W * H * 3), g = ground().map((v) => Math.round(v * 255))
+            for (let i = 0; i < W * H; i++) { out[i * 3] = g[0]!; out[i * 3 + 1] = g[1]!; out[i * 3 + 2] = g[2]! }
+            const blit = (src: Uint8Array, sw: number, sh: number, x0: number, y0: number) => { for (let yy = 0; yy < sh; yy++) out.set(src.subarray(yy * sw * 3, (yy + 1) * sw * 3), ((y0 + yy) * W + x0) * 3) }
+            const ox = Math.floor((lay.pw - pw) / 2), oy = Math.floor((lay.ph - ph) / 2)
+            blit(left, pw, ph, lay.lx + ox, lay.y + oy)
+            blit(right, pw, ph, lay.rx + ox, lay.y + oy)
+            pair = out
+          } else if (tag === 'truest') { // as you see it: each mark the weight of a terminal cell, drawn flat as the terminal draws it (nothing added), its light then put in the terminal's colour depth (below)
+            const scene = paintingScene(p, W, H, { reveal: 1, theme })
+            svg = sceneSVG(scene, W, H, { theme, title: p.title, caption, floor: 0.6 * cellRes(W), levels: truestLevels })
+            const raster = createRaster(W, H)
+            await raster.drawAsync(scene, theme, { res: cellRes(W), floor: 1 }, pause)
+            px = raster
+          } else if (tag === 'layered') { // the depth pass, kept for comparing: its layers, the far ones softened, shadows, the bloom
+            svg = sceneSVG([], W, H, { theme, title: p.title, caption, floor: Math.max(layeredFloor(W, H), 0.6 * cellRes(W)), layers: layeredScenes(p, W, H, { theme }) })
+            px = await layeredRaster(p, W, H, { theme, pause, res: cellRes(W) })
+          } else {
+            const scene = paintingScene(p, W, H, { reveal: 1, theme })
+            const floor = markFloor(W) // specks and fine lines stay visible at full size, as they are in the terminal
+            svg = sceneSVG(scene, W, H, { theme, title: p.title, caption, floor })
+            const raster = createRaster(W, H)
+            await raster.drawAsync(scene, theme, { floor }, pause) // exactly as the terminal draws it: light added to light on a dark ground, over on a light one; handing over now and then, so Spark keeps moving
+            px = raster
+          }
+          step(0.75, `setting it in a PNG${which}`)
+          // the PNG: the pixels flattened onto the ground the same way her cells are, handed to the python helper as text
+          const flat = pair ?? await toRGB8Async(px as never, ground(), pause)
+          if (tag === 'truest') posterize(flat, truestLevels) // the terminal's colour depth: its bands are what you see
+          const { rgb, H: fullH } = caption ? withCaption(flat, W, H, caption, ground(), { light: theme === 'light' }) : { rgb: flat, H }
+          const png = await writePNG($, folder, name, rgb, W, fullH, pause)
+          if (png) written.push(`${name}.png`)
+          if (convertSvg || !png) { await $.fs.write(`${folder}/${name}.svg`, svg); written.push(`${name}.svg`) }
+          if (!png) note = note || 'no PNG: python3 was not found (the SVG opens in any browser, at any size)'
+          noteConverted({ file: png ? `${name}.png` : `${name}.svg`, title: p.title || 'untitled', when: new Date().toTimeString().slice(0, 5), mode: tag, dir: folder })
+          made++
+          logRecent('convert ' + tag)
+        } catch (err) {
+          skipped.push(`“${shortTitle(source.title)}” (${String((err as Error)?.message || err).slice(0, 80)})`)
+          logRecent('convert ✕')
         }
-        written.push(`${name}.svg`)
-        step(0.75, `setting it in a PNG${which}`)
-        // the PNG: the pixels flattened onto the ground the same way her cells are, handed to the python helper as text
-        const flat = pair ?? await toRGB8Async(px as never, ground(), pause)
-        if (tag === 'truest') posterize(flat, truestLevels) // the terminal's colour depth: its bands are what you see
-        const { rgb, H: fullH } = caption ? withCaption(flat, W, H, caption, ground(), { light: theme === 'light' }) : { rgb: flat, H }
-        const png = await writePNG($, folder, name, rgb, W, fullH, pause)
-        if (png) written.push(`${name}.png`)
-        else { note = note || 'no PNG: python3 was not found (the SVG opens in any browser, at any size)' }
-        converted.push({ file: png ? `${name}.png` : `${name}.svg`, title: p.title || 'untitled', when: new Date().toTimeString().slice(0, 5), mode: tag })
-        logRecent('convert ' + tag)
         if (convertProgress) convertProgress.done++
         jobAt++
         step(0, `next: ${Math.min(jobAt + 1, jobs.length)} of ${jobs.length}`)
       }
-      await $.fs.write(`${folder}/index.html`, galleryHTML(converted))
-      written.push('index.html')
-    } catch (err) {
-      return 'convert failed: ' + String((err as Error)?.message || err).slice(0, 120)
     } finally {
+      // the gallery page is written whatever happened, with every picture made into this folder this session
+      await quietly(async () => { if (made) { await $.fs.write(`${folder}/index.html`, galleryOf(folder)); written.push('index.html') } })
       convertBusy = false
       convertProgress = null
       progressRedraw($, true) // the bar goes as the work ends
     }
-    return `converted (${said}, ${width} wide) into ${folder}: ${written.join(', ')}` + (note ? '. ' + note : '')
+    const files = written.length > 8 ? `${made} ${made === 1 ? 'picture' : 'pictures'} (${written[0]} … ${written[written.length - 2]}) and index.html` : written.join(', ')
+    const skips = skipped.length ? `. ${skipped.length} could not be made: ${skipped.slice(0, 3).join('; ')}${skipped.length > 3 ? ` and ${skipped.length - 3} more` : ''}` : ''
+    if (!made) return `convert failed: ${skipped.length ? skipped.slice(0, 3).join('; ') : 'nothing was made'}`
+    return `converted (${said}, ${width} wide) into ${folder}: ${files}` + skips + (note ? '. ' + note : '')
   }
   // more than one picture, one larger than HD, a truest one, or two painter calls or more: it goes on beside the work
   // (a command has ten seconds of its own time), and Spark says in the conversation when it is done (/spark state shows
@@ -907,8 +1029,8 @@ async function runHelper($: EngineInterface, args: string[]): Promise<{ ok: bool
 }
 // The roll's title: the one you gave it (`called ...`), else the conversation's name (/rename), else the project's folder
 const TITLE = { fadeFrames: 12, fps: 12, hold: 2.5 } // the card comes up over a second, then holds: 3.5 s, crossfaded into the first painting
-async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, called = ''): Promise<string> {
-  if (!story.length) return 'no paintings yet this session: /spark paint makes one'
+async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, called = '', from: StoryEntry[] = story): Promise<string> {
+  if (!from.length) return 'no paintings yet this session: /spark paint makes one'
   if (convertBusy) return busyText()
   const asked = rollSize(sizeWord)
   if (!asked) return 'roll size: hd (1080p, 1920 wide), short (upright 1080 x 1920, for YouTube Shorts), or a width (16:9); 720p (1280 wide) when nothing is said'
@@ -918,13 +1040,13 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
   const [W, H] = video ? asked : upright ? [360, 640] : [640, 360]
   const fps = way === 'layered' ? ROLL.truestFps : ROLL.fps
   const frames = video ? Math.round(ROLL.reveal * fps) : 8
-  const list = story.slice(), n = list.length
+  const list = from.slice(), n = list.length
   const holds = rollHolds(list) // each painting's own hold, set by the music: breathing room
   const root = await $.session.root().catch(() => '')
   const lead = rollTitleOn ? 1 : 0 // segments before the first painting: the title card
   const title = called || sessionName || root.replace(/\/+$/, '').split('/').pop() || 'Spark'
   const titleSecs = video ? TITLE.fadeFrames / TITLE.fps + TITLE.hold : 0
-  const folder = convertFolder.startsWith('/') || convertFolder.startsWith('~') ? convertFolder : (root ? root + '/' : '') + convertFolder
+  const folder = await outDir($)
   const d = new Date(), pad = (v: number) => String(v).padStart(2, '0')
   const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
   const name = `spark-roll-${stamp}-${way}${upright ? '-short' : ''}.${video ? 'mp4' : 'png'}`
@@ -1046,8 +1168,8 @@ async function rollPaintings($: EngineInterface, way: Way, sizeWord: string, cal
         : await runHelper($, ['apng', work, String(n + lead), String(frames), String(W), String(H), String(parts), '250', '2600', '3', out])
       if (!made.ok) return 'no roll: ' + (/No such file|not found|ENOENT/i.test(made.err) && !made.out ? 'python3 was not found (the roll needs it)' : made.err.trim().slice(-160) || 'the helper could not make it')
       const secs = Number(made.out.trim().split(/\s+/)[2]) || 0
-      converted.push({ file: name, title: `the roll · ${plural(n)}`, when: d.toTimeString().slice(0, 5), mode: `roll, ${way}${video ? '' : ', animated PNG'}` })
-      await $.fs.write(`${folder}/index.html`, galleryHTML(converted))
+      noteConverted({ file: name, title: `the roll · ${plural(n)}`, when: d.toTimeString().slice(0, 5), mode: `roll, ${way}${video ? '' : ', animated PNG'}`, dir: folder })
+      await $.fs.write(`${folder}/index.html`, galleryOf(folder))
       const long = secs >= 60 ? `${Math.floor(secs / 60)} min ${Math.round(secs % 60)} s` : `${Math.round(secs)} s`
       return `rolled ${plural(n)} (${way})${lead ? `, opening with “${title}”,` : ''} into ${out} (${video ? `${W}x${H} MP4${key ? `, with its own music in ${key}` : ''}` : `${W}x${H} animated PNG: ffmpeg was not found, so a smaller one that plays in any browser (sudo apt install ffmpeg for the MP4)`}, ${long}), and the gallery page` + (notes.length ? '. ' + notes[0] : '')
     } catch (err) {
@@ -1135,7 +1257,8 @@ async function paintNow($: EngineInterface, why: 'turn' | 'asked' | 'live' | 'fr
     const p = parsePainting(r.text, palette)
     if (!p) { paintNote = 'the painter answered something that was not a painting'; logRecent('paint ✕'); return 'no painting: ' + paintNote }
     painting = { ...p, at: now(), n: ++paintCount, shape, cost }
-    const entry: StoryEntry = { ...p, shape, cost, clock: new Date().toTimeString().slice(0, 5), live: why === 'live' && !free, at: Date.now() / 1000, ...(opening ? { opening: true } : {}), ...(free ? { free: true } : {}) }
+    const entry: StoryEntry = { ...p, shape, cost, clock: new Date().toTimeString().slice(0, 5), live: why === 'live' && !free, at: Date.now() / 1000, num: paintCount, ...(opening ? { opening: true } : {}), ...(free ? { free: true } : {}) }
+    await ownStory($) // into the story of the conversation it was painted in
     story.push(entry)
     void quietly(() => sharePainting($, entry, String(liveFrame().hover).replace(/^Spark · /, ''))) // to Prism, when she paints here too
     if (opening) openingMade = true
@@ -1391,8 +1514,8 @@ const HELP = [
   '/spark story   the session\'s paintings told again in order, each laid down anew (no tokens); /spark story again ends it',
   '/spark copy    what you last said to Spark and her answer, whole, onto your clipboard (or ⧉ copy under it)',
   '/spark prism   painting with Prism: her paintings this session join the story, converts and rolls, credited to her; /spark prism off | on | <folder>',
-  '/spark save    the painting showing, kept as the terminal showed it (PNG and SVG of its cells) and as JSON (its marks), no tokens; or ⤓ save above her painting',
-  '/spark convert the painting made large, SVG and PNG, into the convert folder: click what (this painting, every way, all paintings, the roll) then which way (truest, faithful, refined, interpretive, each with its token cost), or say it: /spark convert truest 4k, side (as the terminal showed it, beside it made large), every, all refined, roll truest hd, roll short (upright, for YouTube Shorts)',
+  '/spark save    the painting showing, kept as the terminal showed it (a PNG of its cells) and as JSON (its marks), no tokens; or ⤓ save above her painting',
+  '/spark convert the painting made large, as a PNG, into a folder named after the conversation (or the project) in the convert folder: click what (this painting, every way, all paintings, the roll) then which way (truest, faithful, refined, interpretive, each with its token cost), or say it: /spark convert truest 4k, side (as the terminal showed it, beside it made large), every, all refined, all since faithful (every painting since the session began, after a /clear or FreshEye too), roll truest hd, roll short (upright, for YouTube Shorts)',
 ].join('\n')
 
 // focus asks for about 60% of the terminal (at least 64 columns, and always 40 left for the conversation), and the full
@@ -1408,9 +1531,10 @@ const SIDE_ROWS = 10
 let lastTerminal = 0 // the terminal width the last /spark command reported (0: not known)
 let lastViewport = 0 // the terminal width the surface last drew at (any of Spark's drawings, the spinner too)
 let convertFolder = 'spark-paintings' // the convertFolder setting: where /spark convert writes, relative to the project
-let converted: Array<{ file: string; title: string; when: string; mode: string }> = [] // this session's conversions, for the gallery page
+let converted: Array<{ file: string; title: string; when: string; mode: string; dir: string }> = [] // this session's conversions, for each folder's gallery page
 let convertBusy = false
 let convertCaption = true // the convertCaption setting: the title and a line (Spark · the date · the way) under the picture
+let convertSvg = false // the convertSvg setting: an SVG beside each PNG (crisp at any size); off, only the PNG (and the SVG only when no PNG could be made)
 let sideWidth = 0    // the sideWidth setting: the side pane's width in columns, 0 for automatic
 // automatic: a quarter of the widest terminal width known, 30 to 44 columns; 44 when none is known yet
 const sideColumns = (terminal: number) => {
@@ -1469,6 +1593,7 @@ const quietly = async (work: () => unknown): Promise<void> => { try { await work
 async function sparkRun($: EngineInterface, e: { args: string; presentation?: { columns?: number } }): Promise<{ text: string }> {
   const [word = '', arg = ''] = e.args.trim().toLowerCase().split(/\s+/)
   let text: string
+  await quietly(() => ownStory($)) // the paintings of the conversation you are in
   if (typeof e.presentation?.columns === 'number' && e.presentation.columns > 0 && !focusMode) lastTerminal = e.presentation.columns
   if (word === 'top' || word === 'band') { // a short strip above the prompt; the side pane gives way to it
     band = arg === 'on' ? true : arg === 'off' ? false : !band
@@ -1644,6 +1769,7 @@ export const register: Register = (on, options) => {
   if (typeof o.sideWidth === 'number' && o.sideWidth >= 0) sideWidth = o.sideWidth
   if (typeof o.convertFolder === 'string' && o.convertFolder.trim()) convertFolder = o.convertFolder.trim()
   if (typeof o.convertCaption === 'boolean') convertCaption = o.convertCaption
+  if (typeof o.convertSvg === 'boolean') convertSvg = o.convertSvg
   if (typeof o.truestLevels === 'number' && o.truestLevels >= 0) truestLevels = Math.round(o.truestLevels)
   if (typeof o.prismPaintings === 'string') prismFolder = prismSetting = o.prismPaintings.trim() || 'off'
 
@@ -1665,9 +1791,11 @@ export const register: Register = (on, options) => {
   // follow the host's theme when the person changes it
   on('config.set', { key: 'theme' }, async ($, e, next) => { const res = await next(e); await quietly(() => refreshTheme($)); return res })
 
-  // a /clear ends the conversation without a new session.start: the stars are gone and Spark wakes again
+  // a /clear ends the conversation without a new session.start: the stars are gone and Spark wakes again. Its story goes
+  // on the shelf, not away: a /resume back to it (FreshEye switching back) brings it down again (see ownStory)
   on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full'); painting = null; paintSite = null; lastTurn = null; turnsSeen = 0; reflection = ''; spoken = ''; talk = null; story.length = 0; storyOn = null; openingMade = false; welcome = welcomeOn; $.ui.invalidate('ui.render') }
+    if (e.reason === 'clear' || e.reason === 'resume') { shelf(e.sessionId, story.splice(0)); storyOwner = ''; storyOn = null }
+    if (e.reason === 'clear') { emit({ type: 'session.wake', fresh: true }); await cue($, 'wake', 'full'); painting = null; paintSite = null; lastTurn = null; turnsSeen = 0; reflection = ''; spoken = ''; talk = null; openingMade = false; welcome = welcomeOn; $.ui.invalidate('ui.render') }
     const res = await next(e)
     if (e.reason === 'clear' && linkOn) { await stopLink(); await startLink($) } // a new conversation is a new instance
     return res
@@ -1678,6 +1806,7 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     // typed (or delivered) while a turn runs: it waits until the model takes it in, at her edge
     lastAround = now()
+    await quietly(() => ownStory($)) // a conversation come back to (a /resume) brings its paintings with it
     if (e.turnId) queuedMsgs++
     await quietly(() => emit(e.turnId ? { type: 'prompt.queue' } : { type: 'prompt.submit' }))
     return next(e)

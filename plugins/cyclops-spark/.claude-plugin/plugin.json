@@ -1,6 +1,6 @@
 {
   "name": "cyclops-spark",
-  "version": "1.7.20",
+  "version": "1.7.21",
   "description": "Spark, Claude's living presence for the terminal: a small procedural creature drawn only from real Claude Code session events, as half-block cells or kitty/Ghostty pixels.",
   "author": {
     "name": "Cyclops Eye Team"
@@ -131,8 +131,14 @@
     "convertFolder": {
       "type": "string",
       "title": "Convert folder",
-      "description": "Where /spark convert writes the large SVG and PNG of a painting (and an index.html gallery). Relative to the project you are working in, or an absolute path. Spark writes there only when you run the command.",
+      "description": "Where /spark convert, save and the roll put their pictures. Each goes into a folder of its own inside it, named after the conversation (the name you gave it with /rename) or, without one, after the folder Claude Code was started in. Relative to the project you are working in, or an absolute path such as ~/Pictures/Spark. Spark writes there only when you ask. Her JSON record of each painting stays in the project's spark-paintings, where Prism and Cyclops Studio read it.",
       "default": "spark-paintings"
+    },
+    "convertSvg": {
+      "type": "boolean",
+      "title": "SVG beside each PNG",
+      "description": "Also write an SVG of each converted or saved painting, which stays crisp at any size. Off: only the PNG (an SVG is still written when no PNG can be made, for example without python3).",
+      "default": false
     },
     "convertCaption": {
       "type": "boolean",

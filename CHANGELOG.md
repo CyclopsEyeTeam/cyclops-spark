@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.7.21
+
+- **No painting goes missing from convert, the story or the roll.** A `/clear` emptied her paintings while the session's
+  count kept going, so after one the convert menu could offer 28 of 65. FreshEye opens its fresh conversation with a
+  `/clear`, so using it did the same. Now each conversation keeps its own: a `/clear` puts them on a shelf, and a
+  `/resume` back to that conversation (FreshEye switching back) brings them back. **All** and **the roll** ask, when there
+  are more, whether you mean this conversation's paintings or every one since the session began (typed:
+  `/spark convert all since faithful`), taken from the shelf and from her JSON records in `spark-paintings` (written
+  while Prism paints there too), so a restart in between loses none of those. The story kept only the last 60
+  paintings; now 500.
+- **Just the PNG, in a folder of its own.** Converts and saves write the PNG only; the new **SVG beside each PNG**
+  setting (`convertSvg`) brings the SVG back, and without python3 the SVG still comes in place of the PNG. The pictures
+  go into a folder inside the convert folder named after the conversation (its `/rename` name) or, without one, the
+  folder Claude Code was started in, so they sit together and apart from the JSON records, each folder with its own
+  gallery page. The convert folder can be anywhere: `~/Pictures/Spark` now means your home folder (before, `~` was
+  taken as a folder named `~`). Her JSON records stay in the project's `spark-paintings`, where Prism and Cyclops
+  Studio read them.
+- **Named by the painting's own number.** A converted picture carries its painting's number (`60-a-knot-untied-…png`,
+  beside `60-a-knot-untied-….json`), not the order it was converted in. Converting the same painting the same way again
+  replaces it, and its gallery entry.
+- **One bad picture no longer stops the rest.** In `all`, a painting that cannot be made (a painter call that fails, a
+  write refused) is skipped and said at the end; the rest are made, and the gallery page is always written.
+
 ## 1.7.20
 
 - **Her painting fills its room.** A painting kept its own shape exactly, so where the room under or beside Spark was
